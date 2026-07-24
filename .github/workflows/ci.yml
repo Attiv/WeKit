@@ -62,6 +62,11 @@ jobs:
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
 
+      - name: Install Android NDK
+        run: |
+          NDK_VERSION=$(sed -n 's/^ndk = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -158,6 +163,11 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install Android NDK
+        run: |
+          NDK_VERSION=$(sed -n 's/^ndk = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
 
       - name: Download Release APK artifact
         uses: actions/download-artifact@v8
