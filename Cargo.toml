@@ -1,5 +1,9 @@
 [workspace]
-members = ["app/src/main/rust/wekit-native/", "xtask"]
+members = [
+    "app/src/main/rust/wekit-native/",
+    "wekit-zygisk/native/",
+    "xtask",
+]
 resolver = "3"
 
 [profile.release]
@@ -8,3 +12,6 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[profile.release.package.wekit_zygisk]
+strip = "none"
