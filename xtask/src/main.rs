@@ -68,7 +68,7 @@ static ABI_TABLE: &[AbiSpec] = &[
 /// ABIs included in Gradle's ABI splits (the default build targets).
 static RELEASE_ABIS: &[&str] = &["arm64-v8a", "armeabi-v7a"];
 
-const ZYGISK_MODULE_ID: &str = "wekit";
+const ZYGISK_MODULE_ID: &str = "wekit_zygisk";
 const ZYGISK_MODULE_NAME: &str = "WeKit";
 
 struct ZygiskAbiSpec {
