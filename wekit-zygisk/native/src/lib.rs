@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+mod companion;
 mod logging;
 mod protocol;
 mod zygisk;
@@ -56,6 +57,6 @@ pub unsafe extern "C" fn zygisk_module_entry(table: *mut ApiTable, env: *mut Raw
 ///
 /// Called exclusively by the Zygisk framework with a valid connected Unix domain socket fd.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zygisk_companion_entry(_sock: c_int) {
-    // placeholder — companion implemented in Task 4
+pub unsafe extern "C" fn zygisk_companion_entry(sock: c_int) {
+    companion::handle(sock);
 }
