@@ -116,7 +116,7 @@ object CustomChatInputBarPlaceholderText : ClickableFeature(), IResolveDex, WeDa
 
         if (type == MessageType.TEXT.code) {
             textC += 1
-            charC += msgInfo.content.length
+            charC += msgInfo.actualContent.length
             totC += 1
         }
 

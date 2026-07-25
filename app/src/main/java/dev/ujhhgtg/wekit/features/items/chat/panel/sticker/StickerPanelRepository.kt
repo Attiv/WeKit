@@ -40,6 +40,7 @@ object StickerPanelRepository {
     private val titlesFile get() = PanelPaths.stickerPanelDir / ".titles.json"
     private val coversFile get() = PanelPaths.stickerPanelDir / ".covers.json"
     private val ordersFile get() = PanelPaths.stickerPanelDir / ".orders.json"
+    private val onlinePackSourcesFile get() = PanelPaths.stickerPanelDir / ".online_pack_sources.json"
 
     @Serializable
     private data class StickerStats(val sendCount: Long = 0, val lastSentAt: Long = 0)
@@ -49,6 +50,7 @@ object StickerPanelRepository {
         val titles = readTitles()
         val covers = readCovers()
         val orders = readOrders()
+        val onlinePackSources = readOnlinePackSources()
         return runCatching {
             PanelPaths.stickerPanelDir.listDirectoryEntries()
                 .filter { it.isDirectory() && !it.name.startsWith(".") }
@@ -64,6 +66,7 @@ object StickerPanelRepository {
                             item.localPath?.asPath?.name == covers[packDir.name]
                         }?.localPath ?: items.firstOrNull()?.localPath,
                         source = PanelSource.LOCAL,
+                        onlineSourcePackId = onlinePackSources[packDir.name],
                         itemCount = items.size,
                         items = items,
                     )
@@ -152,6 +155,17 @@ object StickerPanelRepository {
         safeName
     }
 
+    fun setOnlinePackSource(packName: String, onlinePackId: String): Result<Unit> = runCatching {
+        val safePack = requirePackName(packName)
+        require(packPath(safePack).isDirectory()) { "表情包不存在" }
+        val sourceId = onlinePackId.trim()
+        require(sourceId.isNotEmpty()) { "在线表情包 ID 为空" }
+        atomicWrite(
+            onlinePackSourcesFile,
+            DefaultJson.encodeToString(readOnlinePackSources() + (safePack to sourceId)),
+        )
+    }
+
     fun renamePack(oldName: String, newName: String): Result<Unit> = runCatching {
         val safeOldName = requirePackName(oldName)
         val safeName = sanitizeName(newName)
@@ -190,10 +204,16 @@ object StickerPanelRepository {
     }
 
     /** Saves a remote sticker under a stable object-derived filename with its real image type. */
-    fun importOnlineSticker(item: StickerItem, packName: String, input: InputStream): Result<StickerItem> = runCatching {
+    fun importOnlineSticker(
+        item: StickerItem,
+        packName: String,
+        input: InputStream,
+        overwrite: Boolean = false,
+    ): Result<StickerItem> = runCatching {
         val safePack = requirePackName(packName)
         val packDir = packPath(safePack).also { it.createDirectories() }
-        existingOnlinePath(packDir, item)?.let { existing ->
+        val existing = existingOnlinePath(packDir, item)
+        if (existing != null && !overwrite) {
             return@runCatching existing.toItem(safePack, readStats(), readTitles(), PanelSource.IMPORTED)
         }
         val identity = onlineIdentity(item)
@@ -212,6 +232,7 @@ object StickerPanelRepository {
                     StandardCopyOption.ATOMIC_MOVE,
                 )
             }.getOrElse { Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING) }
+            if (existing != null && existing != destination) existing.deleteIfExists()
             destination.toItem(safePack, readStats(), readTitles(), PanelSource.IMPORTED)
         } finally {
             temporary.deleteIfExists()
@@ -424,6 +445,14 @@ object StickerPanelRepository {
         }.getOrDefault(PanelCustomOrders())
     }
 
+    private fun readOnlinePackSources(): Map<String, String> {
+        if (onlinePackSourcesFile.notExists()) return emptyMap()
+        return runCatching {
+            DefaultJson.decodeFromString<Map<String, String>>(onlinePackSourcesFile.readText())
+                .filterValues(String::isNotBlank)
+        }.getOrDefault(emptyMap())
+    }
+
     private fun stickerComparator(
         packName: String,
         stats: Map<String, StickerStats>,
@@ -612,6 +641,12 @@ object StickerPanelRepository {
         covers.remove(source.name)?.let { cover -> covers[destination.name] = cover }
         atomicWrite(coversFile, DefaultJson.encodeToString(covers))
 
+        val onlinePackSources = readOnlinePackSources().toMutableMap()
+        onlinePackSources.remove(source.name)?.let { onlinePackId ->
+            onlinePackSources[destination.name] = onlinePackId
+        }
+        atomicWrite(onlinePackSourcesFile, DefaultJson.encodeToString(onlinePackSources))
+
         val orders = readOrders()
         atomicWrite(
             ordersFile,
@@ -637,6 +672,10 @@ object StickerPanelRepository {
         atomicWrite(
             coversFile,
             DefaultJson.encodeToString(readCovers().filterKeys { it != directory.name }),
+        )
+        atomicWrite(
+            onlinePackSourcesFile,
+            DefaultJson.encodeToString(readOnlinePackSources() - directory.name),
         )
         val orders = readOrders()
         atomicWrite(

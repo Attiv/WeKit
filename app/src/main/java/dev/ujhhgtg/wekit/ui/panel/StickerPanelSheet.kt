@@ -87,12 +87,14 @@ import com.composables.icons.materialsymbols.outlined.Folder
 import com.composables.icons.materialsymbols.outlined.History
 import com.composables.icons.materialsymbols.outlined.Image_search
 import com.composables.icons.materialsymbols.outlined.Manage_search
+import com.composables.icons.materialsymbols.outlined.Open_in_new
 import com.composables.icons.materialsymbols.outlined.Person
 import com.composables.icons.materialsymbols.outlined.Refresh
 import com.composables.icons.materialsymbols.outlined.Save
 import com.composables.icons.materialsymbols.outlined.Select_all
 import com.composables.icons.materialsymbols.outlined.Settings
 import com.composables.icons.materialsymbols.outlined.Sort
+import com.composables.icons.materialsymbols.outlined.Sync
 import com.composables.icons.materialsymbols.outlined.Travel_explore
 import com.composables.icons.materialsymbols.outlined.Upload
 import com.composables.icons.materialsymbols.outlined.Upload_file
@@ -107,6 +109,8 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.StickerItem
 import dev.ujhhgtg.wekit.features.items.chat.panel.StickerPack
 import dev.ujhhgtg.wekit.features.items.chat.panel.StickerPackLayout
 import dev.ujhhgtg.wekit.features.items.chat.panel.parallelForEachWithProgress
+import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerOnlineSourceRecoveryProgress
+import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerOnlineSourceRecoveryResult
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramInstalledStickerSet
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerImportPhase
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerImportProgress
@@ -183,7 +187,16 @@ data class StickerPanelActions(
         Result.failure(UnsupportedOperationException())
     },
     val ensurePack: suspend (String) -> Result<String> = { Result.failure(UnsupportedOperationException()) },
-    val saveOnlineSticker: suspend (String, StickerItem) -> Result<Unit> = { _, _ ->
+    val setOnlinePackSource: suspend (String, String) -> Result<Unit> = { _, _ ->
+        Result.failure(UnsupportedOperationException())
+    },
+    val recoverOnlinePackSources: suspend (
+        List<String>,
+        suspend (StickerOnlineSourceRecoveryProgress) -> Unit,
+    ) -> Result<StickerOnlineSourceRecoveryResult> = { _, _ ->
+        Result.failure(UnsupportedOperationException())
+    },
+    val saveOnlineSticker: suspend (String, StickerItem, Boolean) -> Result<Unit> = { _, _, _ ->
         Result.failure(UnsupportedOperationException())
     },
 )
@@ -299,6 +312,10 @@ private fun StickerPanelContent(
     var telegramProgress by remember { mutableStateOf<TelegramStickerImportProgress?>(null) }
     var telegramBatchProgress by remember { mutableStateOf<TelegramBatchImportProgress?>(null) }
     var telegramImportJob by remember { mutableStateOf<Job?>(null) }
+    var sourceRecoverySelectionVisible by remember { mutableStateOf(false) }
+    var selectedSourceRecoveryPackIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var sourceRecoveryProgress by remember { mutableStateOf<StickerOnlineSourceRecoveryProgress?>(null) }
+    var sourceRecoveryJob by remember { mutableStateOf<Job?>(null) }
     var uploadProgress by remember { mutableStateOf<Float?>(null) }
     var multiSelectMode by remember { mutableStateOf(false) }
     var selectedStickerKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -424,11 +441,7 @@ private fun StickerPanelContent(
         }
     }
 
-    fun openOnlinePackForSticker(sticker: StickerItem) {
-        val packId = sticker.packId.takeIf(String::isNotBlank) ?: run {
-            operationMessage = "无法确定该表情所属的在线表情包"
-            return
-        }
+    fun openOnlinePack(packId: String) {
         previewSticker = null
         showingMyUploads = false
         onlinePackSearchExpanded = false
@@ -451,6 +464,14 @@ private fun StickerPanelContent(
             pendingOnlinePackId = packId
             loadOnlinePacks()
         }
+    }
+
+    fun openOnlinePackForSticker(sticker: StickerItem) {
+        val packId = sticker.packId.takeIf(String::isNotBlank) ?: run {
+            operationMessage = "无法确定该表情所属的在线表情包"
+            return
+        }
+        openOnlinePack(packId)
     }
 
     fun loadMyUploads() {
@@ -490,34 +511,112 @@ private fun StickerPanelContent(
         onlineSaveProgress = null
     }
 
+    suspend fun runOnlineSave(
+        packId: String,
+        items: List<StickerItem>,
+        title: String,
+        overwrite: Boolean,
+        completedVerb: String,
+    ) {
+        val uniqueItems = items.distinctBy(::stickerSelectionKey)
+        if (uniqueItems.isEmpty()) return
+        onlineSaveProgress = PanelSaveProgress(title, uniqueItems.size)
+        var succeeded = 0
+        var failed = 0
+        uniqueItems.parallelForEachWithProgress(
+            maxConcurrency = PanelSettings.effectivePanelDownloadConcurrency,
+            transform = { item -> actions.saveOnlineSticker(packId, item, overwrite) },
+            onItemComplete = { _, total, _, result ->
+                if (result.isSuccess) succeeded++ else failed++
+                onlineSaveProgress = PanelSaveProgress(title, total, succeeded, failed)
+            },
+        )
+        refreshLocal()
+        operationMessage = if (failed == 0) {
+            "已$completedVerb $succeeded 个表情"
+        } else {
+            "${completedVerb}完成：成功 $succeeded 个，失败 $failed 个"
+        }
+    }
+
     fun startOnlineSave(packId: String, items: List<StickerItem>, title: String = "正在保存表情包") {
         val uniqueItems = items.distinctBy(::stickerSelectionKey)
         if (uniqueItems.isEmpty()) return
         stopOnlineSave()
         multiSelectMode = false
         selectedStickerKeys = emptySet()
-        onlineSaveProgress = PanelSaveProgress(title, uniqueItems.size)
         onlineSaveJob = scope.launch {
-            var succeeded = 0
-            var failed = 0
             try {
-                uniqueItems.parallelForEachWithProgress(
-                    maxConcurrency = PanelSettings.effectivePanelDownloadConcurrency,
-                    transform = { item -> actions.saveOnlineSticker(packId, item) },
-                    onItemComplete = { _, total, _, result ->
-                        if (result.isSuccess) succeeded++ else failed++
-                        onlineSaveProgress = PanelSaveProgress(title, total, succeeded, failed)
-                    },
+                runOnlineSave(packId, uniqueItems, title, overwrite = false, completedVerb = "保存")
+            } finally {
+                onlineSaveProgress = null
+                onlineSaveJob = null
+            }
+        }
+    }
+
+    fun updateLocalPackFromOnline(pack: StickerPack) {
+        val sourcePackId = pack.onlineSourcePackId ?: return
+        stopOnlineSave()
+        multiSelectMode = false
+        selectedStickerKeys = emptySet()
+        onlineSaveProgress = PanelSaveProgress("正在获取在线表情包“${pack.title}”", 1)
+        onlineSaveJob = scope.launch {
+            try {
+                val onlinePack = StickerPack(
+                    id = sourcePackId,
+                    title = pack.title,
+                    source = PanelSource.ONLINE,
+                )
+                val items = actions.loadOnlineItems(onlinePack).getOrElse { error ->
+                    operationMessage = error.message ?: "在线表情包加载失败"
+                    return@launch
+                }
+                if (items.isEmpty()) {
+                    operationMessage = "在线表情包中没有可更新的表情"
+                    return@launch
+                }
+                runOnlineSave(
+                    packId = pack.id,
+                    items = items,
+                    title = "正在更新表情包“${pack.title}”",
+                    overwrite = true,
+                    completedVerb = "更新",
                 )
             } finally {
                 onlineSaveProgress = null
                 onlineSaveJob = null
             }
-            refreshLocal()
-            operationMessage = if (failed == 0) {
-                "已保存 $succeeded 个表情"
-            } else {
-                "保存完成：成功 $succeeded 个，失败 $failed 个"
+        }
+    }
+
+    fun startOnlineSourceRecovery(packs: List<StickerPack>) {
+        if (packs.isEmpty()) return
+        sourceRecoveryJob?.cancel()
+        sourceRecoveryProgress = StickerOnlineSourceRecoveryProgress(
+            completed = 0,
+            total = packs.size,
+            message = "正在准备恢复在线包来源",
+        )
+        sourceRecoveryJob = scope.launch {
+            try {
+                val result = actions.recoverOnlinePackSources(packs.map(StickerPack::id)) { progress ->
+                    withContext(Dispatchers.Main) { sourceRecoveryProgress = progress }
+                }
+                operationMessage = result.fold(
+                    onSuccess = {
+                        buildString {
+                            append("已恢复 ${it.recovered}/${it.selected} 个本地包的在线来源")
+                            if (it.alreadyLinked > 0) append("，${it.alreadyLinked} 个已有来源")
+                            if (it.unmatched > 0) append("，${it.unmatched} 个未匹配")
+                        }
+                    },
+                    onFailure = { it.message ?: "在线包来源恢复失败" },
+                )
+                if ((result.getOrNull()?.recovered ?: 0) > 0) refreshLocal()
+            } finally {
+                sourceRecoveryProgress = null
+                sourceRecoveryJob = null
             }
         }
     }
@@ -652,11 +751,15 @@ private fun StickerPanelContent(
     fun saveWholeOnlinePack(pack: StickerPack, items: List<StickerItem>) {
         if (items.isEmpty()) return
         scope.launch {
-            val packId = actions.ensurePack(pack.title)
-            packId.fold(
-                onSuccess = { startOnlineSave(it, items, "正在保存表情包“${pack.title}”") },
-                onFailure = { operationMessage = it.message ?: "无法创建本地表情包" },
-            )
+            val packId = actions.ensurePack(pack.title).getOrElse {
+                operationMessage = it.message ?: "无法创建本地表情包"
+                return@launch
+            }
+            actions.setOnlinePackSource(packId, pack.id).onFailure {
+                operationMessage = it.message ?: "无法记录在线表情包来源"
+                return@launch
+            }
+            startOnlineSave(packId, items, "正在保存表情包“${pack.title}”")
         }
     }
 
@@ -811,6 +914,14 @@ private fun StickerPanelContent(
                 })
             }
             add(PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::refreshLocal))
+            localActionPack?.onlineSourcePackId?.let { sourcePackId ->
+                add(PanelAction(MaterialSymbols.Outlined.Open_in_new, "查看在线表情包") {
+                    openOnlinePack(sourcePackId)
+                })
+                add(PanelAction(MaterialSymbols.Outlined.Sync, "从在线表情包更新") {
+                    updateLocalPackFromOnline(localActionPack)
+                })
+            }
             add(
                 panelLocalSortAction(
                     mode = localItemSortMode,
@@ -1153,6 +1264,16 @@ private fun StickerPanelContent(
                     onWrapActionsChange = {
                         wrapActions = it
                         PanelSettings.wrapPanelActions = it
+                    },
+                    onRecoverOnlinePackSources = {
+                        if (editablePacks.isEmpty()) {
+                            operationMessage = "没有可恢复来源的本地表情包"
+                        } else {
+                            selectedSourceRecoveryPackIds = editablePacks
+                                .filter { it.onlineSourcePackId == null }
+                                .mapTo(linkedSetOf(), StickerPack::id)
+                            sourceRecoverySelectionVisible = true
+                        }
                     },
                 )
                 }
@@ -1598,9 +1719,14 @@ private fun StickerPanelContent(
         }
 
         telegramDiscoveredSets?.let { sets ->
-            TelegramStickerSetSelectionPrompt(
-                sets = sets,
-                selectedNames = selectedTelegramSetNames,
+            PanelListSelectionPrompt(
+                title = "选择 Telegram 表情包",
+                description = "已导入的表情包默认不选中；重新选择可以继续或更新导入。",
+                items = sets,
+                selectedKeys = selectedTelegramSetNames,
+                key = TelegramInstalledStickerSet::name,
+                headlineText = TelegramInstalledStickerSet::title,
+                supportingText = TelegramInstalledStickerSet::name,
                 onSelectionChange = { selectedTelegramSetNames = it },
                 onDismiss = {
                     telegramDiscoveredSets = null
@@ -1653,6 +1779,46 @@ private fun StickerPanelContent(
                 },
             )
         }
+
+        if (sourceRecoverySelectionVisible) {
+            PanelListSelectionPrompt(
+                title = "选择本地表情包",
+                description = "选择要尝试恢复在线来源元数据的本地表情包。",
+                items = editablePacks,
+                selectedKeys = selectedSourceRecoveryPackIds,
+                key = StickerPack::id,
+                headlineText = StickerPack::title,
+                supportingText = { pack ->
+                    buildString {
+                        append("${pack.itemCount} 个表情")
+                        if (pack.onlineSourcePackId != null) append(" · 已有在线来源")
+                    }
+                },
+                confirmText = "开始恢复",
+                onSelectionChange = { selectedSourceRecoveryPackIds = it },
+                onDismiss = {
+                    sourceRecoverySelectionVisible = false
+                    selectedSourceRecoveryPackIds = emptySet()
+                },
+                onConfirm = {
+                    val selectedPacks = editablePacks.filter { it.id in selectedSourceRecoveryPackIds }
+                    sourceRecoverySelectionVisible = false
+                    selectedSourceRecoveryPackIds = emptySet()
+                    startOnlineSourceRecovery(selectedPacks)
+                },
+            )
+        }
+
+        sourceRecoveryProgress?.let { progress ->
+            StickerOnlineSourceRecoveryProgressOverlay(
+                progress = progress,
+                onCancel = {
+                    sourceRecoveryJob?.cancel()
+                    sourceRecoveryJob = null
+                    sourceRecoveryProgress = null
+                },
+            )
+        }
     }
 }
 
@@ -1689,7 +1855,7 @@ private fun StickerGridOrEmpty(
                     val change = awaitPointerEvent(PointerEventPass.Initial).changes
                         .firstOrNull { it.id == down.id }
                     if (change == null) {
-                        if (previewGesture.active && previewGesture.moved &&
+                        if (previewGesture.active && previewGesture.previewTargetChanged &&
                             PanelSettings.stickerClosePreviewAfterScrub
                         ) {
                             onPreviewGestureEnd()
@@ -1711,6 +1877,7 @@ private fun StickerGridOrEmpty(
                             gridState.itemIndexAt(change.position)?.let { index ->
                                 if (index != previewGesture.currentIndex) {
                                     stickers.getOrNull(index)?.let { sticker ->
+                                        previewGesture.previewTargetChanged = true
                                         previewGesture.currentIndex = index
                                         onLongPress(sticker)
                                     }
@@ -1720,7 +1887,7 @@ private fun StickerGridOrEmpty(
                     }
 
                     if (!change.pressed) {
-                        if (previewGesture.active && previewGesture.moved &&
+                        if (previewGesture.active && previewGesture.previewTargetChanged &&
                             PanelSettings.stickerClosePreviewAfterScrub
                         ) {
                             onPreviewGestureEnd()
@@ -1863,6 +2030,7 @@ private fun StickerGridOrEmpty(
 private class StickerPreviewGestureTracker {
     var active = false
     var moved = false
+    var previewTargetChanged = false
     var activationPosition = Offset.Zero
     var lastPosition = Offset.Zero
     var currentIndex = -1
@@ -1875,6 +2043,7 @@ private class StickerPreviewGestureTracker {
     fun activate(index: Int) {
         active = true
         moved = false
+        previewTargetChanged = false
         activationPosition = lastPosition
         currentIndex = index
     }
@@ -1882,6 +2051,7 @@ private class StickerPreviewGestureTracker {
     fun reset() {
         active = false
         moved = false
+        previewTargetChanged = false
         currentIndex = -1
     }
 }
@@ -2507,17 +2677,23 @@ private fun TelegramDatabaseSourcePrompt(
 }
 
 @Composable
-private fun TelegramStickerSetSelectionPrompt(
-    sets: List<TelegramInstalledStickerSet>,
-    selectedNames: Set<String>,
+private fun <T> PanelListSelectionPrompt(
+    title: String,
+    description: String,
+    items: List<T>,
+    selectedKeys: Set<String>,
+    key: (T) -> String,
+    headlineText: (T) -> String,
+    supportingText: ((T) -> String?)? = null,
+    confirmText: String = "确定",
     onSelectionChange: (Set<String>) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
     PanelFullOverlay(onDismiss = onDismiss) {
-        Text("选择 Telegram 表情包", style = MaterialTheme.typography.titleMedium)
+        Text(title, style = MaterialTheme.typography.titleMedium)
         Text(
-            "已导入的表情包默认不选中；重新选择可以继续或更新导入。",
+            description,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -2526,23 +2702,23 @@ private fun TelegramStickerSetSelectionPrompt(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             TextButton(
-                onClick = { onSelectionChange(sets.mapTo(linkedSetOf(), TelegramInstalledStickerSet::name)) },
+                onClick = { onSelectionChange(items.mapTo(linkedSetOf(), key)) },
             ) { Text("全选") }
             TextButton(onClick = { onSelectionChange(emptySet()) }) { Text("全不选") }
             TextButton(
                 onClick = {
                     onSelectionChange(
-                        invertPanelSelection(selectedNames, sets, TelegramInstalledStickerSet::name),
+                        invertPanelSelection(selectedKeys, items, key),
                     )
                 },
             ) { Text("反选") }
             TextButton(
                 onClick = {
                     onSelectionChange(
-                        closePanelSelectionRange(selectedNames, sets, TelegramInstalledStickerSet::name),
+                        closePanelSelectionRange(selectedKeys, items, key),
                     )
                 },
-                enabled = selectedNames.size > 1,
+                enabled = selectedKeys.size > 1,
             ) { Text("连选") }
         }
         LazyColumn(
@@ -2551,23 +2727,26 @@ private fun TelegramStickerSetSelectionPrompt(
                 .heightIn(max = 420.dp)
                 .weight(1f, fill = false),
         ) {
-            items(sets, key = TelegramInstalledStickerSet::name) { set ->
-                val selected = set.name in selectedNames
+            items(items, key = { key(it) }) { item ->
+                val itemKey = key(item)
+                val selected = itemKey in selectedKeys
                 ListItem(
                     modifier = Modifier.clickable {
                         onSelectionChange(
-                            if (selected) selectedNames - set.name else selectedNames + set.name,
+                            if (selected) selectedKeys - itemKey else selectedKeys + itemKey,
                         )
                     },
                     colors = panelListItemColors(),
-                    headlineContent = { Text(set.title) },
-                    supportingContent = { Text(set.name) },
+                    headlineContent = { Text(headlineText(item)) },
+                    supportingContent = supportingText?.let { text ->
+                        { text(item)?.let { Text(it) } }
+                    },
                     leadingContent = {
                         Checkbox(
                             checked = selected,
                             onCheckedChange = {
                                 onSelectionChange(
-                                    if (selected) selectedNames - set.name else selectedNames + set.name,
+                                    if (selected) selectedKeys - itemKey else selectedKeys + itemKey,
                                 )
                             },
                         )
@@ -2576,10 +2755,35 @@ private fun TelegramStickerSetSelectionPrompt(
             }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("已选择 ${selectedNames.size}/${sets.size}", style = MaterialTheme.typography.bodySmall)
+            Text("已选择 ${selectedKeys.size}/${items.size}", style = MaterialTheme.typography.bodySmall)
             Box(Modifier.weight(1f))
             TextButton(onClick = onDismiss) { Text("取消") }
-            TextButton(onClick = onConfirm, enabled = selectedNames.isNotEmpty()) { Text("确定") }
+            TextButton(onClick = onConfirm, enabled = selectedKeys.isNotEmpty()) { Text(confirmText) }
+        }
+    }
+}
+
+@Composable
+private fun StickerOnlineSourceRecoveryProgressOverlay(
+    progress: StickerOnlineSourceRecoveryProgress,
+    onCancel: () -> Unit,
+) {
+    PanelFullOverlay(onDismiss = {}, allowImplicitDismiss = false) {
+        Text("正在恢复在线表情包来源", style = MaterialTheme.typography.titleMedium)
+        LinearProgressIndicator(
+            progress = { progress.completed.toFloat() / progress.total.coerceAtLeast(1) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "${progress.completed}/${progress.total} · ${progress.message}",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = onCancel) { Text("中断") }
         }
     }
 }
@@ -2671,6 +2875,7 @@ private fun StickerSettingsContent(
     onLocalPackLayoutChange: (StickerPackLayout) -> Unit,
     onOnlinePackLayoutChange: (StickerPackLayout) -> Unit,
     onWrapActionsChange: (Boolean) -> Unit,
+    onRecoverOnlinePackSources: () -> Unit,
 ) {
     var columns by remember { mutableIntStateOf(PanelSettings.stickerColumnCount.coerceIn(1, 15)) }
     var maxHistory by remember { mutableLongStateOf(PanelSettings.stickerMaxHistory.coerceAtLeast(1L)) }
@@ -2772,6 +2977,14 @@ private fun StickerSettingsContent(
                 )
             }
             item { PanelFunBoxApiClientIdSetting { clientIdPrompt = true } }
+            item {
+                ListItem(
+                    modifier = Modifier.clickable(onClick = onRecoverOnlinePackSources),
+                    colors = panelListItemColors(),
+                    headlineContent = { Text("恢复在线表情包来源") },
+                    supportingContent = { Text("为旧版下载的本地表情包尝试恢复在线来源元数据") },
+                )
+            }
             item {
                 PanelDropdownSetting(
                     title = "本地表情包一级界面",

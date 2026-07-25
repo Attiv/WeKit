@@ -13,6 +13,7 @@ import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelPaths
 import dev.ujhhgtg.wekit.features.items.chat.panel.PickedPanelFile
 import dev.ujhhgtg.wekit.features.items.chat.panel.StickerItem
+import dev.ujhhgtg.wekit.features.items.chat.panel.StickerPack
 import dev.ujhhgtg.wekit.features.items.chat.panel.listPanelTreeFiles
 import dev.ujhhgtg.wekit.features.items.chat.panel.pickPanelDirectory
 import dev.ujhhgtg.wekit.features.items.chat.panel.pickPanelFile
@@ -20,6 +21,8 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.pickPanelFiles
 import dev.ujhhgtg.wekit.features.items.chat.panel.service.FunBoxServiceClient
 import dev.ujhhgtg.wekit.features.items.chat.panel.service.FunBoxStickerRepository
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerPanelRepository
+import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerOnlineSourceRecoveryProgress
+import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerOnlineSourceRecoveryResult
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramInstalledStickerSet
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerDatabase
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerPackRepository
@@ -138,7 +141,15 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
                 savePackOrder = StickerPanelRepository::savePackOrder,
                 saveItemOrder = StickerPanelRepository::saveItemOrder,
                 ensurePack = { name -> withContext(Dispatchers.IO) { StickerPanelRepository.ensurePack(name) } },
-                saveOnlineSticker = { packId, item -> saveOnlineSticker(packId, item) },
+                setOnlinePackSource = { packId, onlinePackId ->
+                    withContext(Dispatchers.IO) {
+                        StickerPanelRepository.setOnlinePackSource(packId, onlinePackId)
+                    }
+                },
+                recoverOnlinePackSources = ::recoverOnlinePackSources,
+                saveOnlineSticker = { packId, item, overwrite ->
+                    saveOnlineSticker(packId, item, overwrite)
+                },
             ),
         ) { item ->
             withContext(Dispatchers.IO) {
@@ -192,21 +203,93 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
         }
     }
 
-    private suspend fun saveOnlineSticker(packId: String, item: StickerItem): Result<Unit> =
+    private suspend fun saveOnlineSticker(
+        packId: String,
+        item: StickerItem,
+        overwrite: Boolean,
+    ): Result<Unit> =
         withContext(Dispatchers.IO) {
             cancellableResult {
-                if (StickerPanelRepository.hasOnlineSticker(packId, item)) return@cancellableResult
+                if (!overwrite && StickerPanelRepository.hasOnlineSticker(packId, item)) return@cancellableResult
                 val path = resolveStickerPath(item).getOrThrow()
                 val temporary = item.localPath == null
                 try {
                     Files.newInputStream(path.asPath).use { input ->
-                        StickerPanelRepository.importOnlineSticker(item, packId, input).getOrThrow()
+                        StickerPanelRepository.importOnlineSticker(item, packId, input, overwrite).getOrThrow()
                     }
                 } finally {
                     if (temporary) path.asPath.deleteIfExists()
                 }
             }.map { }
         }
+
+    private suspend fun recoverOnlinePackSources(
+        packIds: List<String>,
+        onProgress: suspend (StickerOnlineSourceRecoveryProgress) -> Unit,
+    ): Result<StickerOnlineSourceRecoveryResult> = withContext(Dispatchers.IO) {
+        cancellableResult {
+            val requestedIds = packIds.toSet()
+            val localPacks = StickerPanelRepository.loadPacks().filter { it.id in requestedIds }
+            val total = localPacks.size
+            var recovered = 0
+            var alreadyLinked = 0
+            var unmatched = 0
+
+            if (localPacks.all { it.onlineSourcePackId != null }) {
+                alreadyLinked = total
+                onProgress(StickerOnlineSourceRecoveryProgress(total, total, "所选本地包均已有在线来源"))
+                return@cancellableResult StickerOnlineSourceRecoveryResult(
+                    selected = total,
+                    recovered = 0,
+                    alreadyLinked = alreadyLinked,
+                    unmatched = 0,
+                )
+            }
+
+            onProgress(StickerOnlineSourceRecoveryProgress(0, total, "正在读取在线表情包列表"))
+            val catalog = FunBoxStickerRepository.loadCatalog().getOrThrow()
+            val uploads = FunBoxStickerRepository.loadMyUploads().getOrDefault(emptyList())
+            val onlinePacks = (catalog + uploads).distinctBy(StickerPack::id)
+
+            localPacks.forEachIndexed { index, localPack ->
+                onProgress(
+                    StickerOnlineSourceRecoveryProgress(
+                        completed = index,
+                        total = total,
+                        message = "正在匹配“${localPack.title}”",
+                    ),
+                )
+                when {
+                    localPack.onlineSourcePackId != null -> alreadyLinked++
+                    else -> {
+                        val onlinePackId = onlinePacks.singleOrNull {
+                            it.title.equals(localPack.title, ignoreCase = true)
+                        }?.id
+                        if (onlinePackId == null) {
+                            unmatched++
+                        } else {
+                            StickerPanelRepository.setOnlinePackSource(localPack.id, onlinePackId).getOrThrow()
+                            recovered++
+                        }
+                    }
+                }
+                onProgress(
+                    StickerOnlineSourceRecoveryProgress(
+                        completed = index + 1,
+                        total = total,
+                        message = "已处理“${localPack.title}”",
+                    ),
+                )
+            }
+
+            StickerOnlineSourceRecoveryResult(
+                selected = total,
+                recovered = recovered,
+                alreadyLinked = alreadyLinked,
+                unmatched = unmatched,
+            )
+        }
+    }
 
     private suspend inline fun <T> cancellableResult(block: suspend () -> T): Result<T> = try {
         Result.success(block())
