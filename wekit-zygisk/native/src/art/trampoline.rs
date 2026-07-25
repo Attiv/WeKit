@@ -102,31 +102,22 @@ impl TrampolinePool {
 
 #[cfg(target_arch = "aarch64")]
 unsafe fn write_trampoline(dst: *mut u8, bridge_art_method: usize, ep_offset: usize) {
-    let ep = (ep_offset & 0x1FF) as u32;
-    // ldur x16, [x0, #ep_offset]: 0xF8400210 | (imm9 << 12)
-    let ldur_x16 = 0xF840_0210u32 | (ep << 12);
-    let code: [u32; 4] = [
+    let ldur_x16 = arm64_ldur_x16_from_x0(ep_offset);
+    let instr: [u32; 3] = [
         0x5800_0060, // ldr x0, #12
         ldur_x16,    // ldur x16, [x0, #ep_offset]
         0xD61F_0200, // br x16
-        0xD503_201F, // nop (padding)
     ];
-    // Write 4 x u32 = 16 bytes at dst
-    (dst as *mut [u32; 4]).write_unaligned(code);
-    // Write 8-byte bridge pointer at offset +12 (overlaps nop slot and extends into next slot)
-    // Actually for arm64: ldr x0, #12 loads from PC+12. The instruction is at offset 0,
-    // so PC+12 = offset 12. We need to place the 8-byte value at offset 12.
-    // But we already wrote a u32 nop at offset 12 above. Let's fix the layout:
-    // offset 0:  ldr x0, #12    (4 bytes) — loads the 8-byte literal at PC+12 = offset 12
-    // offset 4:  ldur x16, ...  (4 bytes)
-    // offset 8:  br x16         (4 bytes)
-    // offset 12: bridge_art_method (8 bytes) — literal data
-    // offset 20: (empty, up to 32)
-    // Re-write correctly: first 3 instructions, then 8-byte pointer at offset 12
-    let instr: [u32; 3] = [0x5800_0060, ldur_x16, 0xD61F_0200];
     (dst as *mut [u32; 3]).write_unaligned(instr);
     let ptr_off = dst.add(12) as *mut usize;
     ptr_off.write_unaligned(bridge_art_method);
+}
+
+#[cfg(any(target_arch = "aarch64", test))]
+fn arm64_ldur_x16_from_x0(ep_offset: usize) -> u32 {
+    let ep = (ep_offset & 0x1ff) as u32;
+    // LDUR Xt, [Xn, #imm9]: Xn is encoded in bits 9:5 and Xt in bits 4:0.
+    0xF840_0010u32 | (ep << 12)
 }
 
 // ── arm32 trampoline (12 bytes) ───────────────────────────────────────────────
@@ -149,13 +140,76 @@ unsafe fn write_trampoline(dst: *mut u8, bridge_art_method: usize, ep_offset: us
 #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
 unsafe fn write_trampoline(_dst: *mut u8, _bridge: usize, _ep: usize) {}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 unsafe fn flush_icache(start: *const u8, end: *const u8) {
-    unsafe extern "C" {
-        fn __clear_cache(start: *const u8, end: *const u8);
+    use core::arch::asm;
+
+    let start = start as usize;
+    let end = end as usize;
+    if start >= end {
+        return;
     }
-    unsafe { __clear_cache(start, end) };
+
+    let ctr: usize;
+    unsafe {
+        asm!("mrs {ctr}, ctr_el0", ctr = out(reg) ctr, options(nomem, nostack, preserves_flags));
+    }
+
+    // Clean data-cache lines to the point of unification when IDC is absent.
+    if ctr & (1 << 28) == 0 {
+        let line_size = 4usize << ((ctr >> 16) & 0xf);
+        let mut cursor = start & !(line_size - 1);
+        while cursor < end {
+            unsafe {
+                asm!("dc cvau, {addr}", addr = in(reg) cursor, options(nostack, preserves_flags));
+            }
+            cursor += line_size;
+        }
+    }
+    unsafe {
+        asm!("dsb ish", options(nostack, preserves_flags));
+    }
+
+    // Invalidate instruction-cache lines to the point of unification when DIC is absent.
+    if ctr & (1 << 29) == 0 {
+        let line_size = 4usize << (ctr & 0xf);
+        let mut cursor = start & !(line_size - 1);
+        while cursor < end {
+            unsafe {
+                asm!("ic ivau, {addr}", addr = in(reg) cursor, options(nostack, preserves_flags));
+            }
+            cursor += line_size;
+        }
+    }
+    unsafe {
+        asm!("dsb ish", "isb", options(nostack, preserves_flags));
+    }
+}
+
+#[cfg(target_arch = "arm")]
+unsafe fn flush_icache(start: *const u8, end: *const u8) {
+    const ARM_NR_CACHEFLUSH: libc::c_long = 0x0f0002;
+    unsafe {
+        libc::syscall(
+            ARM_NR_CACHEFLUSH,
+            start as libc::c_ulong,
+            end as libc::c_ulong,
+            0 as libc::c_ulong,
+        );
+    }
 }
 
 #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
 unsafe fn flush_icache(_start: *const u8, _end: *const u8) {}
+
+#[cfg(test)]
+mod tests {
+    use super::arm64_ldur_x16_from_x0;
+
+    #[test]
+    fn arm64_ldur_reads_bridge_entry_from_x0() {
+        assert_eq!(arm64_ldur_x16_from_x0(24), 0xF841_8010);
+        assert_eq!((arm64_ldur_x16_from_x0(24) >> 5) & 0x1f, 0);
+        assert_eq!(arm64_ldur_x16_from_x0(24) & 0x1f, 16);
+    }
+}

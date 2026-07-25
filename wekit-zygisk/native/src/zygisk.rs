@@ -8,7 +8,7 @@
 use std::ffi::c_void;
 
 use jni::sys::{JNINativeMethod, jboolean, jint, jintArray, jlong, jobjectArray, jstring};
-use libc::{c_char, c_int, dev_t, ino_t};
+use libc::{c_char, c_int, c_long, dev_t, ino_t};
 
 // Option values for setOption (mirrors zygisk::Option enum)
 pub const DLCLOSE_MODULE_LIBRARY: c_int = 1;
@@ -38,10 +38,10 @@ pub struct ApiTable {
 
 /// module_abi — laid out identically to zygisk::internal::module_abi.
 ///
-/// Note: api_version is `long` in C++ — on 64-bit Android that is i64.
+/// `api_version` is C `long`, which is pointer-sized on both Android ABIs.
 #[repr(C)]
 pub struct ModuleAbi {
-    pub api_version: i64, // long — 4
+    pub api_version: c_long,
     pub impl_ptr: *mut c_void,
     pub pre_app_specialize: unsafe extern "C" fn(*mut c_void, *mut AppSpecializeArgs),
     pub post_app_specialize: unsafe extern "C" fn(*mut c_void, *const AppSpecializeArgs),

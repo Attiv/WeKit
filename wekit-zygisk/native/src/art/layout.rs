@@ -7,7 +7,7 @@
 // installed.
 
 use crate::art::elf::find_symbol_in_file;
-use crate::logi;
+use crate::{logi, logw};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 // acc_flags bit constants (match ART source)
@@ -25,8 +25,26 @@ pub struct ArtLayout {
     pub access_flags_offset: usize,
 }
 
-fn android_api_level() -> u32 {
-    // Try ro.build.version.sdk from build.prop
+pub fn android_api_level() -> u32 {
+    #[cfg(target_os = "android")]
+    {
+        let mut value = [0 as libc::c_char; libc::PROP_VALUE_MAX as usize];
+        let name = b"ro.build.version.sdk\0";
+        let len = unsafe {
+            libc::__system_property_get(name.as_ptr().cast::<libc::c_char>(), value.as_mut_ptr())
+        };
+        if len > 0 {
+            let bytes =
+                unsafe { std::slice::from_raw_parts(value.as_ptr().cast::<u8>(), len as usize) };
+            if let Ok(s) = std::str::from_utf8(bytes)
+                && let Ok(api) = s.parse()
+            {
+                return api;
+            }
+        }
+    }
+
+    // Keep a filesystem fallback for unusual Android environments and host tests.
     if let Ok(s) = std::fs::read_to_string("/system/build.prop") {
         for line in s.lines() {
             if let Some(val) = line.strip_prefix("ro.build.version.sdk=")
@@ -36,7 +54,11 @@ fn android_api_level() -> u32 {
             }
         }
     }
-    28 // safe fallback
+
+    // All API levels >= 31 use the same masks below. Prefer those current masks
+    // if both standard detection paths are unavailable.
+    logw!("Zygisk: unable to detect Android API level, assuming API 35");
+    35
 }
 
 fn method_size_for_api(_api: u32) -> usize {

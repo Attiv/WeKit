@@ -52,9 +52,7 @@ pub unsafe extern "C" fn zygisk_module_entry(table: *mut ApiTable, env: *mut Raw
         pre_server_specialize: pre_server,
         post_server_specialize: post_server,
     }));
-    unsafe {
-        ((*table).register_module)(table, abi);
-    }
+    unsafe { ((*table).register_module)(table, abi) };
 }
 
 /// # Safety

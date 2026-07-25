@@ -545,11 +545,7 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
     }
 
     // 7. Access flag masks by API level
-    // android_get_device_api_level is in libandroid.so
-    unsafe extern "C" {
-        fn android_get_device_api_level() -> libc::c_int;
-    }
-    let api = unsafe { android_get_device_api_level() };
+    let api = layout::android_api_level();
     let acc_precompiled: u32 = if api < 30 {
         0
     } else if api >= 31 {
