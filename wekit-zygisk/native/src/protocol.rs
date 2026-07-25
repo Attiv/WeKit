@@ -11,7 +11,6 @@ pub const COMPANION_REQUEST_ENABLED: u8 = 0x01;
 pub const COMPANION_REQUEST_TELEGRAM_SESSION: u8 = 0x02;
 pub const COMPANION_DISABLED: u8 = 0;
 pub const COMPANION_ENABLED: u8 = 1;
-pub const COMPANION_ERROR: u8 = 2;
 
 pub const TELEGRAM_REQUEST_DISCOVER: u8 = 0x01;
 pub const TELEGRAM_REQUEST_COPY_DATABASE: u8 = 0x02;
@@ -60,12 +59,6 @@ pub fn read_u16_from_fd(fd: c_int) -> io::Result<u16> {
     Ok(u16::from_ne_bytes(b))
 }
 
-pub fn read_u32_from_fd(fd: c_int) -> io::Result<u32> {
-    let mut b = [0u8; 4];
-    read_exact_fd(fd, &mut b)?;
-    Ok(u32::from_ne_bytes(b))
-}
-
 pub fn read_i32_from_fd(fd: c_int) -> io::Result<i32> {
     let mut b = [0u8; 4];
     read_exact_fd(fd, &mut b)?;
@@ -112,12 +105,6 @@ pub fn write_string_to_fd(fd: c_int, s: &str) -> io::Result<()> {
     write_exact_fd(fd, &bytes[..len as usize])
 }
 
-/// Writes an error frame: `[COMPANION_ERROR=2][u16 len][msg bytes]`.
-pub fn write_error_frame(fd: c_int, msg: &str) -> io::Result<()> {
-    write_u8_to_fd(fd, COMPANION_ERROR)?;
-    write_string_to_fd(fd, msg)
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,8 +146,9 @@ mod tests {
     #[test]
     fn error_frame_roundtrip() {
         let (r, w) = make_socketpair();
-        write_error_frame(w, "oops").unwrap();
-        assert_eq!(read_u8_from_fd(r).unwrap(), COMPANION_ERROR);
+        write_u8_to_fd(w, 2).unwrap();
+        write_string_to_fd(w, "oops").unwrap();
+        assert_eq!(read_u8_from_fd(r).unwrap(), 2);
         let msg = read_string_from_fd(r).unwrap();
         assert_eq!(msg, "oops");
         unsafe {

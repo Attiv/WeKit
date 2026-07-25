@@ -20,9 +20,8 @@ use zygisk::{AppSpecializeArgs, ModuleAbi, ServerSpecializeArgs};
 
 use crate::zygisk::ApiTable;
 
-/// 与 C++ main.cpp 的 telegram_socket_name 全局变量对应。
-/// 在 preAppSpecialize 里由 companion 协商写入，
-/// JNI 函数（nativeHasTelegramRootCompanion 等）通过此全局访问。
+/// Telegram companion socket name, negotiated in preAppSpecialize.
+/// Accessed by JNI functions (nativeHasTelegramRootCompanion, etc.) via this global.
 pub static TELEGRAM_SOCKET_NAME: Mutex<String> = Mutex::new(String::new());
 
 extern "C" fn pre_app(m: *mut c_void, args: *mut AppSpecializeArgs) {

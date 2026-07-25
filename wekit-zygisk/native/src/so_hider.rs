@@ -75,28 +75,41 @@ unsafe fn remap_segment(start: usize, len: usize, orig_prot: c_int) -> bool {
     if orig_prot == libc::PROT_NONE {
         return true;
     }
-    // Temporarily make readable if needed so we can copy contents
-    if orig_prot & libc::PROT_READ == 0 {
-        libc::mprotect(start as *mut _, len, orig_prot | libc::PROT_READ);
+    // Temporarily add PROT_READ so we can copy contents; track whether we changed it
+    let read_prot_changed = orig_prot & libc::PROT_READ == 0;
+    if read_prot_changed && libc::mprotect(start as *mut _, len, orig_prot | libc::PROT_READ) != 0 {
+        return false;
     }
+    // If memfd_create fails, restore original protection and return
     let mfd = libc::syscall(
         libc::SYS_memfd_create,
         c"wk".as_ptr(),
         libc::MFD_CLOEXEC as libc::c_ulong,
     ) as c_int;
     if mfd < 0 {
+        if read_prot_changed {
+            libc::mprotect(start as *mut _, len, orig_prot);
+        }
         return false;
     }
     if libc::ftruncate(mfd, len as libc::off_t) < 0 {
         libc::close(mfd);
+        if read_prot_changed {
+            libc::mprotect(start as *mut _, len, orig_prot);
+        }
         return false;
     }
-    // Copy segment contents into the memfd
+    // Copy segment contents into the memfd; fail + cleanup if write is incomplete
     let mut written = 0usize;
     while written < len {
         let n = libc::write(mfd, (start + written) as *const _, len - written);
         if n <= 0 {
-            break;
+            loge!("SoHider: remap: write to memfd failed");
+            libc::close(mfd);
+            if read_prot_changed {
+                libc::mprotect(start as *mut _, len, orig_prot);
+            }
+            return false;
         }
         written += n as usize;
     }

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // art/layout.rs — ArtMethod layout probing and access-flags constants
 //
 // Detects the `ArtMethod` struct size and field offsets for the running Android

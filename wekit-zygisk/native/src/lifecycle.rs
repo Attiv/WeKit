@@ -24,7 +24,7 @@ use std::{
 pub struct WeKitModule {
     pub api: *mut ApiTable,
     pub env: *mut RawJNIEnv,
-    // preAppSpecialize 阶段填写
+    // filled in preAppSpecialize
     pub module_dir_fd: Option<OwnedFd>,
     pub app_uid: uid_t,
     pub app_gid: gid_t,
@@ -34,7 +34,7 @@ pub struct WeKitModule {
     pub dex_names: Vec<String>,
     pub telegram_socket_name: Option<String>,
     pub enabled: bool,
-    // postAppSpecialize 阶段填写
+    // filled in postAppSpecialize
     pub module_classloader: Option<jobject>,
 }
 
@@ -129,7 +129,7 @@ fn negotiate_telegram_socket(api: *mut ApiTable, uid: i32, process_name: &str) -
     name
 }
 
-/// 读取 dex.list 并验证 classes.dex → classes2.dex → … 顺序，对应 C++ parse_dex_list。
+/// Read dex.list and validate sequential ordering (classes.dex, classes2.dex, ...).
 fn read_dex_list(mod_fd: RawFd, rel_path: &str) -> Vec<String> {
     let path_c = match std::ffi::CString::new(rel_path) {
         Ok(s) => s,
@@ -155,9 +155,9 @@ fn read_dex_list(mod_fd: RawFd, rel_path: &str) -> Vec<String> {
         .filter(|l| !l.is_empty())
         .map(str::to_owned)
         .collect();
-    // 验证名字是 classes.dex, classes2.dex, ... 并且是连续递增的
-    let mut expected = 1u32;
-    for name in &names {
+    // Verify names are classes.dex, classes2.dex, ... in contiguous order
+    for (i, name) in names.iter().enumerate() {
+        let expected = (i + 1) as u32;
         let order = dex_name_order(name);
         if order != Some(expected) {
             loge!(
@@ -167,12 +167,11 @@ fn read_dex_list(mod_fd: RawFd, rel_path: &str) -> Vec<String> {
             );
             return Vec::new();
         }
-        expected += 1;
     }
     names
 }
 
-/// 将 dex 文件名映射到序号（classes.dex → 1, classes2.dex → 2, …）。
+/// Map a dex file name to its numeric order (classes.dex → 1, classes2.dex → 2, …).
 fn dex_name_order(name: &str) -> Option<u32> {
     if name == "classes.dex" {
         return Some(1);
@@ -279,13 +278,13 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
     }
 
     // Copy DEX files and read them into memory
-    // dex_names 里的名字已经是如 "classes.dex"，源路径直接用 payload/{abi}/{name}
+    // dex_names already includes the .dex extension; source path is plain payload/{abi}/{name}
     let mut dex_bufs: Vec<Vec<u8>> = Vec::new();
     for name in module.dex_names.clone() {
         let dst = format!("{data_dir}/files/mmkv/.wekit-bootstrap-{abi}-{name}");
         if !crate::payload::copy_module_file(
             mod_fd,
-            &format!("payload/{abi}/{name}"), // 不加 .dex 后缀，name 本身已含
+            &format!("payload/{abi}/{name}"), // no extra .dex — name already has it
             &dst,
             uid,
             gid,
@@ -299,7 +298,7 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
         }
     }
 
-    // 构建 InMemoryDexClassLoader
+    // Build InMemoryDexClassLoader
     let fns = *module.env;
     let sys_cl_class = ((*fns).v1_6.FindClass)(module.env, c"java/lang/ClassLoader".as_ptr());
     let get_sys_id = ((*fns).v1_6.GetStaticMethodID)(
@@ -315,10 +314,10 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
         return;
     }
 
-    // 关闭 module dir fd（对应 C++ close(retained_module_dir_fd)）
+    // Close module dir fd
     module.module_dir_fd = None;
 
-    // 加载 ZygiskEntry 类
+    // Load ZygiskEntry class
     let entry_name = "dev.ujhhgtg.wekit.loader.entry.zygisk.ZygiskEntry";
     let entry_cls = crate::natives::load_class_from_loader(module.env, cl, entry_name);
     if entry_cls.is_null() {
@@ -327,7 +326,7 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
         return;
     }
 
-    // 注册 ZygiskEntry native 方法（必须在 init() 之前，因为 init 会调 nativeInitialize）
+    // Register ZygiskEntry native methods
     if !crate::natives::register_entry_natives(module.env, cl) {
         loge!("Zygisk: failed to register ZygiskEntry bootstrap JNI");
         ((*fns).v1_6.DeleteLocalRef)(module.env, entry_cls);
@@ -335,7 +334,7 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
         return;
     }
 
-    // 调用 ZygiskEntry.init(processName, dataDir, apkPath)
+    // Call ZygiskEntry.init(processName, dataDir, apkPath)
     let init_mid = ((*fns).v1_6.GetStaticMethodID)(
         module.env,
         entry_cls,
@@ -389,7 +388,7 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
         ((*fns).v1_6.DeleteGlobalRef)(module.env, cl);
         return;
     }
-    // 保持 classloader 存活（供 hook bridge class 解析）
+    // Keep classloader alive for hook bridge class resolution
     module.module_classloader = Some(cl);
     logi!("Zygisk: postAppSpecialize complete");
 }

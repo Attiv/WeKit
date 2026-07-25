@@ -1,37 +1,37 @@
-// payload — APK/DEX 文件复制 + InMemoryDexClassLoader 构建
+// payload — APK/DEX file copy + InMemoryDexClassLoader construction
 
 use crate::loge;
 use jni::sys::{JNIEnv as RawJNIEnv, jobject};
 use libc::{gid_t, uid_t};
 use std::{ffi::CString, os::unix::io::RawFd};
 
-// ── 目录创建 ──────────────────────────────────────────────────────────────────
+// ── Directory creation ──────────────────────────────────────────────────────────────────
 
-/// 创建目录并设置权限，对应 C++ ensure_directory(path, 0700)。
+/// Create directory, set ownership and permissions.
 pub fn ensure_dir(path: &str, uid: uid_t, gid: gid_t) -> bool {
     let cpath = match CString::new(path) {
         Ok(s) => s,
         Err(_) => return false,
     };
     unsafe {
-        libc::mkdir(cpath.as_ptr(), 0o700); // 已存在时忽略错误
+        libc::mkdir(cpath.as_ptr(), 0o700); // ignore EEXIST
         libc::chmod(cpath.as_ptr(), 0o700 as libc::mode_t);
         if libc::geteuid() == 0 {
             libc::chown(cpath.as_ptr(), uid, gid);
         }
     }
-    // 验证目录存在
+    // Verify directory exists
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     unsafe {
-        libc::stat(cpath.as_ptr(), &mut st) == 0 && (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+        libc::stat(cpath.as_ptr(), &mut st) == 0
+            && (st.st_mode & libc::S_IFMT as u32) == libc::S_IFDIR as u32
     }
 }
 
-// ── 文件复制 ──────────────────────────────────────────────────────────────────
+// ── File copy ──────────────────────────────────────────────────────────────────
 
-/// 从模块目录（通过 fd）复制文件到 dst_path。
-/// 使用 PID 唯一临时文件 + atomic rename + fchown + fsync。
-/// 对应 C++ copy_module_file。
+/// Copy a file from the module dir fd to dst_path with atomic rename.
+/// Uses a PID-unique temp file, fchown, fsync, then rename.
 pub fn copy_module_file(
     module_dir_fd: RawFd,
     src_rel: &str,
@@ -44,7 +44,7 @@ pub fn copy_module_file(
         Ok(s) => s,
         Err(_) => return false,
     };
-    // O_NOFOLLOW 防止符号链接攻击
+    // O_NOFOLLOW prevents symlink attacks
     let src_fd = unsafe {
         libc::openat(
             module_dir_fd,
@@ -59,10 +59,10 @@ pub fn copy_module_file(
         );
         return false;
     }
-    // 验证源文件是普通文件且不超过 size 限制
+    // Verify source is a regular file within size limits
     let mut src_stat: libc::stat = unsafe { std::mem::zeroed() };
     if unsafe { libc::fstat(src_fd, &mut src_stat) } != 0
-        || (src_stat.st_mode & libc::S_IFMT) != libc::S_IFREG
+        || (src_stat.st_mode & libc::S_IFMT as u32) != libc::S_IFREG as u32
         || src_stat.st_size <= 0
         || src_stat.st_size as u64 > max_bytes
     {
@@ -71,7 +71,7 @@ pub fn copy_module_file(
         return false;
     }
 
-    // 使用 PID 区分临时文件，对应 C++ destination + "." + getpid() + ".tmp"
+    // PID-unique temp file: {dst}.{pid}.tmp
     let tmp_path = format!("{}.{}.tmp", dst_path, unsafe { libc::getpid() });
     let tmp_cstr = match CString::new(tmp_path.as_str()) {
         Ok(s) => s,
@@ -87,12 +87,12 @@ pub fn copy_module_file(
             return false;
         }
     };
-    // 先 unlink 旧临时文件（如果存在）
+    // Unlink any stale temporary file first
     unsafe {
         libc::unlink(tmp_cstr.as_ptr());
     }
 
-    // O_CREAT | O_EXCL | O_NOFOLLOW — 安全创建，防覆盖/链接
+    // O_CREAT | O_EXCL | O_NOFOLLOW — safe create, no overwrite/symlink
     let dst_fd = unsafe {
         libc::open(
             tmp_cstr.as_ptr(),
@@ -173,7 +173,7 @@ pub fn copy_module_file(
     true
 }
 
-/// 读取已复制文件到内存（O_NOFOLLOW 防链接攻击）。
+/// Read a previously-copied file into memory (O_NOFOLLOW for safety).
 pub fn read_file(path: &str) -> Option<Vec<u8>> {
     let cpath = CString::new(path).ok()?;
     let fd = unsafe {
@@ -187,7 +187,7 @@ pub fn read_file(path: &str) -> Option<Vec<u8>> {
     }
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     if unsafe { libc::fstat(fd, &mut st) } != 0
-        || (st.st_mode & libc::S_IFMT) != libc::S_IFREG
+        || (st.st_mode & libc::S_IFMT as u32) != libc::S_IFREG as u32
         || st.st_size <= 0
     {
         unsafe { libc::close(fd) };
@@ -210,11 +210,11 @@ pub fn read_file(path: &str) -> Option<Vec<u8>> {
 
 // ── InMemoryDexClassLoader ────────────────────────────────────────────────────
 
-/// 从字节切片列表构建 InMemoryDexClassLoader（通过 raw JNI）。
+/// Build an InMemoryDexClassLoader from byte slices via raw JNI.
 ///
 /// # Safety
 ///
-/// `env` 必须是当前线程的有效 JNIEnv 指针。
+/// `env` must be a valid JNIEnv pointer for the current thread.
 pub unsafe fn build_dex_classloader(
     env: *mut RawJNIEnv,
     dex_buffers: &[Vec<u8>],

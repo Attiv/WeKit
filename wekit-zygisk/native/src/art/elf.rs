@@ -270,7 +270,7 @@ impl ElfFile {
         None
     }
 
-    /// find_symbol 的前缀匹配版本，供 resolve_art_symbol 使用。
+    /// Prefix-matching variant of find_symbol, used by resolve_art_symbol.
     pub fn find_symbol_with_prefix(&self, sym_name: &str, prefix: bool) -> Option<usize> {
         if !prefix {
             return self.find_symbol(sym_name);
@@ -423,18 +423,18 @@ pub fn find_symbol_in_file(path: &str, sym_name: &str) -> Option<usize> {
     mini.find_symbol(sym_name)
 }
 
-/// ART 符号解析：先尝试 dlsym(RTLD_DEFAULT)，再扫描 ELF 文件，最后走兜底路径。
-/// 对应 C++ resolve_art_symbol。prefix=true 时做前缀匹配。
-/// 返回值是运行时地址（loaded_base + symbol_value）。
+/// Resolve an ART symbol: try dlsym(RTLD_DEFAULT), scan ELF file, then try fallback paths.
+/// prefix=true enables prefix matching.
+/// Returns the runtime address (loaded_base + symbol_value).
 pub fn resolve_art_symbol(art_base: usize, art_path: &str, name: &str, prefix: bool) -> usize {
-    // 1. 非前缀搜索先用 dlsym
+    // 1. Non-prefix searches try dlsym first
     if !prefix && let Ok(c) = std::ffi::CString::new(name) {
         let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c.as_ptr()) };
         if !ptr.is_null() {
             return ptr as usize;
         }
     }
-    // 2. 扫描已加载文件
+    // 2. Scan loaded file
     if art_base != 0
         && !art_path.is_empty()
         && let Some(elf) = ElfFile::open(art_path)
@@ -442,7 +442,7 @@ pub fn resolve_art_symbol(art_base: usize, art_path: &str, name: &str, prefix: b
     {
         return art_base + off;
     }
-    // 3. 兜底路径（APEX / system）
+    // 3. Fallback paths (APEX / system)
     #[cfg(target_pointer_width = "64")]
     let fallback: &[&str] = &[
         "/apex/com.android.art/lib64/libart.so",
@@ -470,7 +470,7 @@ pub fn resolve_art_symbol(art_base: usize, art_path: &str, name: &str, prefix: b
     0
 }
 
-/// 通过 dl_iterate_phdr 找到已加载库的 base 地址。
+/// Find a loaded library's base address via dl_iterate_phdr.
 fn find_loaded_library_base(target: &str) -> usize {
     struct Query {
         path: *const libc::c_char,

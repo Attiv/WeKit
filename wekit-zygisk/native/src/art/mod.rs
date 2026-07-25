@@ -1,13 +1,13 @@
-// art/mod.rs — ART 方法 hook 引擎
+// art/mod.rs — ART method hook engine
 //
-// 初始化流程：
-//   1. 通过 dl_iterate_phdr 定位 libart.so
-//   2. 通过 JNI 反射探测 ArtMethod 结构体大小和字段偏移
-//   3. 解析 libart.so ELF，获取 ScopedSuspendAll/DexFile_setTrusted 等符号
-//   4. 初始化双映射 trampoline pool
+// Initialization:
+//   1. Locate libart.so via dl_iterate_phdr
+//   2. Probe ArtMethod size and field offsets via JNI reflection
+//   3. Resolve ScopedSuspendAll, DexFile_setTrusted, etc. from ELF
+//   4. Initialize dual-mapped trampoline pool
 //
-// hook_method 在持有 ScopedSuspendAll 锁的情况下原子性地安装 trampoline；
-// unhook_method 从 backup 还原原始字节和 access_flags。
+// hook_method atomically installs a trampoline under ScopedSuspendAll;
+// unhook_method restores the original bytes and access_flags from backup.
 
 pub mod elf;
 pub mod layout;
@@ -23,7 +23,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-// ── acc_flags 常量（与 ART 源码一致）────────────────────────────────────────
+// ── acc_flags constants (matching ART source) ────────────────────────────────────────
 
 pub const ACC_PUBLIC: u32 = 0x0001;
 pub const ACC_PRIVATE: u32 = 0x0002;
@@ -33,39 +33,42 @@ pub const ACC_COMPILE_DONT_BOTHER: u32 = 0x02000000;
 pub const ACC_FAST_INTERPRETER: u32 = 0x40000000; // kAccFastInterpreterToInterpreterInvoke
 pub const ACC_INTRINSIC: u32 = 0x80000000;
 
-// ── 全局状态 ─────────────────────────────────────────────────────────────────
+// ── Global state ─────────────────────────────────────────────────────────────────
 
 static G_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-// ArtMethod 布局（由 JNI 探测确定）
+// ArtMethod layout (determined by JNI probing)
 static G_ART_METHOD_SIZE: AtomicUsize = AtomicUsize::new(0);
 static G_ENTRY_POINT_OFFSET: AtomicUsize = AtomicUsize::new(0);
 static G_ACCESS_FLAGS_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
-// acc_precompiled 值随 API 等级变化：<30 → 0, 30 → 0x00200000, ≥31 → 0x00800000
+// acc_precompiled varies by API level: <30 → 0, 30 → 0x00200000, ≥31 → 0x00800000
 static G_ACC_PRECOMPILED: AtomicUsize = AtomicUsize::new(0);
-// kAccFastInterpreterToInterpreterInvoke：API<29 为 0，否则为 0x40000000
+// kAccFastInterpreterToInterpreterInvoke: API<29 → 0, else 0x40000000
 static G_ACC_FAST_INTERPRETER: AtomicUsize = AtomicUsize::new(0);
 
-// JNI 字段 ID（存为 usize，因为 jfieldID = *mut _jfieldID 是裸指针）
+// JNI field IDs stored as usize (jfieldID is a raw pointer)
 static G_ART_METHOD_FIELD: AtomicUsize = AtomicUsize::new(0); // Executable.artMethod J
 static G_ACCESS_FLAGS_FIELD: AtomicUsize = AtomicUsize::new(0); // Executable.accessFlags I
 
-// 函数指针
-static G_SUSPEND_CTOR: AtomicUsize = AtomicUsize::new(0); // ScopedSuspendAll ctor
-static G_SUSPEND_DTOR: AtomicUsize = AtomicUsize::new(0); // ScopedSuspendAll dtor
-static G_SET_NOT_INTRINSIC: AtomicUsize = AtomicUsize::new(0); // ArtMethod::SetNotIntrinsic
-static G_SET_DEX_FILE_TRUSTED: AtomicUsize = AtomicUsize::new(0); // DexFile_setTrusted 符号
-static G_SET_DEX_FILE_TRUSTED_METHOD: AtomicUsize = AtomicUsize::new(0); // jmethodID 兜底
+// Function pointer globals
+static G_SUSPEND_CTOR: AtomicUsize = AtomicUsize::new(0);
+static G_SUSPEND_DTOR: AtomicUsize = AtomicUsize::new(0);
+static G_SET_NOT_INTRINSIC: AtomicUsize = AtomicUsize::new(0);
+static G_SET_DEX_FILE_TRUSTED: AtomicUsize = AtomicUsize::new(0);
+static G_SET_DEX_FILE_TRUSTED_METHOD: AtomicUsize = AtomicUsize::new(0);
+static G_RUNTIME_INSTANCE: AtomicUsize = AtomicUsize::new(0); // Runtime::instance_ (void**)
+static G_SET_RUNTIME_DEBUG_STATE: AtomicUsize = AtomicUsize::new(0); // SetRuntimeDebugState
+static G_SET_JAVA_DEBUGGABLE: AtomicUsize = AtomicUsize::new(0); // SetJavaDebuggable
 
-// hook 记录表
+// Hook record table
 struct HookRecord {
     backup_art: usize,
     original_access_flags: u32,
 }
 static G_HOOK_RECORDS: Mutex<Option<HashMap<usize, HookRecord>>> = Mutex::new(None);
 
-// ── ScopedArtSuspend RAII ─────────────────────────────────────────────────────
+// ── ScopedArtSuspend RAII wrapper ──────────────────────────────────────────────
 
 struct ScopedArtSuspend {
     storage: [u8; 256],
@@ -105,8 +108,8 @@ impl Drop for ScopedArtSuspend {
     }
 }
 
-// ── WritableArtMethod RAII ────────────────────────────────────────────────────
-// 逐页跟踪并恢复保护，对应 C++ WritableArtMethod 的 pages_ 数组。
+// ── WritableArtMethod RAII wrapper ────────────────────────────────────────────
+// Page-by-page tracking and restoration of memory protections.
 
 const MAX_PAGES: usize = 256 + 1; // kMaxArtMethodSize/page_size + 1
 
@@ -261,10 +264,9 @@ fn get_prot_for_addr(addr: usize) -> Option<c_int> {
     None
 }
 
-// ── JNI 初始化辅助 ─────────────────────────────────────────────────────────────
+// ── JNI initialization helpers ─────────────────────────────────────────────────────────────
 
-/// 找到 Executable.artMethod（J）和 Executable.accessFlags（I）字段 ID，
-/// 对应 C++ 的 init_reflection_fields。
+/// Find Executable.artMethod (J) and Executable.accessFlags (I) field IDs.
 unsafe fn init_reflection_fields(env: *mut RawJNIEnv) -> bool {
     let fns = *env;
     let exec_cls = ((*fns).v1_6.FindClass)(env, c"java/lang/reflect/Executable".as_ptr());
@@ -295,8 +297,8 @@ unsafe fn init_reflection_fields(env: *mut RawJNIEnv) -> bool {
     true
 }
 
-/// 通过 Throwable.getDeclaredConstructors 获取两个相邻 ArtMethod* 的差值，
-/// 以此测量 ArtMethod 结构体大小，对应 C++ 的 probe_art_method_layout。
+/// Measure ArtMethod size by computing the difference between two adjacent
+/// ArtMethod pointers obtained via Throwable.getDeclaredConstructors.
 unsafe fn probe_art_method_layout(env: *mut RawJNIEnv) -> Option<(usize, usize, u32)> // (first_art_method, method_size, access_flags)
 {
     let fns = *env;
@@ -369,7 +371,7 @@ unsafe fn probe_art_method_layout(env: *mut RawJNIEnv) -> Option<(usize, usize, 
         return None;
     }
     let size = first.abs_diff(second);
-    // 合理范围检查
+    // Sanity check: size must fit within expected bounds
     if size < std::mem::size_of::<usize>() * 3
         || size > 256
         || size % std::mem::size_of::<usize>() != 0
@@ -380,8 +382,7 @@ unsafe fn probe_art_method_layout(env: *mut RawJNIEnv) -> Option<(usize, usize, 
     Some((first, size, flags))
 }
 
-/// 在 ArtMethod 内存中扫描 access_flags 值，确定其偏移，
-/// 对应 C++ 的 find_access_flags_offset。
+/// Scan ArtMethod memory for the access_flags value to determine its offset.
 unsafe fn find_access_flags_offset(
     art_method: usize,
     method_size: usize,
@@ -405,7 +406,7 @@ unsafe fn find_access_flags_offset(
     found
 }
 
-/// 解析 DexFile.setTrusted jmethodID 作为 DexFile_setTrusted 符号的兜底。
+/// Resolve DexFile.setTrusted jmethodID as fallback for missing native symbol.
 unsafe fn resolve_dex_file_set_trusted_method(env: *mut RawJNIEnv) -> jmethodID {
     let fns = *env;
     let cls = ((*fns).v1_6.FindClass)(env, c"dalvik/system/DexFile".as_ptr());
@@ -413,7 +414,7 @@ unsafe fn resolve_dex_file_set_trusted_method(env: *mut RawJNIEnv) -> jmethodID 
         ((*fns).v1_6.ExceptionClear)(env);
         return std::ptr::null_mut();
     }
-    // setTrusted(Object cookie) 是 package-private 静态方法
+    // setTrusted(Object cookie) is package-private static
     let mid = ((*fns).v1_6.GetStaticMethodID)(
         env,
         cls,
@@ -432,16 +433,15 @@ fn has_dex_file_trust_backend() -> bool {
         || G_SET_DEX_FILE_TRUSTED_METHOD.load(Ordering::Relaxed) != 0
 }
 
-// ── 公开 API ──────────────────────────────────────────────────────────────────
+// ── Public API ──────────────────────────────────────────────────────────────────
 
-/// 初始化 ART hook 引擎：JNI 探测布局、解析符号、分配 trampoline pool。
-/// 对应 C++ art_hook_init。
+/// Initialize the ART hook engine: probe layout, resolve symbols, allocate trampoline pool.
 pub fn init(env: *mut RawJNIEnv) -> bool {
     if G_INITIALIZED.load(Ordering::Acquire) {
         return true;
     }
 
-    // 1. 定位 libart.so
+    // 1. Locate libart.so
     let art = match elf::find_art_library() {
         Some(a) => a,
         None => {
@@ -450,13 +450,13 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
         }
     };
 
-    // 2. 反射字段 ID
+    // 2. Probe reflection field IDs
     if !unsafe { init_reflection_fields(env) } {
         loge!("Zygisk: failed to probe ART reflection fields");
         return false;
     }
 
-    // 3. JNI 探测 ArtMethod 布局
+    // 3. Probe ArtMethod layout via JNI
     let (first_art_method, method_size, sample_flags) =
         match unsafe { probe_art_method_layout(env) } {
             Some(v) => v,
@@ -466,7 +466,7 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
             }
         };
 
-    // 4. 扫描 access_flags 偏移
+    // 4. Scan for access_flags offset
     let access_flags_offset =
         match unsafe { find_access_flags_offset(first_art_method, method_size, sample_flags) } {
             Some(o) => o,
@@ -476,7 +476,7 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
             }
         };
 
-    // 5. entry_point 在 ArtMethod 末尾
+    // 5. Entry point offset is at the end of ArtMethod
     let entry_point_offset = method_size - std::mem::size_of::<usize>();
     if access_flags_offset + 4 > entry_point_offset {
         loge!(
@@ -488,7 +488,7 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
         return false;
     }
 
-    // 6. 解析必需符号（ScopedSuspendAll ctor/dtor）
+    // 6. Resolve required symbols (ScopedSuspendAll ctor/dtor)
     let resolve = |sym: &str, prefix: bool| -> usize {
         elf::resolve_art_symbol(art.base, &art.path, sym, prefix)
     };
@@ -509,16 +509,16 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
         }
     };
 
-    // SetNotIntrinsic（可选）
+    // SetNotIntrinsic (optional)
     let set_not_intrinsic = resolve("_ZN3art9ArtMethod15SetNotIntrinsicEv", false);
 
-    // DexFile_setTrusted 符号（可选，有 JNI 兜底）
+    // DexFile_setTrusted symbol (optional, JNI fallback available)
     let mut set_trusted = resolve(
         "_ZN3artL18DexFile_setTrustedEP7_JNIEnvP7_jclassP8_jobject",
         true,
     );
     if set_trusted == 0 {
-        // 尝试 .gnu_debugdata
+        // Try .gnu_debugdata
         if let Some(off) = find_symbol_in_file(
             &art.path,
             "_ZN3artL18DexFile_setTrustedEP7_JNIEnvP7_jclassP8_jobject",
@@ -544,8 +544,8 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
         return false;
     }
 
-    // 7. acc 位掩码（按 API 等级）
-    // android_get_device_api_level 在 libandroid.so 中
+    // 7. Access flag masks by API level
+    // android_get_device_api_level is in libandroid.so
     unsafe extern "C" {
         fn android_get_device_api_level() -> libc::c_int;
     }
@@ -568,7 +568,7 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
         }
     };
 
-    // 提交全局状态
+    // Commit global state
     G_ART_METHOD_SIZE.store(method_size, Ordering::Release);
     G_ENTRY_POINT_OFFSET.store(entry_point_offset, Ordering::Release);
     G_ACCESS_FLAGS_OFFSET.store(access_flags_offset, Ordering::Release);
@@ -586,6 +586,25 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
     } else {
         G_SET_DEX_FILE_TRUSTED_METHOD.store(set_trusted_method, Ordering::Release);
         logw!("Zygisk: DexFile_setTrusted symbol unavailable; using registered JNI method");
+    }
+    // OEM compat: resolve Runtime symbols (optional, logs warning on failure)
+    let runtime_instance = resolve("_ZN3art7Runtime9instance_E", false);
+    let set_runtime_debug_state = resolve(
+        "_ZN3art7Runtime20SetRuntimeDebugStateENS0_17RuntimeDebugStateE",
+        false,
+    );
+    let set_java_debuggable = resolve("_ZN3art7Runtime17SetJavaDebuggableEb", false);
+    if runtime_instance != 0 {
+        G_RUNTIME_INSTANCE.store(runtime_instance, Ordering::Release);
+    }
+    if set_runtime_debug_state != 0 {
+        G_SET_RUNTIME_DEBUG_STATE.store(set_runtime_debug_state, Ordering::Release);
+    }
+    if set_java_debuggable != 0 {
+        G_SET_JAVA_DEBUGGABLE.store(set_java_debuggable, Ordering::Release);
+    }
+    if runtime_instance == 0 || (set_runtime_debug_state == 0 && set_java_debuggable == 0) {
+        logw!("Zygisk: Runtime::instance_ or SetRuntimeDebugState unavailable");
     }
     *G_HOOK_RECORDS.lock().unwrap() = Some(HashMap::new());
     G_POOL_STORAGE.get_or_init(|| pool);
@@ -607,8 +626,8 @@ pub fn is_initialized() -> bool {
     G_INITIALIZED.load(Ordering::Acquire)
 }
 
-/// 从 java.lang.reflect.Executable 获取对应的 ArtMethod*。
-/// 优先使用 JNI GetLongField(artMethod)，兜底用 FromReflectedMethod。
+/// Get the ArtMethod pointer from a java.lang.reflect.Executable.
+/// Prefers JNI GetLongField(artMethod), falls back to FromReflectedMethod.
 pub fn get_art_method(env: *mut RawJNIEnv, executable: jobject) -> usize {
     if executable.is_null() {
         return 0;
@@ -623,13 +642,12 @@ pub fn get_art_method(env: *mut RawJNIEnv, executable: jobject) -> usize {
             }
             ((*fns).v1_6.ExceptionClear)(env);
         }
-        // 兜底：FromReflectedMethod
+        // Fallback: FromReflectedMethod
         ((*fns).v1_6.FromReflectedMethod)(env, executable) as usize
     }
 }
 
-/// 安装方法 hook。调用方负责确保 target/backup/bridge 是有效的 ArtMethod*。
-/// 对应 C++ art_hook_method。
+/// Install a method hook. Caller must ensure target/backup/bridge are valid ArtMethod pointers.
 pub fn hook_method(
     _env: *mut RawJNIEnv,
     target_art: usize,
@@ -653,7 +671,7 @@ pub fn hook_method(
     let fast_interp = G_ACC_FAST_INTERPRETER.load(Ordering::Relaxed) as u32;
 
     unsafe {
-        // 检查是否已 hook
+        // Prevent double-hooking
         if G_HOOK_RECORDS
             .lock()
             .unwrap()
@@ -680,31 +698,33 @@ pub fn hook_method(
             return -6;
         }
 
-        // 保存原始 access_flags（只有这一份是干净的）
+        // Pristine copy of original access_flags
         let original_access_flags = ((target_art + af_off) as *const u32).read_volatile();
 
-        // 先设置 bridge：加 ACC_COMPILE_DONT_BOTHER，清 precompiled
+        // Set bridge: add ACC_COMPILE_DONT_BOTHER, clear precompiled
         let bridge_af = (bridge_art + af_off) as *mut u32;
         bridge_af.write_volatile((bridge_af.read_volatile() | ACC_COMPILE_DONT_BOTHER) & !precomp);
 
-        // 对 target：清 intrinsic，加 ACC_COMPILE_DONT_BOTHER，清 precompiled
+        // Target: clear intrinsic, re-read flags (set_not_intrinsic may have changed them)
         call_set_not_intrinsic(target_art);
         let target_af = (target_art + af_off) as *mut u32;
-        target_af.write_volatile((original_access_flags | ACC_COMPILE_DONT_BOTHER) & !precomp);
+        let mut target_flags = target_af.read_volatile(); // re-read, don't use snapshot
+        target_flags = (target_flags | ACC_COMPILE_DONT_BOTHER) & !precomp;
+        target_af.write_volatile(target_flags);
 
-        // 将 target 快照到 backup
+        // Snapshot target into backup
         std::ptr::copy_nonoverlapping(target_art as *const u8, backup_art as *mut u8, method_size);
 
-        // 清 target 的 fast_interpreter 位
+        // Clear target's fast_interpreter bit
         target_af.write_volatile(target_af.read_volatile() & !fast_interp);
 
-        // backup 非静态方法改为 private
+        // Non-static backup methods become private
         let baf = (backup_art + af_off) as *mut u32;
         if baf.read_volatile() & ACC_STATIC == 0 {
             baf.write_volatile((baf.read_volatile() | ACC_PRIVATE) & !(ACC_PUBLIC | ACC_PROTECTED));
         }
 
-        // 分配并写入 trampoline
+        // Allocate and write trampoline
         let pool = match G_POOL_STORAGE.get() {
             Some(p) => p,
             None => return -7,
@@ -738,14 +758,14 @@ unsafe fn call_set_not_intrinsic(art_method: usize) {
         let f: unsafe extern "C" fn(*mut c_void) = std::mem::transmute(fn_ptr);
         f(art_method as *mut c_void);
     } else {
-        // 兜底：手动清 ACC_INTRINSIC 位
+        // Fallback: manually clear ACC_INTRINSIC
         let af_off = G_ACCESS_FLAGS_OFFSET.load(Ordering::Relaxed);
         let af = (art_method + af_off) as *mut u32;
         af.write_volatile(af.read_volatile() & !ACC_INTRINSIC);
     }
 }
 
-/// 卸载方法 hook，从 backup 还原。对应 C++ art_unhook_method。
+/// Uninstall a method hook by restoring from backup.
 pub fn unhook_method(_env: *mut RawJNIEnv, target_art: usize, backup_art: usize) -> i32 {
     if !is_initialized() || target_art == 0 || backup_art == 0 {
         return -1;
@@ -791,22 +811,81 @@ pub fn unhook_method(_env: *mut RawJNIEnv, target_art: usize, backup_art: usize)
     0
 }
 
-/// 通过 mCookie + DexFile_setTrusted 符号（或注册的 JNI 方法兜底）信任 DexFile。
-/// 对应 C++ art_trust_dex_file / trust_dex_file。
+/// Toggle Runtime debug state around DexFile_setTrusted for OEM compatibility.
+/// Probes debug_state_ offset using a scratch buffer, then writes 2/0 directly to memory.
+static G_DEBUG_STATE_OFFSET: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+unsafe fn set_trust_debug_state(enabled: bool) {
+    let instance_ptr = G_RUNTIME_INSTANCE.load(Ordering::Relaxed);
+    if instance_ptr == 0 {
+        return;
+    }
+    let runtime = *(instance_ptr as *const *mut std::ffi::c_void);
+    if runtime.is_null() {
+        return;
+    }
+
+    // Probe debug_state_ offset once, cache result
+    let mut offset = G_DEBUG_STATE_OFFSET.load(Ordering::Relaxed);
+    if offset == usize::MAX {
+        let set_dbg = G_SET_RUNTIME_DEBUG_STATE.load(Ordering::Relaxed);
+        if set_dbg != 0 {
+            // Call SetRuntimeDebugState on zeroed scratch, scan for the written byte
+            let mut scratch = [0u8; 4096];
+            let f: unsafe extern "C" fn(*mut u8, libc::c_int) = std::mem::transmute(set_dbg);
+            f(scratch.as_mut_ptr(), 1);
+            offset = usize::MAX; // not found
+            let mut i = 1usize;
+            while i + 4 <= scratch.len() {
+                let mut v = 0u32;
+                std::ptr::copy_nonoverlapping(
+                    scratch.as_ptr().add(i),
+                    &mut v as *mut u32 as *mut u8,
+                    4,
+                );
+                if v == 1 {
+                    offset = i;
+                    break;
+                }
+                i += 1;
+            }
+        } else {
+            offset = 0; // function unavailable, skip memory write
+        }
+        G_DEBUG_STATE_OFFSET.store(offset, Ordering::Relaxed);
+    }
+
+    // Write debug_state_ directly (enabled=2, disabled=0)
+    if offset != usize::MAX && offset != 0 {
+        let state: u32 = if enabled { 2 } else { 0 };
+        let ptr = (runtime as *mut u8).add(offset) as *mut u32;
+        ptr.write_volatile(state);
+    }
+
+    // SetJavaDebuggable
+    let set_dbgbl = G_SET_JAVA_DEBUGGABLE.load(Ordering::Relaxed);
+    if set_dbgbl != 0 {
+        let f: unsafe extern "C" fn(*mut std::ffi::c_void, bool) = std::mem::transmute(set_dbgbl);
+        f(runtime, enabled);
+    }
+}
+
+/// Trust a DexFile via mCookie + DexFile_setTrusted (or JNI fallback).
+/// Wraps the call in set_trust_debug_state for OEM compatibility.
 pub fn trust_dex_file(env: *mut RawJNIEnv, dex_file: jobject) -> bool {
     if !is_initialized() || env.is_null() || dex_file.is_null() || !has_dex_file_trust_backend() {
         return false;
     }
     unsafe {
         let fns = *env;
-        // 找 dalvik.system.DexFile 类
+        // Find dalvik.system.DexFile class
         let dex_cls = ((*fns).v1_6.FindClass)(env, c"dalvik/system/DexFile".as_ptr());
         if dex_cls.is_null() {
             ((*fns).v1_6.ExceptionClear)(env);
             loge!("Zygisk: DexFile class not found");
             return false;
         }
-        // 获取 mCookie 字段
+        // Get mCookie field
         let cookie_fid = ((*fns).v1_6.GetFieldID)(
             env,
             dex_cls,
@@ -829,17 +908,18 @@ pub fn trust_dex_file(env: *mut RawJNIEnv, dex_file: jobject) -> bool {
             loge!("Zygisk: DexFile.mCookie is null");
             return false;
         }
-        // 调用 DexFile_setTrusted(env, class, cookie)
+        // Call DexFile_setTrusted with debug state toggle
+        set_trust_debug_state(true);
         let sym_fn = G_SET_DEX_FILE_TRUSTED.load(Ordering::Relaxed);
         if sym_fn != 0 {
             type SetTrustedFn = unsafe extern "C" fn(*mut RawJNIEnv, jclass, jobject);
             let f: SetTrustedFn = std::mem::transmute(sym_fn);
             f(env, dex_cls, cookie);
         } else {
-            // JNI 方法兜底
             let mid = G_SET_DEX_FILE_TRUSTED_METHOD.load(Ordering::Relaxed) as jmethodID;
             ((*fns).v1_6.CallStaticVoidMethod)(env, dex_cls, mid, cookie);
         }
+        set_trust_debug_state(false);
         let ok = ((*fns).v1_6.ExceptionCheck)(env) == JNI_FALSE;
         if !ok {
             loge!("Zygisk: DexFile.setTrusted exception");
@@ -851,8 +931,7 @@ pub fn trust_dex_file(env: *mut RawJNIEnv, dex_file: jobject) -> bool {
     }
 }
 
-/// 遍历 BaseDexClassLoader.pathList.dexElements[].dexFile 并逐一 trust。
-/// 对应 C++ art_trust_class_loader。
+/// Iterate BaseDexClassLoader.pathList.dexElements[].dexFile and trust each one.
 pub fn trust_class_loader(env: *mut RawJNIEnv, class_loader: jobject) -> bool {
     if !is_initialized() || env.is_null() || class_loader.is_null() || !has_dex_file_trust_backend()
     {

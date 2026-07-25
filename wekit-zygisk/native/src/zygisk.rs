@@ -11,7 +11,6 @@ use jni::sys::{JNINativeMethod, jboolean, jint, jintArray, jlong, jobjectArray, 
 use libc::{c_char, c_int, dev_t, ino_t};
 
 // Option values for setOption (mirrors zygisk::Option enum)
-pub const FORCE_DENYLIST_UNMOUNT: c_int = 0;
 pub const DLCLOSE_MODULE_LIBRARY: c_int = 1;
 
 /// api_table — laid out identically to zygisk::internal::api_table in zygisk.hpp.

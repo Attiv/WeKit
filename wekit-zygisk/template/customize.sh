@@ -95,7 +95,7 @@ else
   abort "! Unsupported platform: $ARCH"
 fi
 
-# Extract each APK, then derive the DEX payload required by the FunBox-style
+# Extract each APK, then derive the DEX payload required by the
 # InMemoryDexClassLoader bootstrap. Keeping DEX only inside the APK avoids
 # storing the same bytes twice in the module ZIP.
 extract_payload_dex() {
