@@ -9,11 +9,9 @@ import androidx.activity.ComponentDialog
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.LocalContext
 import androidx.core.graphics.drawable.toDrawable
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
@@ -50,14 +48,12 @@ fun showComposeDialog(
         setContentView(
             ComposeView(context).apply {
                 setContent {
-                    CompositionLocalProvider(LocalContext provides context) {
-                        ModuleTheme {
-                            Box(
-                                modifier = Modifier.wrapContentSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                scope.content()
-                            }
+                    ModuleTheme {
+                        Box(
+                            modifier = Modifier.wrapContentSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            scope.content()
                         }
                     }
                 }
