@@ -4,6 +4,7 @@
 mod companion;
 mod lifecycle;
 mod logging;
+mod natives;
 mod payload;
 mod protocol;
 mod zygisk;
