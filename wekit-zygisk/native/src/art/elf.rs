@@ -252,15 +252,15 @@ impl ElfFile {
                 _ => {}
             }
         }
-        if let (Some(ds), Some(dss)) = (dynsym_sh, dynsym_str) {
-            if let Some(off) = self.scan_symtab(ds, dss, sym_name) {
-                return Some(off);
-            }
+        if let (Some(ds), Some(dss)) = (dynsym_sh, dynsym_str)
+            && let Some(off) = self.scan_symtab(ds, dss, sym_name)
+        {
+            return Some(off);
         }
-        if let (Some(ss), Some(sss)) = (symtab_sh, symtab_str) {
-            if let Some(off) = self.scan_symtab(ss, sss, sym_name) {
-                return Some(off);
-            }
+        if let (Some(ss), Some(sss)) = (symtab_sh, symtab_str)
+            && let Some(off) = self.scan_symtab(ss, sss, sym_name)
+        {
+            return Some(off);
         }
         None
     }

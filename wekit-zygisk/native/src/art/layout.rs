@@ -24,10 +24,10 @@ fn android_api_level() -> u32 {
     // Try ro.build.version.sdk from build.prop
     if let Ok(s) = std::fs::read_to_string("/system/build.prop") {
         for line in s.lines() {
-            if let Some(val) = line.strip_prefix("ro.build.version.sdk=") {
-                if let Ok(n) = val.trim().parse() {
-                    return n;
-                }
+            if let Some(val) = line.strip_prefix("ro.build.version.sdk=")
+                && let Ok(n) = val.trim().parse()
+            {
+                return n;
             }
         }
     }
