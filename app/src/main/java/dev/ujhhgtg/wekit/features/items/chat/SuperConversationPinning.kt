@@ -199,7 +199,7 @@ object SuperConversationPinning : SwitchFeature(),
 
     private fun hookMvvmConversationComparator() {
         if (classMvvmConversationAdapter.isPlaceholder) {
-            WeLogger.w(TAG, "mvvm conversation comparator unavailable; using database ordering")
+            WeLogger.w(TAG, "mvvm conversation comparator unavailable")
             return
         }
 
