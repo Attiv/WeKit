@@ -121,10 +121,23 @@ jobs:
 
       - name: Collect APKs
         run: |
-          # Flavors nest output under apk/<flavor>/release/; flatten into one dir
-          # so downstream jobs (release / telegram) keep a flat artifact layout.
+          set -euo pipefail
           mkdir -p dist/apk
-          find app/build/outputs/apk -type f -name '*.apk' -exec cp -v {} dist/apk/ \;
+
+          expected_abis=$(printf '%s\n' arm64-v8a armeabi-v7a)
+          for flavor in standard legacy; do
+            apk="app/build/outputs/apk/$flavor/release/app-$flavor-release.apk"
+            test -f "$apk"
+
+            actual_abis=$(unzip -Z1 "$apk" 'lib/*/*.so' | cut -d/ -f2 | sort -u)
+            if [ "$actual_abis" != "$expected_abis" ]; then
+              echo "::error file=$apk::Expected universal arm64-v8a + armeabi-v7a APK, got: $actual_abis"
+              exit 1
+            fi
+
+            cp -v "$apk" dist/apk/
+          done
+
           echo "Collected APKs:"
           ls -1 dist/apk
 
@@ -192,8 +205,7 @@ jobs:
       - name: Build Zygisk module
         run: |
           ./x zygisk build --apk-release --release --skip-apk-build \
-            --apk artifacts/app-standard-arm64-v8a-release.apk \
-            --apk artifacts/app-standard-armeabi-v7a-release.apk
+            --apk artifacts/app-standard-release.apk
 
       - name: Upload Zygisk module
         uses: actions/upload-artifact@v7

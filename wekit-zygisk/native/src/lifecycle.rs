@@ -28,7 +28,6 @@ pub struct WeKitModule {
     pub module_dir_fd: Option<OwnedFd>,
     pub app_uid: uid_t,
     pub app_gid: gid_t,
-    pub abi_dir: &'static str,
     pub data_dir: String,
     pub process_name: String,
     pub dex_names: Vec<String>,
@@ -46,7 +45,6 @@ impl WeKitModule {
             module_dir_fd: None,
             app_uid: 0,
             app_gid: 0,
-            abi_dir: current_abi_dir(),
             data_dir: String::new(),
             process_name: String::new(),
             dex_names: Vec::new(),
@@ -55,19 +53,6 @@ impl WeKitModule {
             module_classloader: None,
         }
     }
-}
-
-#[cfg(target_arch = "aarch64")]
-fn current_abi_dir() -> &'static str {
-    "arm64-v8a"
-}
-#[cfg(target_arch = "arm")]
-fn current_abi_dir() -> &'static str {
-    "armeabi-v7a"
-}
-#[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
-fn current_abi_dir() -> &'static str {
-    "arm64-v8a"
 }
 
 // Helper: dereference a C++ reference-field (stored as *mut T) and read the jstring.
@@ -226,10 +211,9 @@ pub unsafe fn do_pre_app_specialize(module: &mut WeKitModule, args: *mut AppSpec
     module.data_dir = app_data_dir;
 
     module.process_name = nice_name.clone();
-    let dex_list_path = format!("payload/{}/dex.list", module.abi_dir);
-    module.dex_names = read_dex_list(mod_fd, &dex_list_path);
+    module.dex_names = read_dex_list(mod_fd, "payload/dex.list");
     if module.dex_names.is_empty() {
-        loge!("Zygisk: empty or missing dex.list for {}", module.abi_dir);
+        loge!("Zygisk: empty or missing payload/dex.list");
         (*module.api).set_option(DLCLOSE_MODULE_LIBRARY);
         return;
     }
@@ -258,16 +242,14 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
     let data_dir = module.data_dir.clone();
     let uid = module.app_uid;
     let gid = module.app_gid;
-    let abi = module.abi_dir;
-
     crate::payload::ensure_dir(&format!("{data_dir}/files"), uid, gid);
     crate::payload::ensure_dir(&format!("{data_dir}/files/mmkv"), uid, gid);
 
     // Copy APK
-    let apk_dst = format!("{data_dir}/files/mmkv/.wekit-bootstrap-{abi}.apk");
+    let apk_dst = format!("{data_dir}/files/mmkv/.wekit-bootstrap.apk");
     if !crate::payload::copy_module_file(
         mod_fd,
-        &format!("payload/{abi}/wekit.apk"),
+        "payload/wekit.apk",
         &apk_dst,
         uid,
         gid,
@@ -278,13 +260,13 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
     }
 
     // Copy DEX files and read them into memory
-    // dex_names already includes the .dex extension; source path is plain payload/{abi}/{name}
+    // dex_names already includes the .dex extension.
     let mut dex_bufs: Vec<Vec<u8>> = Vec::new();
     for name in module.dex_names.clone() {
-        let dst = format!("{data_dir}/files/mmkv/.wekit-bootstrap-{abi}-{name}");
+        let dst = format!("{data_dir}/files/mmkv/.wekit-bootstrap-{name}");
         if !crate::payload::copy_module_file(
             mod_fd,
-            &format!("payload/{abi}/{name}"), // no extra .dex — name already has it
+            &format!("payload/{name}"),
             &dst,
             uid,
             gid,

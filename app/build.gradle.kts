@@ -42,6 +42,10 @@ android {
         versionCode = commitCount
         versionName = "git+$gitHash"
 
+        ndk {
+            abiFilters += setOf("arm64-v8a", "armeabi-v7a")
+        }
+
         buildConfigField("String", "COMMIT_HASH", "\"${gitHash}\"")
         buildConfigField("String", "TAG", "\"WeKit\"")
         buildConfigField("long", "BUILD_TIMESTAMP", "${System.currentTimeMillis()}L")
@@ -49,10 +53,7 @@ android {
 
     splits {
         abi {
-            reset()
-            isEnable = true
-            include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = false
+            isEnable = false
         }
     }
 

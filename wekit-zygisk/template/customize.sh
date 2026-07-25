@@ -146,17 +146,11 @@ extract_payload_dex() {
   done
 }
 
-# Both ABI payloads are retained on arm64 devices because a 32-bit WeChat
-# process can still be specialized there.
 ui_print "- Extracting WeKit payload"
 mkdir -p "$MODPATH/payload"
-for abi in arm64-v8a armeabi-v7a
-do
-  payload_dir="payload/$abi"
-  extract "$ZIPFILE" "$payload_dir/wekit.apk" "$MODPATH"
-  extract_payload_dex "$MODPATH/$payload_dir/wekit.apk" "$MODPATH/$payload_dir"
-  ui_print "  WeKit payload installed to $MODPATH/$payload_dir"
-done
+extract "$ZIPFILE" "payload/wekit.apk" "$MODPATH"
+extract_payload_dex "$MODPATH/payload/wekit.apk" "$MODPATH/payload"
+ui_print "  WeKit payload installed to $MODPATH/payload"
 
 ui_print "- Setting permissions"
 set_perm_recursive "$MODPATH/zygisk" 0 0 0755 0644

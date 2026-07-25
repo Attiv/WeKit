@@ -35,7 +35,7 @@ const MIN_NDK_MAJOR: u32 = 29;
 // ── ABI table ─────────────────────────────────────────────────────────────────
 
 struct AbiSpec {
-    /// Directory name in `jniLibs/` and Android ABI split filter.
+    /// Directory name in `jniLibs/` and Android ABI filter.
     android_name: &'static str,
     /// Cargo target triple passed to `--target`.
     cargo_triple: &'static str,
@@ -65,7 +65,7 @@ static ABI_TABLE: &[AbiSpec] = &[
     },
 ];
 
-/// ABIs included in Gradle's ABI splits (the default build targets).
+/// ABIs included in the universal APK (the default build targets).
 static RELEASE_ABIS: &[&str] = &["arm64-v8a", "armeabi-v7a"];
 
 const ZYGISK_CARGO_PACKAGE: &str = "wekit-zygisk";
@@ -243,9 +243,9 @@ struct ZygiskBuildArgs {
     #[arg(long, value_name = "VERSION")]
     ndk: Option<String>,
 
-    /// APK to embed. Repeat once per ABI to override automatic split-APK discovery.
+    /// Universal APK to embed instead of using automatic APK discovery.
     #[arg(long = "apk", value_name = "APK")]
-    apks: Vec<PathBuf>,
+    apk: Option<PathBuf>,
 
     /// Reuse APK outputs for the selected APK profile instead of running Gradle.
     #[arg(long)]
@@ -792,6 +792,7 @@ fn build_zygisk_native(
     requested_ndk: Option<&str>,
     abi_names: &[String],
     force: bool,
+    save_symbols: bool,
 ) -> Result<()> {
     let abis = resolve_zygisk_abis(abi_names)?;
     let ndk_dir = zygisk_ndk_dir(root, requested_ndk)?;
@@ -804,7 +805,7 @@ fn build_zygisk_native(
             remove_dir_if_exists(&output_dir)?;
             remove_dir_if_exists(&symbols_dir)?;
         }
-        build_zygisk_native_rust(root, profile, abi, &ndk_dir)?;
+        build_zygisk_native_rust(root, profile, abi, &ndk_dir, save_symbols)?;
     }
     Ok(())
 }
@@ -814,6 +815,7 @@ fn build_zygisk_native_rust(
     profile: ZygiskBuildProfile,
     abi: &ZygiskAbiSpec,
     ndk_dir: &Path,
+    save_symbols: bool,
 ) -> Result<()> {
     let zygisk_native = zygisk_dir(root).join("native");
     let cargo_triple = ABI_TABLE
@@ -831,6 +833,12 @@ fn build_zygisk_native_rust(
     ];
     if matches!(profile, ZygiskBuildProfile::Release) {
         args.push("--release".to_owned());
+        if save_symbols {
+            args.extend([
+                "--config".to_owned(),
+                "profile.release.strip=\"none\"".to_owned(),
+            ]);
+        }
     }
 
     println!("zygisk(rust): {} ({})", abi.android_name, profile.name());
@@ -846,13 +854,14 @@ fn build_zygisk_native_rust(
         .join(profile_dir)
         .join(format!("lib{ZYGISK_MODULE_ID}.so"));
 
-    // Publish only this build. Stale libraries from an earlier module ID must
-    // not leak into the module ZIP.
     let sym_dir = zygisk_symbols_dir(root, profile, abi);
     remove_dir_if_exists(&sym_dir)?;
-    fs::create_dir_all(&sym_dir)?;
-    let sym_so = sym_dir.join(format!("lib{ZYGISK_MODULE_ID}.so"));
-    fs::copy(&src_so, &sym_so).with_context(|| format!("copy unstripped: {}", src_so.display()))?;
+    if save_symbols {
+        fs::create_dir_all(&sym_dir)?;
+        let sym_so = sym_dir.join(format!("lib{ZYGISK_MODULE_ID}.so"));
+        fs::copy(&src_so, &sym_so)
+            .with_context(|| format!("copy unstripped: {}", src_so.display()))?;
+    }
 
     // Strip into output/native
     let out_dir = zygisk_native_output_dir(root, profile, abi);
@@ -889,6 +898,7 @@ fn task_zygisk_native(args: &ZygiskNativeArgs) -> Result<()> {
         args.ndk.as_deref(),
         &args.abis,
         args.force,
+        false,
     )
 }
 
@@ -906,12 +916,19 @@ fn task_zygisk_build(args: &ZygiskBuildArgs) -> Result<PathBuf> {
         run_gradlew(&[&gradle_task], &root)?;
     }
 
-    build_zygisk_native(&root, zygisk_profile, args.ndk.as_deref(), &[], args.force)?;
+    build_zygisk_native(
+        &root,
+        zygisk_profile,
+        args.ndk.as_deref(),
+        &[],
+        args.force,
+        args.save_symbols,
+    )?;
     package_zygisk_module(
         &root,
         zygisk_profile,
         apk_profile,
-        &args.apks,
+        args.apk.as_deref(),
         args.save_symbols,
     )
 }
@@ -938,20 +955,16 @@ fn file_modified(path: &Path) -> std::time::SystemTime {
         .unwrap_or(std::time::UNIX_EPOCH)
 }
 
-fn resolve_zygisk_payload_apks(
+fn resolve_zygisk_payload_apk(
     root: &Path,
     profile: ZygiskBuildProfile,
-    provided: &[PathBuf],
-) -> Result<Vec<(&'static str, PathBuf)>> {
-    let explicit = !provided.is_empty();
-    let candidates = if explicit {
-        provided
-            .iter()
-            .map(|path| {
-                path.canonicalize()
-                    .with_context(|| format!("WeKit APK does not exist: {}", path.display()))
-            })
-            .collect::<Result<Vec<_>>>()?
+    provided: Option<&Path>,
+) -> Result<PathBuf> {
+    let candidates = if let Some(path) = provided {
+        vec![
+            path.canonicalize()
+                .with_context(|| format!("WeKit APK does not exist: {}", path.display()))?,
+        ]
     } else {
         let output_dir = root.join("app/build/outputs/apk");
         WalkDir::new(&output_dir)
@@ -972,69 +985,49 @@ fn resolve_zygisk_payload_apks(
             .collect::<Vec<_>>()
     };
 
-    let mut resolved: Vec<(&'static str, PathBuf)> = Vec::new();
+    let mut resolved: Option<(bool, std::time::SystemTime, PathBuf)> = None;
     for candidate in candidates {
         if !candidate.is_file() {
             bail!("WeKit APK does not exist: {}", candidate.display());
         }
+        let abis = apk_abis(&candidate)?;
+        if !ZYGISK_ABIS
+            .iter()
+            .all(|abi| abis.contains(&abi.android_name))
+        {
+            continue;
+        }
         let is_standard = candidate
             .components()
             .any(|component| component.as_os_str() == "standard");
-        for abi in apk_abis(&candidate)? {
-            let current = resolved
-                .iter_mut()
-                .find(|(current_abi, _)| *current_abi == abi);
-            let use_candidate = match current {
-                None => true,
-                Some((_, current_path)) if explicit => {
-                    file_modified(&candidate) > file_modified(current_path)
-                }
-                Some((_, current_path)) => {
-                    let current_standard = current_path
-                        .components()
-                        .any(|component| component.as_os_str() == "standard");
-                    (is_standard, file_modified(&candidate))
-                        > (current_standard, file_modified(current_path))
-                }
-            };
-            if use_candidate {
-                if let Some((_, current_path)) = current {
-                    *current_path = candidate.clone();
-                } else {
-                    resolved.push((abi, candidate.clone()));
-                }
-            }
+        let modified = file_modified(&candidate);
+        let use_candidate =
+            resolved
+                .as_ref()
+                .is_none_or(|(current_standard, current_modified, _)| {
+                    provided.is_none()
+                        && (is_standard, modified) > (*current_standard, *current_modified)
+                });
+        if use_candidate {
+            resolved = Some((is_standard, modified, candidate));
         }
     }
 
-    let missing = ZYGISK_ABIS
-        .iter()
-        .filter(|abi| {
-            !resolved
-                .iter()
-                .any(|(resolved_abi, _)| *resolved_abi == abi.android_name)
-        })
-        .map(|abi| abi.android_name)
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        let source = if explicit {
-            "provided --apk paths"
+    resolved.map(|(_, _, path)| path).with_context(|| {
+        let source = if provided.is_some() {
+            "the provided --apk"
         } else {
             "app/build/outputs/apk"
         };
-        bail!(
-            "no compatible WeKit APK for {} in {source}; build standard split APKs or pass --apk once per ABI",
-            missing.join(", ")
-        );
-    }
-
-    resolved.sort_by_key(|(abi, _)| {
-        ZYGISK_ABIS
-            .iter()
-            .position(|candidate| candidate.android_name == *abi)
-            .unwrap()
-    });
-    Ok(resolved)
+        format!(
+            "no universal WeKit APK containing {} found in {source}",
+            ZYGISK_ABIS
+                .iter()
+                .map(|abi| abi.android_name)
+                .collect::<Vec<_>>()
+                .join(" and ")
+        )
+    })
 }
 
 fn dex_entry_order(name: &str) -> Option<u32> {
@@ -1049,10 +1042,8 @@ fn dex_entry_order(name: &str) -> Option<u32> {
     (index >= 2).then_some(index)
 }
 
-fn export_zygisk_payload(apk: &Path, payload_dir: &Path, abi: &str) -> Result<()> {
-    let abi_dir = payload_dir.join(abi);
-    fs::create_dir_all(&abi_dir)?;
-
+fn export_zygisk_payload(apk: &Path, payload_dir: &Path) -> Result<()> {
+    fs::create_dir_all(payload_dir)?;
     let input =
         fs::File::open(apk).with_context(|| format!("could not open APK {}", apk.display()))?;
     let mut archive = ZipArchive::new(input)
@@ -1078,7 +1069,7 @@ fn export_zygisk_payload(apk: &Path, payload_dir: &Path, abi: &str) -> Result<()
         }
     }
 
-    let apk_destination = abi_dir.join("wekit.apk");
+    let apk_destination = payload_dir.join("wekit.apk");
     fs::copy(apk, &apk_destination).with_context(|| {
         format!(
             "could not copy payload {} to {}",
@@ -1239,7 +1230,7 @@ fn package_zygisk_module(
     root: &Path,
     profile: ZygiskBuildProfile,
     apk_profile: ZygiskBuildProfile,
-    explicit_apks: &[PathBuf],
+    explicit_apk: Option<&Path>,
     save_symbols: bool,
 ) -> Result<PathBuf> {
     let module_root = zygisk_dir(root);
@@ -1290,14 +1281,12 @@ fn package_zygisk_module(
         &module_dir,
     )?;
     let payload_dir = module_dir.join("payload");
-    fs::create_dir_all(&payload_dir)?;
-    for (abi, source) in resolve_zygisk_payload_apks(root, apk_profile, explicit_apks)? {
-        export_zygisk_payload(&source, &payload_dir, abi)?;
-        println!(
-            "zygisk(package): embedded {} -> payload/{abi}/wekit.apk (DEX extracted during installation)",
-            source.display()
-        );
-    }
+    let source = resolve_zygisk_payload_apk(root, apk_profile, explicit_apk)?;
+    export_zygisk_payload(&source, &payload_dir)?;
+    println!(
+        "zygisk(package): embedded {} -> payload/wekit.apk (DEX extracted during installation)",
+        source.display()
+    );
 
     let build_name = format!("{ZYGISK_MODULE_NAME}-{version_code}-{version_name}");
     let release_dir = module_root.join("release");
@@ -1584,6 +1573,25 @@ mod tests {
         assert!(
             Cli::try_parse_from(["xtask", "zygisk", "build", "--apk-debug", "--apk-release",])
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn zygisk_build_accepts_only_one_universal_apk() {
+        let args = parse_zygisk_build_args(&["--apk", "wekit-universal.apk"]);
+        assert_eq!(args.apk, Some(PathBuf::from("wekit-universal.apk")));
+
+        assert!(
+            Cli::try_parse_from([
+                "xtask",
+                "zygisk",
+                "build",
+                "--apk",
+                "first.apk",
+                "--apk",
+                "second.apk",
+            ])
+            .is_err()
         );
     }
 

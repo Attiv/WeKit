@@ -137,13 +137,11 @@ app/src/main/rust/wekit-native/.cargo/config.toml
 `--native-only` 会忽略 `--flavor` 和 `--release`, native 库始终使用 Cargo release
 profile。
 
-Gradle 当前只输出 ARM64 和 ARM32 APK split:
+Gradle 为每个 flavor 输出一个同时包含 ARM64 和 ARM32 native 库的 universal APK:
 
 ```none
-app/build/outputs/apk/standard/debug/app-standard-arm64-v8a-debug.apk
-app/build/outputs/apk/standard/debug/app-standard-armeabi-v7a-debug.apk
-app/build/outputs/apk/legacy/debug/app-legacy-arm64-v8a-debug.apk
-app/build/outputs/apk/legacy/debug/app-legacy-armeabi-v7a-debug.apk
+app/build/outputs/apk/standard/debug/app-standard-debug.apk
+app/build/outputs/apk/legacy/debug/app-legacy-debug.apk
 ```
 
 release 产物位于对应的 `standard/release/` 和 `legacy/release/` 目录。
