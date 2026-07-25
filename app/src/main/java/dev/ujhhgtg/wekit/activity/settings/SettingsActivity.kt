@@ -2,6 +2,7 @@ package dev.ujhhgtg.wekit.activity.settings
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.Keep
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -167,10 +169,13 @@ private sealed interface SettingsNavTarget {
 @Composable
 private fun SettingsRoot(onFinish: () -> Unit) {
     val stack = remember { mutableStateListOf<SettingsNavTarget>(SettingsNavTarget.Main) }
+    val pagerState = rememberPagerState(pageCount = { TAB_ITEMS.size })
+    val scope = rememberCoroutineScope()
 
     MiuixStackNavigator(stack = stack, onExitRoot = onFinish) { screen, push, pop ->
         when (screen) {
             SettingsNavTarget.Main -> MainPagerScreen(
+                pagerState = pagerState,
                 onOpenCategory = { push(SettingsNavTarget.Category(it)) },
                 onOpenLicense = { push(SettingsNavTarget.License) },
             )
@@ -185,14 +190,23 @@ private fun SettingsRoot(onFinish: () -> Unit) {
             )
         }
     }
+
+    // System back always returns to the home tab first. Explicit in-app back buttons retain
+    // their normal stack-pop behavior.
+    BackHandler(enabled = stack.size > 1 || pagerState.currentPage != 0) {
+        if (stack.size > 1) {
+            stack.subList(1, stack.size).clear()
+        }
+        scope.launch { pagerState.animateScrollToPage(0) }
+    }
 }
 
 @Composable
 private fun MainPagerScreen(
+    pagerState: PagerState,
     onOpenCategory: (String) -> Unit,
     onOpenLicense: () -> Unit,
 ) {
-    val pagerState = rememberPagerState(pageCount = { 4 })
     val isDragged by pagerState.interactionSource.collectIsDraggedAsState()
     val scope = rememberCoroutineScope()
     val backdrop = rememberLayerBackdrop()
@@ -437,7 +451,6 @@ fun FeatureRow(
         )
     }
 }
-
 
 
 
