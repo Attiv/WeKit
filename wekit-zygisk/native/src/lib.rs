@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 mod logging;
+mod protocol;
 mod zygisk;
 
 use std::ffi::c_void;
