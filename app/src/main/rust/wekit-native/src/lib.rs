@@ -7,7 +7,6 @@ mod audio_utils;
 mod crash_handler;
 mod crash_triggerer;
 mod logging;
-mod native_hook;
 mod signature_verifier;
 mod telegram_sticker;
 mod utils;

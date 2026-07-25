@@ -14,12 +14,10 @@ import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
-import dev.ujhhgtg.wekit.utils.AudioUtils
 import dev.ujhhgtg.wekit.utils.RuntimeConfig
 import dev.ujhhgtg.wekit.utils.android.copyToClipboard
 import dev.ujhhgtg.wekit.utils.android.getTopMostActivity
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.coerceToInt
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -48,15 +46,11 @@ object ForwardFavoriteVoices : SwitchFeature() {
             val favInfo = ProtoBuf.decodeFromByteArray<FavInfoProto>(bytes)
             val voiceInfo = favInfo.voiceInfo
 
-            var voiceFilePath = voiceInfo.filePath
-
-            if (voiceFilePath == null) {
-                val baseStorageDir = RuntimeConfig.userDataDir
-                val cacheName = voiceInfo.fileCacheName
-                val bucketId = cacheName.hashCode() and 0xFF
-
-                voiceFilePath = (baseStorageDir / "favorite" / bucketId.toString() / "$cacheName.${voiceInfo.fileCacheType}").absolutePathString()
-            }
+            val cacheName = voiceInfo.fileCacheName
+            val bucketId = cacheName.hashCode() and 0xFF
+            val cacheDir = RuntimeConfig.userDataDir / "favorite" / bucketId.toString()
+            val voiceFilePath =
+                (cacheDir / "$cacheName.${voiceInfo.fileCacheType}").absolutePathString()
 
             val ctx = thisObject as Activity
 
@@ -76,7 +70,11 @@ object ForwardFavoriteVoices : SwitchFeature() {
                             showToast(ctx, "已复制")
                         }) { Text("复制路径") }
                         Button({
-                            WeMessageApi.sendVoice(WeCurrentConversationApi.value, voiceFilePath, AudioUtils.getDurationMs(voiceFilePath).coerceToInt())
+                            WeMessageApi.sendVoice(
+                                WeCurrentConversationApi.value,
+                                voiceFilePath,
+                                voiceInfo.duration
+                            )
                             showToast(ctx, "已发送")
                             onDismiss()
                             getTopMostActivity()?.finish()
