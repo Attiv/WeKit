@@ -193,7 +193,6 @@ object ReadReceipts : ClickableFeature(), WeChatMessageViewApi.ICreateViewListen
                 <title>$escapedText</title>
                 <action>view</action>
                 <type>57</type>
-                <thumburl><![CDATA[$pixelUrl]]></thumburl>
                 <refermsg>
                   <type>49</type>
                   <svrid>3081795456970157299</svrid>
