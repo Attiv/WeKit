@@ -1,6 +1,7 @@
 #![allow(unused)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
+mod art;
 mod companion;
 mod lifecycle;
 mod logging;
