@@ -1,12 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Android log — 直接绑定 __android_log_write，风格对齐 wekit-native/logging.rs
+// Android logging
+//
+// Binds `__android_log_write` directly instead of going through the `log`
+// facade, keeping the dependency footprint minimal.  On non-Android hosts the
+// macros fall back to `eprintln!` so that unit tests can run without changes.
 // ─────────────────────────────────────────────────────────────────────────────
-use std::ffi::CString;
 
 use libc::c_int;
 
 #[cfg(target_os = "android")]
-use std::ffi::c_char;
+use std::ffi::{CString, c_char};
 
 pub const ANDROID_LOG_INFO: c_int = 4;
 pub const ANDROID_LOG_WARN: c_int = 5;

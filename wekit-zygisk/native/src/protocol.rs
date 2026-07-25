@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Companion / Telegram binary protocol — aligned with main.cpp:45–211
+// Companion / Telegram binary protocol
 // ─────────────────────────────────────────────────────────────────────────────
+
 use libc::c_int;
 use std::io::{self, ErrorKind};
 
@@ -16,6 +17,7 @@ pub const TELEGRAM_REQUEST_DISCOVER: u8 = 0x01;
 pub const TELEGRAM_REQUEST_COPY_DATABASE: u8 = 0x02;
 pub const TELEGRAM_RESPONSE_OK: u8 = 0;
 pub const TELEGRAM_RESPONSE_ERROR: u8 = 1;
+pub const TELEGRAM_RESPONSE_DISABLED: u8 = 2; // WeKit target disabled
 
 // ── Private IO helpers ────────────────────────────────────────────────────────
 

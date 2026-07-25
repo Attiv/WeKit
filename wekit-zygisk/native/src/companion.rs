@@ -1,18 +1,21 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Zygisk companion — allow-list check + double-fork telegram worker
-// Aligns with main.cpp companion_handler (lines 522–655) and
-// telegram_worker (lines 433–520)
+// Zygisk companion process handler
+//
+// The companion runs as root before app specialization.  It checks the
+// injection allow-list, then either answers a simple enable/disable query or
+// creates an abstract Unix socket and double-forks a Telegram snapshot worker
+// that is adopted by init, keeping it alive after the companion exits.
 // ─────────────────────────────────────────────────────────────────────────────
 
 use crate::protocol::{
     COMPANION_DISABLED, COMPANION_ENABLED, COMPANION_ERROR, COMPANION_REQUEST_ENABLED,
     COMPANION_REQUEST_TELEGRAM_SESSION, TELEGRAM_REQUEST_COPY_DATABASE, TELEGRAM_REQUEST_DISCOVER,
-    TELEGRAM_RESPONSE_OK, read_i32_from_fd, read_string_from_fd, read_u8_from_fd, read_u16_from_fd,
+    TELEGRAM_RESPONSE_OK, read_i32_from_fd, read_string_from_fd, read_u8_from_fd,
     write_error_frame, write_string_to_fd, write_u8_to_fd, write_u16_to_fd, write_u64_to_fd,
 };
 use crate::{loge, logi};
 use libc::{AF_UNIX, SOCK_STREAM, c_int, sockaddr_un};
-use std::{ffi::CString, fs};
+use std::fs;
 
 const TARGETS_PATH: &str = "/data/adb/wekit/injection-targets.tsv";
 const WECHAT_PACKAGE_PREFIX: &str = "com.tencent.mm";

@@ -1,5 +1,9 @@
-// art/layout.rs — ArtMethod layout detection + acc_flags constants
-// Aligns with art_hook.cpp layout detection logic
+// art/layout.rs — ArtMethod layout probing and access-flags constants
+//
+// Detects the `ArtMethod` struct size and field offsets for the running Android
+// version, and attempts to read the `kAccPreCompiled` flag value from
+// `libart.so` at runtime.  These values are required before any hook can be
+// installed.
 
 use crate::art::elf::find_symbol_in_file;
 use crate::logi;

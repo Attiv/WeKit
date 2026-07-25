@@ -1,5 +1,10 @@
-// art/trampoline.rs — dual-mapped trampoline pool
-// Aligns with art_hook.cpp TrampolinePool (lines 780-897)
+// art/trampoline.rs — executable trampoline pool
+//
+// Allocates small machine-code stubs used to redirect ART method dispatch.
+// Uses a dual-mapped `memfd`: one `PROT_READ|PROT_WRITE` alias for writing the
+// stub bytes and one `PROT_READ|PROT_EXEC` alias for executing them.  This
+// avoids any `mprotect(PROT_EXEC)` call, which is blocked by SELinux on
+// modern Android.  Supports arm64 (20-byte stub) and arm32 (12-byte stub).
 
 use crate::loge;
 use libc::c_int;

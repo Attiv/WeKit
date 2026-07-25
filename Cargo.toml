@@ -13,5 +13,5 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
-[profile.release.package.wekit_zygisk]
+[profile.release.package.wekit-zygisk]
 strip = "none"

@@ -1,5 +1,4 @@
 // so_hider.rs — /proc/self/maps parsing + memfd/mprotect/MAP_FIXED remapping
-// Aligns with so_hider.cpp: collect-then-remap order (line 223)
 
 use crate::{loge, logi};
 use libc::c_int;

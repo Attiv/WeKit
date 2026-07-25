@@ -448,14 +448,16 @@ fn resolve_zygisk_abis<'a>(names: &[String]) -> Result<Vec<&'a ZygiskAbiSpec>> {
 /// Return `ANDROID_HOME`, falling back to `sdk.dir` in `local.properties`.
 fn find_android_home(workspace_root: &Path) -> Result<String> {
     if let Ok(home) = env::var("ANDROID_HOME")
-        && !home.is_empty() {
-            return Ok(home);
-        }
+        && !home.is_empty()
+    {
+        return Ok(home);
+    }
 
     if let Ok(home) = env::var("ANDROID_SDK_ROOT")
-        && !home.is_empty() {
-            return Ok(home);
-        }
+        && !home.is_empty()
+    {
+        return Ok(home);
+    }
 
     let props_path = workspace_root.join("local.properties");
     let props = fs::read_to_string(&props_path).with_context(|| {
@@ -929,7 +931,10 @@ fn build_zygisk_native_rust(
     }
 
     println!("zygisk(rust): {} ({})", abi.android_name, profile.name());
-    run_cargo(&args.iter().map(String::as_str).collect::<Vec<_>>(), &zygisk_native)?;
+    run_cargo(
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        &zygisk_native,
+    )?;
 
     let profile_dir = profile.name();
     let src_so = root
@@ -942,8 +947,7 @@ fn build_zygisk_native_rust(
     let sym_dir = zygisk_symbols_dir(root, profile, abi);
     fs::create_dir_all(&sym_dir)?;
     let sym_so = sym_dir.join(format!("lib{ZYGISK_MODULE_ID}.so"));
-    fs::copy(&src_so, &sym_so)
-        .with_context(|| format!("copy unstripped: {}", src_so.display()))?;
+    fs::copy(&src_so, &sym_so).with_context(|| format!("copy unstripped: {}", src_so.display()))?;
 
     // Strip into output/native
     let out_dir = zygisk_native_output_dir(root, profile, abi);
@@ -957,7 +961,10 @@ fn build_zygisk_native_rust(
         .join("bin/llvm-strip");
     run_cmd_owned(
         strip.to_str().unwrap(),
-        &["--strip-all".to_owned(), out_so.to_str().unwrap().to_owned()],
+        &[
+            "--strip-all".to_owned(),
+            out_so.to_str().unwrap().to_owned(),
+        ],
         root,
     )?;
 

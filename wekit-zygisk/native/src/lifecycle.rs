@@ -1,9 +1,13 @@
-// lifecycle — WeKitModule + three Zygisk callbacks
-// Aligns with main.cpp WeKitZygisk class (lines 1344-1576)
+// lifecycle — Zygisk module lifecycle callbacks
+//
+// Implements the three specialization hooks called by the Zygisk framework:
+// `preAppSpecialize` (allow-list + companion IPC + resource acquisition),
+// `postAppSpecialize` (APK/DEX copy, classloader bootstrap), and
+// `preServerSpecialize` (dlclose — module does not inject into system_server).
 
 use crate::protocol::{
-    COMPANION_DISABLED, COMPANION_ENABLED, COMPANION_REQUEST_ENABLED,
-    COMPANION_REQUEST_TELEGRAM_SESSION, read_u8_from_fd, write_string_to_fd, write_u8_to_fd,
+    COMPANION_ENABLED, COMPANION_REQUEST_ENABLED, COMPANION_REQUEST_TELEGRAM_SESSION,
+    read_u8_from_fd, write_string_to_fd, write_u8_to_fd,
 };
 use crate::zygisk::{ApiTable, AppSpecializeArgs, DLCLOSE_MODULE_LIBRARY, ServerSpecializeArgs};
 use crate::{loge, logi};
@@ -52,17 +56,11 @@ impl WeKitModule {
 }
 
 #[cfg(target_arch = "aarch64")]
-fn current_abi_dir() -> &'static str {
-    "arm64"
-}
+fn current_abi_dir() -> &'static str { "arm64-v8a" }
 #[cfg(target_arch = "arm")]
-fn current_abi_dir() -> &'static str {
-    "arm"
-}
+fn current_abi_dir() -> &'static str { "armeabi-v7a" }
 #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
-fn current_abi_dir() -> &'static str {
-    "arm64"
-}
+fn current_abi_dir() -> &'static str { "arm64-v8a" }
 
 // Helper: dereference a C++ reference-field (stored as *mut T) and read the jstring.
 unsafe fn read_jstring(env: *mut RawJNIEnv, field_ptr: *mut jstring) -> Option<String> {
@@ -195,10 +193,13 @@ pub unsafe fn do_pre_app_specialize(module: &mut WeKitModule, args: *mut AppSpec
         return;
     }
 
-    // Non-isolated processes: negotiate Telegram socket
-    if !nice_name.contains(':') {
-        module.telegram_socket_name = negotiate_telegram_socket(module.api, uid, &nice_name);
-    }
+    // Non-isolated processes: negotiate Telegram socket, write to global
+    if !nice_name.contains(':')
+        && let Some(name) = negotiate_telegram_socket(module.api, uid, &nice_name) {
+            *crate::TELEGRAM_SOCKET_NAME.lock().unwrap() = name.clone();
+            module.telegram_socket_name = Some(name);
+            logi!("Zygisk: retained Telegram root companion socket for {nice_name}");
+        }
 
     module.enabled = true;
     logi!("Zygisk: preAppSpecialize OK for {nice_name}");

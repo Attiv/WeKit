@@ -1,9 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // payload — APK/DEX file copy + InMemoryDexClassLoader construction
-// Aligns with main.cpp postAppSpecialize helpers (lines 1430–1555)
 // ─────────────────────────────────────────────────────────────────────────────
 
-use crate::{loge, logi};
+use crate::loge;
 use jni::sys::{JNIEnv as RawJNIEnv, jobject};
 use libc::{gid_t, uid_t};
 use std::{ffi::CString, fs, os::unix::io::RawFd};

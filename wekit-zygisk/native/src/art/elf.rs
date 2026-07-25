@@ -1,7 +1,12 @@
-// art/elf.rs — ELF32/64 symbol scan + .gnu_debugdata XZ decompression
-// Aligns with art_hook.cpp ELF parsing (lines 107-407)
+// art/elf.rs — ELF32/64 symbol scanner and .gnu_debugdata decompressor
+//
+// Locates `libart.so` in the process address space via `dl_iterate_phdr`, then
+// scans its section headers for symbols.  When the on-disk `.dynsym`/`.symtab`
+// do not contain the target name, the `.gnu_debugdata` section (an XZ-compressed
+// mini ELF) is decompressed at runtime using `lzma_stream_buffer_decode` loaded
+// from `liblzma.so` via `dlopen`/`dlsym`.
 
-use crate::{loge, logi};
+use crate::loge;
 use libc::c_int;
 use std::{
     ffi::{CStr, c_char, c_void},
@@ -264,6 +269,30 @@ impl ElfFile {
         }
         None
     }
+
+    /// find_symbol 的前缀匹配版本，供 resolve_art_symbol 使用。
+    pub fn find_symbol_with_prefix(&self, sym_name: &str, prefix: bool) -> Option<usize> {
+        if !prefix { return self.find_symbol(sym_name); }
+        let e = self.ehdr();
+        for i in 0..e.e_shnum {
+            let sh = self.shdr(i)?;
+            if sh.sh_type != SHT_DYNSYM && sh.sh_type != SHT_SYMTAB { continue; }
+            let str_sh = self.shdr(sh.sh_link as u16)?;
+            let sym_base = unsafe { self.base.add(sh.sh_offset as usize) };
+            let str_base = unsafe { self.base.add(str_sh.sh_offset as usize) };
+            let count = sh.sh_size as usize / std::mem::size_of::<Sym>();
+            for j in 0..count {
+                let sym = unsafe { &*(sym_base.add(j * std::mem::size_of::<Sym>()) as *const Sym) };
+                if sym.st_value == 0 { continue; }
+                let name = unsafe {
+                    CStr::from_ptr(str_base.add(sym.st_name as usize) as *const c_char)
+                        .to_str().unwrap_or("")
+                };
+                if name.starts_with(sym_name) { return Some(sym.st_value as usize); }
+            }
+        }
+        None
+    }
 }
 
 // ── dl_iterate_phdr ART library finder ───────────────────────────────────────
@@ -383,4 +412,62 @@ pub fn find_symbol_in_file(path: &str, sym_name: &str) -> Option<usize> {
     // Parse the decompressed mini ELF without munmap (borrowed slice)
     let mini = ElfFile::from_slice(&decompressed)?;
     mini.find_symbol(sym_name)
+}
+
+/// ART 符号解析：先尝试 dlsym(RTLD_DEFAULT)，再扫描 ELF 文件，最后走兜底路径。
+/// 对应 C++ resolve_art_symbol。prefix=true 时做前缀匹配。
+/// 返回值是运行时地址（loaded_base + symbol_value）。
+pub fn resolve_art_symbol(art_base: usize, art_path: &str, name: &str, prefix: bool) -> usize {
+    // 1. 非前缀搜索先用 dlsym
+    if !prefix
+        && let Ok(c) = std::ffi::CString::new(name) {
+            let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c.as_ptr()) };
+            if !ptr.is_null() { return ptr as usize; }
+        }
+    // 2. 扫描已加载文件
+    if art_base != 0 && !art_path.is_empty()
+        && let Some(elf) = ElfFile::open(art_path)
+            && let Some(off) = elf.find_symbol_with_prefix(name, prefix) {
+                return art_base + off;
+            }
+    // 3. 兜底路径（APEX / system）
+    #[cfg(target_pointer_width = "64")]
+    let fallback: &[&str] = &[
+        "/apex/com.android.art/lib64/libart.so",
+        "/system/lib64/libart.so",
+    ];
+    #[cfg(target_pointer_width = "32")]
+    let fallback: &[&str] = &[
+        "/apex/com.android.art/lib/libart.so",
+        "/system/lib/libart.so",
+    ];
+    for &path in fallback {
+        if path == art_path { continue; }
+        let base = find_loaded_library_base(path);
+        if base == 0 { continue; }
+        if let Some(elf) = ElfFile::open(path)
+            && let Some(off) = elf.find_symbol_with_prefix(name, prefix) {
+                return base + off;
+            }
+    }
+    0
+}
+
+/// 通过 dl_iterate_phdr 找到已加载库的 base 地址。
+fn find_loaded_library_base(target: &str) -> usize {
+    struct Query { path: *const libc::c_char, base: usize }
+    extern "C" fn cb(info: *mut libc::dl_phdr_info, _: libc::size_t, data: *mut libc::c_void) -> libc::c_int {
+        let q = unsafe { &mut *(data as *mut Query) };
+        if unsafe { (*info).dlpi_name.is_null() } { return 0; }
+        if unsafe { libc::strcmp((*info).dlpi_name, q.path) } == 0 {
+            unsafe { q.base = (*info).dlpi_addr as usize; }
+            return 1;
+        }
+        0
+    }
+    if let Ok(c) = std::ffi::CString::new(target) {
+        let mut q = Query { path: c.as_ptr(), base: 0 };
+        unsafe { libc::dl_iterate_phdr(Some(cb), &mut q as *mut _ as *mut libc::c_void); }
+        q.base
+    } else { 0 }
 }

@@ -1,4 +1,3 @@
-#![allow(unused)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
 mod art;
@@ -13,12 +12,18 @@ mod zygisk;
 
 use lifecycle::WeKitModule;
 use std::ffi::c_void;
+use std::sync::Mutex;
 
 use jni::sys::JNIEnv as RawJNIEnv;
 use libc::c_int;
 use zygisk::{AppSpecializeArgs, ModuleAbi, ServerSpecializeArgs};
 
 use crate::zygisk::ApiTable;
+
+/// 与 C++ main.cpp 的 telegram_socket_name 全局变量对应。
+/// 在 preAppSpecialize 里由 companion 协商写入，
+/// JNI 函数（nativeHasTelegramRootCompanion 等）通过此全局访问。
+pub static TELEGRAM_SOCKET_NAME: Mutex<String> = Mutex::new(String::new());
 
 extern "C" fn pre_app(m: *mut c_void, args: *mut AppSpecializeArgs) {
     unsafe { lifecycle::do_pre_app_specialize(&mut *(m as *mut WeKitModule), args) }

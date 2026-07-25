@@ -1,6 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Zygisk API v4 — 手写 #[repr(C)] 对齐 zygisk.hpp 的 internal::api_table 和
-// internal::module_abi。字段顺序必须和 C++ 定义完全一致。
+// Zygisk API v4 ABI types
+//
+// `#[repr(C)]` re-declarations of the structs defined in the official Zygisk
+// header.  Field order and sizes must be kept in exact sync with that header;
+// any deviation will silently corrupt the vtable passed by the Zygisk runtime.
 // ─────────────────────────────────────────────────────────────────────────────
 use std::ffi::c_void;
 
