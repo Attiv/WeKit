@@ -14,7 +14,7 @@ pub const ACC_PUBLIC: u32 = 0x0001;
 pub const ACC_PRIVATE: u32 = 0x0002;
 pub const ACC_PROTECTED: u32 = 0x0004;
 pub const ACC_COMPILE_DONT_BOTHER: u32 = 0x02000000;
-pub const ACC_FAST_INTERPRETER: u32 = 0x00400000;
+pub const ACC_FAST_INTERPRETER: u32 = 0x40000000; // kAccFastInterpreterToInterpreterInvoke
 pub static G_ACC_PRECOMPILED: AtomicU32 = AtomicU32::new(0x00800000);
 
 #[derive(Clone, Copy, Debug)]

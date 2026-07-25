@@ -1,29 +1,22 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Zygisk companion process handler
+// companion — Zygisk root 进程请求处理
 //
-// The companion runs as root before app specialization.  It checks the
-// injection allow-list, then either answers a simple enable/disable query or
-// creates an abstract Unix socket and double-forks a Telegram snapshot worker
-// that is adopted by init, keeping it alive after the companion exits.
-// ─────────────────────────────────────────────────────────────────────────────
+// 检查注入 allow-list，处理启用查询或协商 Telegram worker socket。
+// Telegram worker 双 fork 由 init 收养，每个连接先检查目标是否仍启用，
+// 再处理 DISCOVER（查找 /data/user/{uid} 下已知 Telegram 包）
+// 或 COPY_DATABASE（发送 cache4.db + wal + shm 文件内容）。
 
-use crate::protocol::{
-    COMPANION_DISABLED, COMPANION_ENABLED, COMPANION_ERROR, COMPANION_REQUEST_ENABLED,
-    COMPANION_REQUEST_TELEGRAM_SESSION, TELEGRAM_REQUEST_COPY_DATABASE, TELEGRAM_REQUEST_DISCOVER,
-    TELEGRAM_RESPONSE_OK, read_i32_from_fd, read_string_from_fd, read_u8_from_fd,
-    write_error_frame, write_string_to_fd, write_u8_to_fd, write_u16_to_fd, write_u64_to_fd,
-};
-use crate::{loge, logi};
+use crate::protocol::*;
+use crate::{loge, logi, logw};
 use libc::{AF_UNIX, SOCK_STREAM, c_int, sockaddr_un};
-use std::fs;
+use std::{ffi::CString, fs};
 
 const TARGETS_PATH: &str = "/data/adb/wekit/injection-targets.tsv";
-const WECHAT_PACKAGE_PREFIX: &str = "com.tencent.mm";
+const APP_USER_RANGE: i32 = 100_000;
 
 // ── Allow-list ────────────────────────────────────────────────────────────────
 
 fn is_enabled_target(uid: i32, process_name: &str) -> bool {
-    let user_id = uid / 100_000;
+    let user_id = uid / APP_USER_RANGE;
     let content = match fs::read_to_string(TARGETS_PATH) {
         Ok(s) => s,
         Err(_) => return false,
@@ -40,7 +33,7 @@ fn is_enabled_target(uid: i32, process_name: &str) -> bool {
         if enabled != "1" {
             continue;
         }
-        if !pkg.starts_with(WECHAT_PACKAGE_PREFIX) {
+        if !pkg.starts_with("com.tencent.mm") {
             continue;
         }
         let row_uid: i32 = match row_user.parse() {
@@ -57,7 +50,307 @@ fn is_enabled_target(uid: i32, process_name: &str) -> bool {
     false
 }
 
-// ── Request header ────────────────────────────────────────────────────────────
+// ── Telegram 包识别 ────────────────────────────────────────────────────────────
+
+static KNOWN_TELEGRAM_PACKAGES: &[&str] = &[
+    "org.telegram.messenger",
+    "org.telegram.messenger.beta",
+    "org.telegram.plus",
+    "nekox.messenger",
+    "com.jasonkhew96.pigeongram",
+    "app.nicegram",
+    "xyz.nextalone.nagram",
+    "xyz.nextalone.nnngram",
+    "com.xtaolabs.pagergram",
+    "org.telegram.messenger.web",
+    "com.cool2645.nekolite",
+    "com.iMe.android",
+    "org.telegram.BifToGram",
+    "ua.itaysonlab.messenger",
+    "org.forkclient.messenger.beta",
+    "org.aka.messenger",
+    "ellipi.messenger",
+    "me.luvletter.nekox",
+    "org.nift4.catox",
+    "icu.ketal.yunigram",
+    "icu.ketal.yunigram.lspatch",
+    "icu.ketal.yunigram.beta",
+    "icu.ketal.yunigram.lspatch.beta",
+    "org.forkgram.messenger",
+    "com.blxueya.gugugram",
+    "com.radolyn.ayugram",
+    "com.blxueya.gugugramx",
+    "com.evildayz.code.telegraher",
+    "com.exteragram.messenger",
+];
+
+fn is_valid_telegram_package(pkg: &str) -> bool {
+    !pkg.is_empty()
+        && pkg.len() <= 255
+        && pkg
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
+}
+
+fn is_known_telegram_package(pkg: &str) -> bool {
+    if pkg.contains("gram") {
+        return true;
+    }
+    KNOWN_TELEGRAM_PACKAGES.contains(&pkg)
+}
+
+// ── Telegram 数据库路径 ────────────────────────────────────────────────────────
+
+/// 读取 shared_prefs/userconfing.xml 获取 selectedAccount，对应 C++ read_selected_account。
+fn read_selected_account(app_dir: &str) -> i32 {
+    let config = format!("{app_dir}/shared_prefs/userconfing.xml");
+    let content = match fs::read_to_string(&config) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    for line in content.lines() {
+        if !line.contains("name=\"selectedAccount\"") {
+            continue;
+        }
+        if let Some(v) = line.find("value=\"") {
+            let begin = v + 7;
+            if let Some(end) = line[begin..].find('"')
+                && let Ok(n) = line[begin..begin + end].parse::<i32>()
+            {
+                return n;
+            }
+        }
+    }
+    0
+}
+
+/// 返回 Telegram 数据库文件路径（cache4.db），不存在则返回空字符串。
+/// 路径：/data/user/{user_id}/{pkg}/files/[account{N}/]cache4.db
+fn telegram_database_path(user_id: i32, pkg: &str) -> String {
+    if user_id < 0 || !is_valid_telegram_package(pkg) {
+        return String::new();
+    }
+    let app_dir = format!("/data/user/{user_id}/{pkg}");
+    let account = read_selected_account(&app_dir);
+    let db = if account == 0 {
+        format!("{app_dir}/files/cache4.db")
+    } else {
+        format!("{app_dir}/files/account{account}/cache4.db")
+    };
+    let cdb = match CString::new(db.as_str()) {
+        Ok(s) => s,
+        Err(_) => return String::new(),
+    };
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::stat(cdb.as_ptr(), &mut st) } == 0
+        && (st.st_mode & libc::S_IFMT) == libc::S_IFREG
+    {
+        db
+    } else {
+        String::new()
+    }
+}
+
+/// 扫描 /data/user/{user_id}/ 下已知的 Telegram 包，对应 C++ discover_telegram_packages。
+fn discover_telegram_packages(user_id: i32) -> Vec<String> {
+    let user_dir = format!("/data/user/{user_id}");
+    let mut packages = Vec::new();
+    if let Ok(entries) = fs::read_dir(&user_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !is_valid_telegram_package(&name) || !is_known_telegram_package(&name) {
+                continue;
+            }
+            if !telegram_database_path(user_id, &name).is_empty() {
+                packages.push(name);
+            }
+        }
+    }
+    packages.sort();
+    packages.dedup();
+    packages.truncate(64);
+    packages
+}
+
+// ── 文件发送 ──────────────────────────────────────────────────────────────────
+
+/// 发送文件内容：先写 u64 size，再发文件字节；required=false 时文件不存在发 0。
+fn send_file(sock: c_int, path: &str, required: bool) -> bool {
+    let cpath = match CString::new(path) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::stat(cpath.as_ptr(), &mut st) } != 0 {
+        if !required && std::io::Error::last_os_error().raw_os_error().unwrap_or(0) == libc::ENOENT
+        {
+            let _ = write_u64_to_fd(sock, 0);
+            return true;
+        }
+        loge!(
+            "Zygisk: companion: stat {} failed: {}",
+            path,
+            std::io::Error::last_os_error()
+        );
+        return false;
+    }
+    if (st.st_mode & libc::S_IFMT) != libc::S_IFREG {
+        loge!("Zygisk: companion: {} is not a regular file", path);
+        return false;
+    }
+    let size = st.st_size as u64;
+    if write_u64_to_fd(sock, size).is_err() {
+        return false;
+    }
+    if size == 0 {
+        return true;
+    }
+    let fd = unsafe {
+        libc::open(
+            cpath.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        loge!(
+            "Zygisk: companion: open {} failed: {}",
+            path,
+            std::io::Error::last_os_error()
+        );
+        return false;
+    }
+    let mut remaining = size;
+    let mut buf = [0u8; 65536];
+    let mut ok = true;
+    while remaining > 0 {
+        let chunk = remaining.min(buf.len() as u64) as usize;
+        let n = loop {
+            let r = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), chunk) };
+            if r < 0 && std::io::Error::last_os_error().raw_os_error().unwrap_or(0) == libc::EINTR {
+                continue;
+            }
+            break r;
+        };
+        if n == 0 {
+            logw!(
+                "Zygisk: companion: unexpected EOF reading {} ({} bytes remaining)",
+                path,
+                remaining
+            );
+            ok = false;
+            break;
+        }
+        if n < 0 {
+            ok = false;
+            break;
+        }
+        let mut written = 0usize;
+        while written < n as usize {
+            let w =
+                unsafe { libc::write(sock, buf[written..].as_ptr().cast(), n as usize - written) };
+            if w <= 0 {
+                ok = false;
+                break;
+            }
+            written += w as usize;
+        }
+        if !ok {
+            break;
+        }
+        remaining -= n as u64;
+    }
+    unsafe { libc::close(fd) };
+    ok
+}
+
+fn write_error_response(sock: c_int, msg: &str) {
+    let _ = write_u8_to_fd(sock, TELEGRAM_RESPONSE_ERROR);
+    let _ = write_string_to_fd(sock, msg);
+}
+
+// ── Telegram worker ────────────────────────────────────────────────────────────
+
+/// 处理单个 telegram 请求，对应 C++ handle_telegram_request。
+fn handle_telegram_request(client: c_int, user_id: i32) -> bool {
+    let op = match read_u8_from_fd(client) {
+        Ok(v) => v,
+        Err(_) => {
+            logw!("Zygisk: companion: failed to read Telegram request");
+            return false;
+        }
+    };
+    if op == TELEGRAM_REQUEST_DISCOVER {
+        let packages = discover_telegram_packages(user_id);
+        if packages.is_empty() {
+            write_error_response(
+                client,
+                "未找到 cache4.db，请确认 Telegram 已登录并至少启动过一次",
+            );
+            return true;
+        }
+        let count = packages.len().min(64) as u16;
+        let _ = write_u8_to_fd(client, TELEGRAM_RESPONSE_OK);
+        let _ = write_u16_to_fd(client, count);
+        for pkg in &packages {
+            if write_string_to_fd(client, pkg).is_err() {
+                return false;
+            }
+        }
+        return true;
+    }
+    if op != TELEGRAM_REQUEST_COPY_DATABASE {
+        write_error_response(client, "不支持的 Telegram Root 请求");
+        return true;
+    }
+    let pkg = match read_string_from_fd(client) {
+        Ok(p) if is_known_telegram_package(&p) => p,
+        _ => {
+            write_error_response(client, "Telegram 包名无效");
+            return true;
+        }
+    };
+    let db = telegram_database_path(user_id, &pkg);
+    if db.is_empty() {
+        write_error_response(client, "所选 Telegram 实例的 cache4.db 不可读");
+        return true;
+    }
+    let _ = write_u8_to_fd(client, TELEGRAM_RESPONSE_OK);
+    // required=true for main db, optional for wal/shm
+    send_file(client, &db, true)
+        && send_file(client, &format!("{db}-wal"), false)
+        && send_file(client, &format!("{db}-shm"), false)
+}
+
+/// 后台 worker：循环 accept，每连接检查 is_enabled_target，对应 C++ telegram_worker。
+fn telegram_worker(server_fd: c_int, uid: i32, process_name: String) {
+    let user_id = uid / APP_USER_RANGE;
+    loop {
+        let client = unsafe {
+            loop {
+                let r = libc::accept(server_fd, std::ptr::null_mut(), std::ptr::null_mut());
+                if r < 0
+                    && std::io::Error::last_os_error().raw_os_error().unwrap_or(0) == libc::EINTR
+                {
+                    continue;
+                }
+                break r;
+            }
+        };
+        if client < 0 {
+            break;
+        }
+        if !is_enabled_target(uid, &process_name) {
+            let _ = write_u8_to_fd(client, TELEGRAM_RESPONSE_DISABLED);
+            unsafe { libc::close(client) };
+            break; // 目标已禁用，退出 worker
+        }
+        handle_telegram_request(client, user_id);
+        unsafe { libc::close(client) };
+    }
+    unsafe { libc::close(server_fd) };
+}
+
+// ── 请求头读取 ─────────────────────────────────────────────────────────────────
 
 struct RequestHeader {
     request_type: u8,
@@ -76,13 +369,9 @@ fn read_header(sock: c_int) -> Option<RequestHeader> {
     })
 }
 
-// ── Abstract socket name ──────────────────────────────────────────────────────
-
 fn random_nonce() -> u32 {
     let mut buf = [0u8; 4];
-    let path = c"/dev/urandom";
-    // SAFETY: standard POSIX open/read/close on /dev/urandom
-    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY) };
+    let fd = unsafe { libc::open(c"/dev/urandom".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
     if fd >= 0 {
         unsafe {
             libc::read(fd, buf.as_mut_ptr().cast(), 4);
@@ -92,181 +381,105 @@ fn random_nonce() -> u32 {
     u32::from_ne_bytes(buf)
 }
 
-fn make_abstract_name(uid: i32) -> String {
-    format!("wekit-tg-{uid}-{:08x}", random_nonce())
-}
+// ── 入口 ──────────────────────────────────────────────────────────────────────
 
-// ── Telegram worker ───────────────────────────────────────────────────────────
-
-fn find_wechat_instances() -> Vec<String> {
-    let mut pkgs = Vec::new();
-    if let Ok(entries) = fs::read_dir("/data/data") {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(WECHAT_PACKAGE_PREFIX) {
-                pkgs.push(name);
-            }
-        }
-    }
-    pkgs
-}
-
-fn send_file_contents(fd: c_int, path: &str) {
-    match fs::read(path) {
-        Ok(bytes) => {
-            let _ = write_u64_to_fd(fd, bytes.len() as u64);
-            let mut sent = 0usize;
-            while sent < bytes.len() {
-                let n =
-                    unsafe { libc::write(fd, bytes[sent..].as_ptr().cast(), bytes.len() - sent) };
-                if n <= 0 {
-                    break;
-                }
-                sent += n as usize;
-            }
-        }
-        Err(_) => {
-            let _ = write_u64_to_fd(fd, 0);
-        }
-    }
-}
-
-fn telegram_worker(server_fd: c_int) {
-    loop {
-        // SAFETY: standard accept() on our own server socket
-        let client = unsafe { libc::accept(server_fd, std::ptr::null_mut(), std::ptr::null_mut()) };
-        if client < 0 {
-            continue;
-        }
-        let op = match read_u8_from_fd(client) {
-            Ok(v) => v,
-            Err(_) => {
-                unsafe { libc::close(client) };
-                continue;
-            }
-        };
-        match op {
-            TELEGRAM_REQUEST_DISCOVER => {
-                let instances = find_wechat_instances();
-                let count = instances.len().min(u16::MAX as usize) as u16;
-                let _ = write_u8_to_fd(client, TELEGRAM_RESPONSE_OK);
-                let _ = write_u16_to_fd(client, count);
-                for pkg in &instances {
-                    let _ = write_string_to_fd(client, pkg);
-                }
-            }
-            TELEGRAM_REQUEST_COPY_DATABASE => {
-                if let Ok(pkg) = read_string_from_fd(client) {
-                    let _ = write_u8_to_fd(client, TELEGRAM_RESPONSE_OK);
-                    let base = format!("/data/data/{pkg}/files/account.db");
-                    send_file_contents(client, &base);
-                    send_file_contents(client, &format!("{base}-wal"));
-                    send_file_contents(client, &format!("{base}-shm"));
-                }
-            }
-            _ => {
-                let _ = write_error_frame(client, "unknown telegram op");
-            }
-        }
-        unsafe { libc::close(client) };
-    }
-}
-
-// ── Abstract socket creation ──────────────────────────────────────────────────
-
-fn create_abstract_server(name: &str) -> Option<c_int> {
-    // SAFETY: standard socket/bind/listen sequence
-    let fd = unsafe { libc::socket(AF_UNIX, SOCK_STREAM, 0) };
-    if fd < 0 {
-        return None;
-    }
-    let mut addr: sockaddr_un = unsafe { std::mem::zeroed() };
-    addr.sun_family = AF_UNIX as u16;
-    // Abstract namespace: first byte stays \0, name goes after
-    let name_bytes = name.as_bytes();
-    let len = name_bytes.len().min(107);
-    for (i, &b) in name_bytes[..len].iter().enumerate() {
-        addr.sun_path[1 + i] = b as libc::c_char;
-    }
-    let addr_len = (std::mem::size_of::<libc::sa_family_t>() + 1 + len) as libc::socklen_t;
-    let ret = unsafe { libc::bind(fd, &addr as *const _ as *const libc::sockaddr, addr_len) };
-    if ret < 0 {
-        unsafe { libc::close(fd) };
-        return None;
-    }
-    unsafe { libc::listen(fd, 5) };
-    Some(fd)
-}
-
-// ── Main companion handler ────────────────────────────────────────────────────
-
-/// Entry point called from `zygisk_companion_entry`.
+/// 由 zygisk_companion_entry 调用，对应 C++ companion_handler。
 pub fn handle(sock: c_int) {
     let header = match read_header(sock) {
         Some(h) => h,
         None => {
-            let _ = write_u8_to_fd(sock, COMPANION_ERROR);
+            loge!("Zygisk: companion: failed to read request identity");
             return;
         }
     };
-
     let enabled = is_enabled_target(header.uid, &header.process_name);
-
-    match header.request_type {
-        COMPANION_REQUEST_ENABLED => {
-            let status = if enabled {
-                COMPANION_ENABLED
-            } else {
-                COMPANION_DISABLED
-            };
-            let _ = write_u8_to_fd(sock, status);
+    if header.request_type == COMPANION_REQUEST_ENABLED {
+        let status = if enabled {
+            COMPANION_ENABLED
+        } else {
+            COMPANION_DISABLED
+        };
+        if write_u8_to_fd(sock, status).is_err() {
+            logw!("Zygisk: companion: failed to return target status");
         }
-        COMPANION_REQUEST_TELEGRAM_SESSION => {
-            if !enabled {
-                let _ = write_u8_to_fd(sock, COMPANION_DISABLED);
-                return;
-            }
-            let name = make_abstract_name(header.uid);
-            let server_fd = match create_abstract_server(&name) {
-                Some(fd) => fd,
-                None => {
-                    loge!("Zygisk: companion: failed to create abstract socket");
-                    let _ = write_u8_to_fd(sock, COMPANION_ERROR);
-                    return;
-                }
-            };
-            // Double-fork: grandchild becomes a worker adopted by init
-            // SAFETY: fork() is safe to call here; we exec nothing
-            let mid_pid = unsafe { libc::fork() };
-            if mid_pid < 0 {
-                loge!("Zygisk: companion: fork failed");
-                unsafe { libc::close(server_fd) };
-                let _ = write_u8_to_fd(sock, COMPANION_ERROR);
-                return;
-            }
-            if mid_pid == 0 {
-                // Intermediate child: fork grandchild then exit immediately
-                let grandchild = unsafe { libc::fork() };
-                if grandchild == 0 {
-                    // Grandchild: run the worker forever
-                    telegram_worker(server_fd);
-                    std::process::exit(0);
-                }
-                std::process::exit(0);
-            }
-            // Parent: wait for intermediate child to exit, then close our copy
-            // of server_fd (grandchild has it; it stays alive under init)
-            unsafe {
-                let mut status = 0i32;
-                libc::waitpid(mid_pid, &mut status, 0);
-                libc::close(server_fd);
-            }
-            logi!("Zygisk: telegram socket ready: {name}");
-            let _ = write_u8_to_fd(sock, COMPANION_ENABLED);
-            let _ = write_string_to_fd(sock, &name);
-        }
-        _ => {
-            let _ = write_error_frame(sock, "unknown request type");
-        }
+        return;
     }
+    if header.request_type != COMPANION_REQUEST_TELEGRAM_SESSION {
+        logw!(
+            "Zygisk: companion: unsupported request type {:#x}",
+            header.request_type
+        );
+        return;
+    }
+    if !enabled {
+        let _ = write_u8_to_fd(sock, COMPANION_DISABLED);
+        return;
+    }
+
+    // 创建 abstract Unix socket
+    let fd = unsafe { libc::socket(AF_UNIX, SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        loge!(
+            "Zygisk: companion: failed to create Telegram worker socket: {}",
+            std::io::Error::last_os_error()
+        );
+        let _ = write_u8_to_fd(sock, COMPANION_DISABLED);
+        return;
+    }
+    let nonce = random_nonce();
+    let name = format!("wekit-tg-{}-{:08x}", header.uid, nonce);
+    let name_bytes = name.as_bytes();
+    let mut addr: sockaddr_un = unsafe { std::mem::zeroed() };
+    addr.sun_family = AF_UNIX as u16;
+    for (i, &b) in name_bytes.iter().enumerate() {
+        addr.sun_path[1 + i] = b as libc::c_char;
+    }
+    let slen = (std::mem::size_of::<libc::sa_family_t>() + 1 + name_bytes.len()) as libc::socklen_t;
+    if unsafe { libc::bind(fd, &addr as *const _ as *const libc::sockaddr, slen) } != 0
+        || unsafe { libc::listen(fd, 8) } != 0
+    {
+        loge!(
+            "Zygisk: companion: failed to bind/listen Telegram worker socket: {}",
+            std::io::Error::last_os_error()
+        );
+        unsafe { libc::close(fd) };
+        let _ = write_u8_to_fd(sock, COMPANION_DISABLED);
+        return;
+    }
+
+    // 双 fork：中间子进程立即退出，孙子进程由 init 收养
+    let uid = header.uid;
+    let process_name = header.process_name.clone();
+    let mid = unsafe { libc::fork() };
+    if mid < 0 {
+        loge!(
+            "Zygisk: companion: fork for Telegram worker failed: {}",
+            std::io::Error::last_os_error()
+        );
+        unsafe { libc::close(fd) };
+        let _ = write_u8_to_fd(sock, COMPANION_DISABLED);
+        return;
+    }
+    if mid == 0 {
+        // 中间子进程
+        let worker = unsafe { libc::fork() };
+        if worker < 0 {
+            unsafe { libc::_exit(1) };
+        }
+        if worker == 0 {
+            // 孙子进程（真正的 worker）
+            telegram_worker(fd, uid, process_name);
+            unsafe { libc::_exit(0) };
+        }
+        unsafe { libc::_exit(0) }; // 中间进程立即退出
+    }
+    // 父进程：等中间子进程退出，关闭自己持有的 server_fd
+    unsafe {
+        let mut status = 0i32;
+        libc::waitpid(mid, &mut status, 0);
+        libc::close(fd);
+    }
+    logi!("Zygisk: Telegram worker socket ready: {name}");
+    let _ = write_u8_to_fd(sock, COMPANION_ENABLED);
+    let _ = write_string_to_fd(sock, &name);
 }

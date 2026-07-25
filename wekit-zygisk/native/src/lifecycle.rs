@@ -24,17 +24,18 @@ use std::{
 pub struct WeKitModule {
     pub api: *mut ApiTable,
     pub env: *mut RawJNIEnv,
-    // filled in preAppSpecialize
+    // preAppSpecialize 阶段填写
     pub module_dir_fd: Option<OwnedFd>,
     pub app_uid: uid_t,
     pub app_gid: gid_t,
-    pub abi_dir: &'static str, // "arm64" or "arm"
+    pub abi_dir: &'static str,
     pub data_dir: String,
+    pub process_name: String,
     pub dex_names: Vec<String>,
     pub telegram_socket_name: Option<String>,
     pub enabled: bool,
-    // filled in postAppSpecialize
-    pub module_classloader: Option<jobject>, // GlobalRef
+    // postAppSpecialize 阶段填写
+    pub module_classloader: Option<jobject>,
 }
 
 impl WeKitModule {
@@ -47,6 +48,7 @@ impl WeKitModule {
             app_gid: 0,
             abi_dir: current_abi_dir(),
             data_dir: String::new(),
+            process_name: String::new(),
             dex_names: Vec::new(),
             telegram_socket_name: None,
             enabled: false,
@@ -56,11 +58,17 @@ impl WeKitModule {
 }
 
 #[cfg(target_arch = "aarch64")]
-fn current_abi_dir() -> &'static str { "arm64-v8a" }
+fn current_abi_dir() -> &'static str {
+    "arm64-v8a"
+}
 #[cfg(target_arch = "arm")]
-fn current_abi_dir() -> &'static str { "armeabi-v7a" }
+fn current_abi_dir() -> &'static str {
+    "armeabi-v7a"
+}
 #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
-fn current_abi_dir() -> &'static str { "arm64-v8a" }
+fn current_abi_dir() -> &'static str {
+    "arm64-v8a"
+}
 
 // Helper: dereference a C++ reference-field (stored as *mut T) and read the jstring.
 unsafe fn read_jstring(env: *mut RawJNIEnv, field_ptr: *mut jstring) -> Option<String> {
@@ -121,12 +129,13 @@ fn negotiate_telegram_socket(api: *mut ApiTable, uid: i32, process_name: &str) -
     name
 }
 
+/// 读取 dex.list 并验证 classes.dex → classes2.dex → … 顺序，对应 C++ parse_dex_list。
 fn read_dex_list(mod_fd: RawFd, rel_path: &str) -> Vec<String> {
     let path_c = match std::ffi::CString::new(rel_path) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    let fd = unsafe { libc::openat(mod_fd, path_c.as_ptr(), libc::O_RDONLY) };
+    let fd = unsafe { libc::openat(mod_fd, path_c.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
     if fd < 0 {
         return Vec::new();
     }
@@ -140,12 +149,44 @@ fn read_dex_list(mod_fd: RawFd, rel_path: &str) -> Vec<String> {
         bytes.extend_from_slice(&buf[..n as usize]);
     }
     unsafe { libc::close(fd) };
-    String::from_utf8_lossy(&bytes)
+    let names: Vec<String> = String::from_utf8_lossy(&bytes)
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(str::to_owned)
-        .collect()
+        .collect();
+    // 验证名字是 classes.dex, classes2.dex, ... 并且是连续递增的
+    let mut expected = 1u32;
+    for name in &names {
+        let order = dex_name_order(name);
+        if order != Some(expected) {
+            loge!(
+                "Zygisk: dex.list entry '{}' is out of order (expected {})",
+                name,
+                expected
+            );
+            return Vec::new();
+        }
+        expected += 1;
+    }
+    names
+}
+
+/// 将 dex 文件名映射到序号（classes.dex → 1, classes2.dex → 2, …）。
+fn dex_name_order(name: &str) -> Option<u32> {
+    if name == "classes.dex" {
+        return Some(1);
+    }
+    let prefix = "classes";
+    let suffix = ".dex";
+    if !name.starts_with(prefix) || !name.ends_with(suffix) {
+        return None;
+    }
+    let middle = &name[prefix.len()..name.len() - suffix.len()];
+    if middle.is_empty() {
+        return None;
+    }
+    middle.parse::<u32>().ok().filter(|&n| n >= 2)
 }
 
 // ── Lifecycle callbacks ───────────────────────────────────────────────────────
@@ -185,6 +226,7 @@ pub unsafe fn do_pre_app_specialize(module: &mut WeKitModule, args: *mut AppSpec
     module.app_gid = gid as gid_t;
     module.data_dir = app_data_dir;
 
+    module.process_name = nice_name.clone();
     let dex_list_path = format!("payload/{}/dex.list", module.abi_dir);
     module.dex_names = read_dex_list(mod_fd, &dex_list_path);
     if module.dex_names.is_empty() {
@@ -195,11 +237,12 @@ pub unsafe fn do_pre_app_specialize(module: &mut WeKitModule, args: *mut AppSpec
 
     // Non-isolated processes: negotiate Telegram socket, write to global
     if !nice_name.contains(':')
-        && let Some(name) = negotiate_telegram_socket(module.api, uid, &nice_name) {
-            *crate::TELEGRAM_SOCKET_NAME.lock().unwrap() = name.clone();
-            module.telegram_socket_name = Some(name);
-            logi!("Zygisk: retained Telegram root companion socket for {nice_name}");
-        }
+        && let Some(name) = negotiate_telegram_socket(module.api, uid, &nice_name)
+    {
+        *crate::TELEGRAM_SOCKET_NAME.lock().unwrap() = name.clone();
+        module.telegram_socket_name = Some(name);
+        logi!("Zygisk: retained Telegram root companion socket for {nice_name}");
+    }
 
     module.enabled = true;
     logi!("Zygisk: preAppSpecialize OK for {nice_name}");
@@ -218,8 +261,8 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
     let gid = module.app_gid;
     let abi = module.abi_dir;
 
-    crate::payload::ensure_dir(&format!("{data_dir}/files"), uid, gid, 0o771);
-    crate::payload::ensure_dir(&format!("{data_dir}/files/mmkv"), uid, gid, 0o771);
+    crate::payload::ensure_dir(&format!("{data_dir}/files"), uid, gid);
+    crate::payload::ensure_dir(&format!("{data_dir}/files/mmkv"), uid, gid);
 
     // Copy APK
     let apk_dst = format!("{data_dir}/files/mmkv/.wekit-bootstrap-{abi}.apk");
@@ -236,18 +279,19 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
     }
 
     // Copy DEX files and read them into memory
+    // dex_names 里的名字已经是如 "classes.dex"，源路径直接用 payload/{abi}/{name}
     let mut dex_bufs: Vec<Vec<u8>> = Vec::new();
     for name in module.dex_names.clone() {
         let dst = format!("{data_dir}/files/mmkv/.wekit-bootstrap-{abi}-{name}");
         if !crate::payload::copy_module_file(
             mod_fd,
-            &format!("payload/{abi}/{name}.dex"),
+            &format!("payload/{abi}/{name}"), // 不加 .dex 后缀，name 本身已含
             &dst,
             uid,
             gid,
             64 * 1024 * 1024,
         ) {
-            loge!("Zygisk: failed to copy {name}.dex");
+            loge!("Zygisk: failed to copy DEX payload {name}");
             return;
         }
         if let Some(b) = crate::payload::read_file(&dst) {
@@ -255,7 +299,7 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
         }
     }
 
-    // Get system class loader as parent
+    // 构建 InMemoryDexClassLoader
     let fns = *module.env;
     let sys_cl_class = ((*fns).v1_6.FindClass)(module.env, c"java/lang/ClassLoader".as_ptr());
     let get_sys_id = ((*fns).v1_6.GetStaticMethodID)(
@@ -265,14 +309,89 @@ pub unsafe fn do_post_app_specialize(module: &mut WeKitModule, _args: *const App
         c"()Ljava/lang/ClassLoader;".as_ptr(),
     );
     let parent = ((*fns).v1_6.CallStaticObjectMethod)(module.env, sys_cl_class, get_sys_id);
-
     let cl = crate::payload::build_dex_classloader(module.env, &dex_bufs, parent);
     if cl.is_null() {
         loge!("Zygisk: failed to build InMemoryDexClassLoader");
         return;
     }
+
+    // 关闭 module dir fd（对应 C++ close(retained_module_dir_fd)）
+    module.module_dir_fd = None;
+
+    // 加载 ZygiskEntry 类
+    let entry_name = "dev.ujhhgtg.wekit.loader.entry.zygisk.ZygiskEntry";
+    let entry_cls = crate::natives::load_class_from_loader(module.env, cl, entry_name);
+    if entry_cls.is_null() {
+        loge!("Zygisk: ZygiskEntry class not found");
+        ((*fns).v1_6.DeleteGlobalRef)(module.env, cl);
+        return;
+    }
+
+    // 注册 ZygiskEntry native 方法（必须在 init() 之前，因为 init 会调 nativeInitialize）
+    if !crate::natives::register_entry_natives(module.env, cl) {
+        loge!("Zygisk: failed to register ZygiskEntry bootstrap JNI");
+        ((*fns).v1_6.DeleteLocalRef)(module.env, entry_cls);
+        ((*fns).v1_6.DeleteGlobalRef)(module.env, cl);
+        return;
+    }
+
+    // 调用 ZygiskEntry.init(processName, dataDir, apkPath)
+    let init_mid = ((*fns).v1_6.GetStaticMethodID)(
+        module.env,
+        entry_cls,
+        c"init".as_ptr(),
+        c"(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V".as_ptr(),
+    );
+    if init_mid.is_null() {
+        loge!("Zygisk: ZygiskEntry.init method not found");
+        ((*fns).v1_6.ExceptionClear)(module.env);
+        ((*fns).v1_6.DeleteLocalRef)(module.env, entry_cls);
+        ((*fns).v1_6.DeleteGlobalRef)(module.env, cl);
+        return;
+    }
+    let process_name_c = std::ffi::CString::new(module.process_name.as_str()).unwrap_or_default();
+    let data_dir_c = std::ffi::CString::new(data_dir.as_str()).unwrap_or_default();
+    let apk_path_c = std::ffi::CString::new(apk_dst.as_str()).unwrap_or_default();
+    let j_process = ((*fns).v1_6.NewStringUTF)(module.env, process_name_c.as_ptr());
+    let j_data = ((*fns).v1_6.NewStringUTF)(module.env, data_dir_c.as_ptr());
+    let j_apk = ((*fns).v1_6.NewStringUTF)(module.env, apk_path_c.as_ptr());
+    if j_process.is_null()
+        || j_data.is_null()
+        || j_apk.is_null()
+        || ((*fns).v1_6.ExceptionCheck)(module.env) != jni::sys::JNI_FALSE
+    {
+        ((*fns).v1_6.ExceptionClear)(module.env);
+        loge!("Zygisk: ZygiskEntry.init argument allocation failed");
+        for j in [j_process, j_data, j_apk].iter().filter(|&&p| !p.is_null()) {
+            ((*fns).v1_6.DeleteLocalRef)(module.env, *j);
+        }
+        ((*fns).v1_6.DeleteLocalRef)(module.env, entry_cls);
+        ((*fns).v1_6.DeleteGlobalRef)(module.env, cl);
+        return;
+    }
+    ((*fns).v1_6.CallStaticVoidMethod)(module.env, entry_cls, init_mid, j_process, j_data, j_apk);
+    let failed = ((*fns).v1_6.ExceptionCheck)(module.env) != jni::sys::JNI_FALSE;
+    if failed {
+        ((*fns).v1_6.ExceptionDescribe)(module.env);
+        ((*fns).v1_6.ExceptionClear)(module.env);
+        loge!("Zygisk: ZygiskEntry.init failed");
+    } else {
+        logi!(
+            "Zygisk: ZygiskEntry.init completed for {}",
+            module.process_name
+        );
+    }
+    ((*fns).v1_6.DeleteLocalRef)(module.env, j_process);
+    ((*fns).v1_6.DeleteLocalRef)(module.env, j_data);
+    ((*fns).v1_6.DeleteLocalRef)(module.env, j_apk);
+    ((*fns).v1_6.DeleteLocalRef)(module.env, entry_cls);
+    if failed {
+        ((*fns).v1_6.DeleteGlobalRef)(module.env, cl);
+        return;
+    }
+    // 保持 classloader 存活（供 hook bridge class 解析）
     module.module_classloader = Some(cl);
-    logi!("Zygisk: postAppSpecialize OK, dex classloader ready");
+    logi!("Zygisk: postAppSpecialize complete");
 }
 
 pub unsafe fn do_pre_server_specialize(module: &mut WeKitModule, _args: *mut ServerSpecializeArgs) {
