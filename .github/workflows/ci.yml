@@ -165,8 +165,8 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@nightly
-
-      - name: Install Android NDK
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
         run: |
           NDK_VERSION=$(sed -n 's/^ndk = "\(.*\)"/\1/p' gradle/libs.versions.toml)
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses

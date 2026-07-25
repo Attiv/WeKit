@@ -580,12 +580,20 @@ fn task_configure() -> Result<()> {
 
     let out = out.trim_end_matches('\n').to_owned() + "\n";
 
+    // Write for wekit-native
     let config_path = native_crate_dir(&root).join(".cargo/config.toml");
     fs::create_dir_all(config_path.parent().unwrap())?;
     fs::write(&config_path, &out)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
-
     println!("configure: wrote {}", config_path.display());
+
+    // Write for wekit-zygisk (same linker config + extra linker flags for symbol visibility)
+    let zygisk_config_path = zygisk_dir(&root).join("native/.cargo/config.toml");
+    fs::create_dir_all(zygisk_config_path.parent().unwrap())?;
+    fs::write(&zygisk_config_path, &out)
+        .with_context(|| format!("failed to write {}", zygisk_config_path.display()))?;
+    println!("configure: wrote {}", zygisk_config_path.display());
+
     Ok(())
 }
 
@@ -881,31 +889,82 @@ fn build_zygisk_native(
     force: bool,
 ) -> Result<()> {
     let abis = resolve_zygisk_abis(abi_names)?;
-    let (ndk_dir, android_platform) = zygisk_ndk_dir(root, requested_ndk)?;
+    let (ndk_dir, _android_platform) = zygisk_ndk_dir(root, requested_ndk)?;
+    task_configure()?;
 
     for abi in abis {
-        let build_dir = zygisk_build_dir(root, profile, abi);
         let output_dir = zygisk_native_output_dir(root, profile, abi);
         let symbols_dir = zygisk_symbols_dir(root, profile, abi);
         if force {
-            remove_dir_if_exists(&build_dir)?;
             remove_dir_if_exists(&output_dir)?;
             remove_dir_if_exists(&symbols_dir)?;
         }
-
-        configure_zygisk_abi(root, profile, abi, &ndk_dir, &android_platform)?;
-        println!("zygisk(native): {} ({})", abi.android_name, profile.name());
-        run_cmd(
-            "cmake",
-            &["--build", &build_dir.display().to_string(), "--parallel"],
-            root,
-        )?;
-
-        let library = output_dir.join(format!("lib{ZYGISK_MODULE_ID}.so"));
-        if !library.is_file() {
-            bail!("Zygisk native build did not produce {}", library.display());
-        }
+        build_zygisk_native_rust(root, profile, abi, &ndk_dir)?;
     }
+    Ok(())
+}
+
+fn build_zygisk_native_rust(
+    root: &Path,
+    profile: ZygiskBuildProfile,
+    abi: &ZygiskAbiSpec,
+    ndk_dir: &Path,
+) -> Result<()> {
+    let zygisk_native = zygisk_dir(root).join("native");
+    let cargo_triple = ABI_TABLE
+        .iter()
+        .find(|a| a.android_name == abi.android_name)
+        .map(|a| a.cargo_triple)
+        .with_context(|| format!("unknown ABI {}", abi.android_name))?;
+
+    let mut args = vec![
+        "build".to_owned(),
+        "-p".to_owned(),
+        "wekit_zygisk".to_owned(),
+        "--target".to_owned(),
+        cargo_triple.to_owned(),
+    ];
+    if matches!(profile, ZygiskBuildProfile::Release) {
+        args.push("--release".to_owned());
+    }
+
+    println!("zygisk(rust): {} ({})", abi.android_name, profile.name());
+    run_cargo(&args.iter().map(String::as_str).collect::<Vec<_>>(), &zygisk_native)?;
+
+    let profile_dir = profile.name();
+    let src_so = root
+        .join("target")
+        .join(cargo_triple)
+        .join(profile_dir)
+        .join(format!("lib{ZYGISK_MODULE_ID}.so"));
+
+    // Save unstripped copy
+    let sym_dir = zygisk_symbols_dir(root, profile, abi);
+    fs::create_dir_all(&sym_dir)?;
+    let sym_so = sym_dir.join(format!("lib{ZYGISK_MODULE_ID}.so"));
+    fs::copy(&src_so, &sym_so)
+        .with_context(|| format!("copy unstripped: {}", src_so.display()))?;
+
+    // Strip into output/native
+    let out_dir = zygisk_native_output_dir(root, profile, abi);
+    fs::create_dir_all(&out_dir)?;
+    let out_so = out_dir.join(format!("lib{ZYGISK_MODULE_ID}.so"));
+    fs::copy(&src_so, &out_so)?;
+
+    let strip = ndk_dir
+        .join("toolchains/llvm/prebuilt")
+        .join(host_prebuilt_tag()?)
+        .join("bin/llvm-strip");
+    run_cmd_owned(
+        strip.to_str().unwrap(),
+        &["--strip-all".to_owned(), out_so.to_str().unwrap().to_owned()],
+        root,
+    )?;
+
+    if !out_so.is_file() {
+        bail!("Rust zygisk build did not produce {}", out_so.display());
+    }
+    println!("zygisk(strip): {} → {}", src_so.display(), out_so.display());
     Ok(())
 }
 
