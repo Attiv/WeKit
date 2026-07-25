@@ -17,14 +17,12 @@ cd WeKit
 | Android SDK | compile SDK 37, target SDK 37 |
 | Android NDK | `30.0.14904198` |
 | Rust | 支持 Rust 2024 edition 的 stable 工具链 |
-| CMake | >= 3.22.1, 构建 Zygisk loader 时需要 |
-| Ninja | 构建 Zygisk loader 时需要 |
 | adb | 安装 APK 或刷入 Zygisk ZIP 时需要 |
 
 ### Arch Linux
 
 ```bash
-yay -Syu jdk21-openjdk rustup cmake ninja
+yay -Syu jdk21-openjdk rustup
 rustup toolchain install stable
 rustup default stable
 rustup target add aarch64-linux-android armv7-linux-androideabi
@@ -33,12 +31,12 @@ rustup target add aarch64-linux-android armv7-linux-androideabi
 
 ### Debian 系
 
-JDK 21 和 `rustup` 的包名可能随发行版而异。安装 JDK 21 后, 还需要 CMake、Ninja
-和 Rust Android targets:
+JDK 21 和 `rustup` 的包名可能随发行版而异。安装 JDK 21 后, 还需要 Rust Android
+targets:
 
 ```bash
 sudo apt update
-sudo apt install cmake ninja-build rustup
+sudo apt install rustup
 rustup toolchain install stable
 rustup default stable
 rustup target add aarch64-linux-android armv7-linux-androideabi
@@ -226,8 +224,8 @@ Zygisk 模块使用 standard APK payload, 支持 `arm64-v8a` 和 `armeabi-v7a`�
 | `--apk-debug` | 构建或自动选择 debug APK, 默认行为 |
 | `--apk-release` | 构建或自动选择 release APK |
 | `--debug` | 使用 Debug Zygisk loader 和 debug ZIP |
-| `--release` | 使用 RelWithDebInfo Zygisk loader 和 release ZIP, 默认行为 |
-| `--force` | 构建前删除对应 CMake 构建树、native 输出和未剥离符号 |
+| `--release` | 使用优化后的 release Zygisk loader 和 release ZIP, 默认行为 |
+| `--force` | 构建前删除对应 native 输出和未剥离符号 |
 | `--ndk <VERSION>` | 覆盖 `gradle/libs.versions.toml` 中的 Zygisk NDK 版本 |
 | `--skip-apk-build` | 不执行 Gradle, 按 APK profile 复用现有 APK |
 | `--apk <PATH>` | 指定 payload APK, 每种 ABI 重复一次 |
@@ -245,27 +243,23 @@ wekit-zygisk/release/WeKit-<versionCode>-git+<commit>-<debug|release>.zip
 wekit-zygisk/symbols/WeKit-<versionCode>-git+<commit>-<debug|release>-symbols.zip
 ```
 
-### 配置、native 构建与清理
+### Native 构建与清理
 
 ```bash
-# 默认生成 release 配置; 使用 --debug 生成 debug 配置
-./x zygisk config
-./x zygisk config --debug --abi arm64-v8a
-
 # 默认构建 release loader; 使用 --debug 构建 debug loader
 ./x zygisk native
 ./x zygisk native --debug --force --abi arm64-v8a
 
-# 清理两种 profile 的 CMake 构建树、loader 库和未剥离符号
+# 清理两种 profile 的 loader 库和未剥离符号
 ./x zygisk clean
 
 # 只清理指定 profile / ABI
 ./x zygisk clean --profile release --abi arm64-v8a
 ```
 
-`zygisk config` 和 `zygisk native` 默认处理两种受支持 ABI, 并使用 release profile。
-`--abi` 可以重复, 也接受 `arm64`、`aarch64`、`arm32` 等别名。release loader 使用
-CMake `RelWithDebInfo`, debug loader 使用 CMake `Debug`。
+`zygisk native` 默认处理两种受支持 ABI, 并使用 release profile。`--abi` 可以重复,
+也接受 `arm64`、`aarch64`、`arm32` 等别名。loader 由 Cargo 交叉编译，并使用 NDK
+提供的 linker 和 `llvm-strip`。
 
 ### 安装到设备
 

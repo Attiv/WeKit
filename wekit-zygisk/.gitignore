@@ -8,7 +8,5 @@
 .externalNativeBuild
 .cxx
 local.properties
-/my_build
 /output
 /release
-/.vscode/settings.json

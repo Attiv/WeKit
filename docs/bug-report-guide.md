@@ -34,7 +34,7 @@
 根据实际加载方式提供日志:
 
 - **LSPosed**: LSPosed -> 底栏「设置」->「禁用详细日志」关闭 -> 底栏 「日志」-> 右上角菜单「保存」-> 上传压缩包
-- **Zygisk**: 在 WeKit 模块 WebUI 点击「导出日志」, 上传 `/data/adb/wekit/logcat.log`
+- **Zygisk**: 在 WeKit 模块 WebUI 点击「导出日志」, 上传 `/data/adb/wekit_zygisk/logcat.log`
 
 ### 2. 模块调试信息
 

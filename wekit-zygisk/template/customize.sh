@@ -12,12 +12,6 @@ SUPPORTED_ABIS="@SUPPORTED_ABIS@"
 if [ "$BOOTMODE" ] && [ "$KSU" ]; then
   ui_print "- Installing from KernelSU app"
   ui_print "- KernelSU version: $KSU_KERNEL_VER_CODE (kernel) + $KSU_VER_CODE (ksud)"
-  if [ "$(which magisk)" ]; then
-    ui_print "*********************************************************"
-    ui_print "! Multiple root implementation is NOT supported!"
-    ui_print "! Please uninstall Magisk before installing Zygisk Next"
-    abort    "*********************************************************"
-  fi
 elif [ "$BOOTMODE" ] && [ "$MAGISK_VER_CODE" ]; then
   ui_print "- Installing from Magisk app"
 else
@@ -176,3 +170,48 @@ set_perm "$MODPATH/uninstall.sh" 0 0 0755
 
 # KernelSU assigns the WebUI directory's mode and SELinux context itself.
 # Do not include $MODPATH/webroot in a recursive set_perm call.
+
+OLD_MODULE_DIR=/data/adb/modules/wekit
+OLD_TARGETS_FILE=/data/adb/wekit/injection-targets.tsv
+NEW_STATE_DIR=/data/adb/wekit_zygisk
+NEW_TARGETS_FILE=$NEW_STATE_DIR/injection-targets.tsv
+
+if [ -f "$OLD_TARGETS_FILE" ] || [ -d "$OLD_MODULE_DIR" ]; then
+  ui_print "*********************************************************"
+  ui_print "- Migrating from old module ID"
+
+  if [ -f "$OLD_TARGETS_FILE" ]; then
+    if [ -e "$NEW_TARGETS_FILE" ]; then
+      ui_print "- Keeping existing injection targets"
+    else
+      migration_file=$NEW_STATE_DIR/.injection-targets.migrate.$$
+      umask 077
+      mkdir -p "$NEW_STATE_DIR" ||
+        abort "! Unable to create state directory: $NEW_STATE_DIR"
+      chmod 700 "$NEW_STATE_DIR" ||
+        abort "! Unable to set permissions on: $NEW_STATE_DIR"
+      cp "$OLD_TARGETS_FILE" "$migration_file" || {
+        rm -f "$migration_file"
+        abort "! Unable to copy injection targets"
+      }
+      chmod 600 "$migration_file" || {
+        rm -f "$migration_file"
+        abort "! Unable to set permissions on migrated injection targets"
+      }
+      mv -f "$migration_file" "$NEW_TARGETS_FILE" || {
+        rm -f "$migration_file"
+        abort "! Unable to publish migrated injection targets"
+      }
+      ui_print "- Migrated injection targets"
+    fi
+  else
+    ui_print "- No injection targets to migrate"
+  fi
+
+  if [ -d "$OLD_MODULE_DIR" ]; then
+    touch "$OLD_MODULE_DIR/disable" ||
+      abort "! Unable to disable old module"
+    ui_print "- Old module disabled"
+  fi
+  ui_print "*********************************************************"
+fi

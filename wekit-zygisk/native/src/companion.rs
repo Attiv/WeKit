@@ -2,17 +2,18 @@
 //
 // Checks the injection allow-list, handles enable/disable queries,
 // and negotiates a Telegram worker socket via double-fork.
-#![allow(clippy::unnecessary_cast)]
 // The worker is adopted by init; each connection checks the target
 // is still enabled, then handles DISCOVER (/data/user/{uid} known
 // Telegram packages) or COPY_DATABASE (cache4.db + wal + shm).
+
+#![allow(clippy::unnecessary_cast)]
 
 use crate::protocol::*;
 use crate::{loge, logi, logw};
 use libc::{AF_UNIX, SOCK_STREAM, c_int, sockaddr_un};
 use std::{ffi::CString, fs};
 
-const TARGETS_PATH: &str = "/data/adb/wekit/injection-targets.tsv";
+const TARGETS_PATH: &str = "/data/adb/wekit_zygisk/injection-targets.tsv";
 const APP_USER_RANGE: i32 = 100_000;
 
 // ── Allow-list ────────────────────────────────────────────────────────────────
@@ -344,7 +345,7 @@ fn telegram_worker(server_fd: c_int, uid: i32, process_name: String) {
         if !is_enabled_target(uid, &process_name) {
             let _ = write_u8_to_fd(client, TELEGRAM_RESPONSE_DISABLED);
             unsafe { libc::close(client) };
-            break; // 目标已禁用，退出 worker
+            break;
         }
         handle_telegram_request(client, user_id);
         unsafe { libc::close(client) };

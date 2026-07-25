@@ -30,7 +30,7 @@ function configScriptPath() {
   } catch (_) {
     // Fall through to the stable module path.
   }
-  return "/data/adb/modules/wekit/config.sh";
+  return "/data/adb/modules/wekit_zygisk/config.sh";
 }
 
 async function runCheckedCommand(commandLine, operation) {

@@ -65,9 +65,13 @@ jobs:
       - name: Install Android NDK
         run: |
           NDK_VERSION=$(sed -n 's/^ndk = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          MIN_SDK=$(sed -n 's/^minSdk = "\(.*\)"/\1/p' gradle/libs.versions.toml)
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake"
+          NDK_BIN="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$NDK_BIN/aarch64-linux-android$MIN_SDK-clang"
+          test -x "$NDK_BIN/armv7a-linux-androideabi$MIN_SDK-clang"
+          test -x "$NDK_BIN/llvm-strip"
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -167,11 +171,17 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Install Android NDK
         run: |
           NDK_VERSION=$(sed -n 's/^ndk = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          MIN_SDK=$(sed -n 's/^minSdk = "\(.*\)"/\1/p' gradle/libs.versions.toml)
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake"
+          NDK_BIN="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$NDK_BIN/aarch64-linux-android$MIN_SDK-clang"
+          test -x "$NDK_BIN/armv7a-linux-androideabi$MIN_SDK-clang"
+          test -x "$NDK_BIN/llvm-strip"
 
       - name: Download Release APK artifact
         uses: actions/download-artifact@v8

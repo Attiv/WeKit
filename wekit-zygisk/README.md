@@ -18,7 +18,7 @@ Open the WeKit module page in KernelSU to manage injection targets.
   the current result, preserves switches for surviving rows, and disables newly
   discovered rows. The WebUI intentionally has no manual add or delete action.
 
-The persisted target list is `/data/adb/wekit/injection-targets.tsv`. Module
+The persisted target list is `/data/adb/wekit_zygisk/injection-targets.tsv`. Module
 updates retain it; uninstall removes it without touching app data.
 
 ## Hot Update
@@ -42,8 +42,7 @@ restart requirements.
 # Build a release ZIP.
 ./x zygisk build --release
 
-# Only configure or compile the Zygisk native loader(s).
-./x zygisk config --abi arm64-v8a
+# Only compile the Zygisk native loader(s).
 ./x zygisk native --abi arm64-v8a
 
 # Reuse existing APK outputs, or explicitly select one APK per ABI.
@@ -63,11 +62,10 @@ Run `./x zygisk --help` or `./x zygisk <subcommand> --help` for every option.
 
 ## Development environment
 
-- LLVM clangd
-- VSCode + Clangd Plugin
+- Rust toolchain with the Android targets
+- rust-analyzer
 - Android NDK
-- CMake
 
 ## See also
 
-https://github.com/topjohnwu/zygisk-module-sample
+<https://github.com/topjohnwu/zygisk-module-sample>

@@ -68,6 +68,7 @@ static ABI_TABLE: &[AbiSpec] = &[
 /// ABIs included in Gradle's ABI splits (the default build targets).
 static RELEASE_ABIS: &[&str] = &["arm64-v8a", "armeabi-v7a"];
 
+const ZYGISK_CARGO_PACKAGE: &str = "wekit-zygisk";
 const ZYGISK_MODULE_ID: &str = "wekit_zygisk";
 const ZYGISK_MODULE_NAME: &str = "WeKit";
 
@@ -182,25 +183,8 @@ enum ZygiskCmd {
     /// Build only the Zygisk native loader(s), without an APK or module ZIP.
     Native(ZygiskNativeArgs),
 
-    /// Generate CMake build files and compile_commands.json for the Zygisk loader.
-    Config(ZygiskConfigArgs),
-
-    /// Remove Zygisk CMake build trees and native output directories.
+    /// Remove Zygisk native output and unstripped symbol directories.
     Clean(ZygiskCleanArgs),
-}
-
-#[derive(Args)]
-struct ZygiskConfigArgs {
-    /// Target ABI(s). May be repeated. Defaults to arm64-v8a and armeabi-v7a.
-    #[arg(long = "abi", value_name = "ABI")]
-    abis: Vec<String>,
-
-    #[command(flatten)]
-    profile: ZygiskProfileArgs,
-
-    /// Android NDK version under ANDROID_HOME/ndk/. Defaults to gradle/libs.versions.toml.
-    #[arg(long, value_name = "VERSION")]
-    ndk: Option<String>,
 }
 
 #[derive(Args)]
@@ -209,7 +193,7 @@ struct ZygiskProfileArgs {
     #[arg(long, conflicts_with = "release")]
     debug: bool,
 
-    /// Use the RelWithDebInfo Zygisk profile (default).
+    /// Use the optimized release Zygisk profile (default).
     #[arg(long, conflicts_with = "debug")]
     release: bool,
 }
@@ -227,10 +211,18 @@ struct ZygiskApkProfileArgs {
 
 #[derive(Args)]
 struct ZygiskNativeArgs {
-    #[command(flatten)]
-    config: ZygiskConfigArgs,
+    /// Target ABI(s). May be repeated. Defaults to arm64-v8a and armeabi-v7a.
+    #[arg(long = "abi", value_name = "ABI")]
+    abis: Vec<String>,
 
-    /// Delete each selected ABI's CMake and output directories before building.
+    #[command(flatten)]
+    profile: ZygiskProfileArgs,
+
+    /// Android NDK version under ANDROID_HOME/ndk/. Defaults to gradle/libs.versions.toml.
+    #[arg(long, value_name = "VERSION")]
+    ndk: Option<String>,
+
+    /// Delete each selected ABI's native output and unstripped symbols before building.
     #[arg(long)]
     force: bool,
 }
@@ -243,7 +235,7 @@ struct ZygiskBuildArgs {
     #[command(flatten)]
     zygisk_profile: ZygiskProfileArgs,
 
-    /// Delete Zygisk CMake and output directories before building native loaders.
+    /// Delete Zygisk native output and unstripped symbols before building native loaders.
     #[arg(long)]
     force: bool,
 
@@ -696,13 +688,6 @@ impl ZygiskBuildProfile {
             Self::Release => "release",
         }
     }
-
-    fn cmake_type(self) -> &'static str {
-        match self {
-            Self::Debug => "Debug",
-            Self::Release => "RelWithDebInfo",
-        }
-    }
 }
 
 impl ZygiskProfileArgs {
@@ -737,14 +722,6 @@ struct GradleVersionCatalog {
 #[derive(Deserialize)]
 struct GradleVersions {
     ndk: String,
-    #[serde(rename = "minSdk")]
-    min_sdk: String,
-}
-
-#[derive(Debug)]
-struct ZygiskBuildConfig {
-    ndk_version: String,
-    platform: String,
 }
 
 fn task_zygisk(args: ZygiskArgs) -> Result<()> {
@@ -754,48 +731,31 @@ fn task_zygisk(args: ZygiskArgs) -> Result<()> {
         }
         ZygiskCmd::Flash(args) => task_zygisk_flash(&args)?,
         ZygiskCmd::Native(args) => task_zygisk_native(&args)?,
-        ZygiskCmd::Config(args) => task_zygisk_config(&args)?,
         ZygiskCmd::Clean(args) => task_zygisk_clean(&args)?,
     }
     Ok(())
 }
 
-fn parse_zygisk_build_config(text: &str, path: &Path) -> Result<ZygiskBuildConfig> {
+fn parse_zygisk_ndk_version(text: &str, path: &Path) -> Result<String> {
     let catalog: GradleVersionCatalog =
         toml::from_str(text).with_context(|| format!("could not parse {}", path.display()))?;
     let ndk_version = catalog.versions.ndk.trim();
     if ndk_version.is_empty() {
         bail!("[versions].ndk in {} must not be empty", path.display());
     }
-    let min_sdk_text = catalog.versions.min_sdk.trim();
-    let min_sdk = min_sdk_text.parse::<u32>().with_context(|| {
-        format!(
-            "[versions].minSdk in {} must be a positive integer, got {min_sdk_text:?}",
-            path.display()
-        )
-    })?;
-    if min_sdk == 0 {
-        bail!(
-            "[versions].minSdk in {} must be a positive integer, got {min_sdk_text:?}",
-            path.display()
-        );
-    }
-    Ok(ZygiskBuildConfig {
-        ndk_version: ndk_version.to_owned(),
-        platform: format!("android-{min_sdk}"),
-    })
+    Ok(ndk_version.to_owned())
 }
 
-fn zygisk_build_config(root: &Path) -> Result<ZygiskBuildConfig> {
+fn zygisk_ndk_version(root: &Path) -> Result<String> {
     let path = root.join("gradle/libs.versions.toml");
     let text =
         fs::read_to_string(&path).with_context(|| format!("could not read {}", path.display()))?;
-    parse_zygisk_build_config(&text, &path)
+    parse_zygisk_ndk_version(&text, &path)
 }
 
-fn zygisk_ndk_dir(root: &Path, requested_version: Option<&str>) -> Result<(PathBuf, String)> {
-    let config = zygisk_build_config(root)?;
-    let ndk_version = requested_version.unwrap_or(&config.ndk_version);
+fn zygisk_ndk_dir(root: &Path, requested_version: Option<&str>) -> Result<PathBuf> {
+    let configured_version = zygisk_ndk_version(root)?;
+    let ndk_version = requested_version.unwrap_or(&configured_version);
     if ndk_version.is_empty() {
         bail!("Zygisk NDK version must not be empty");
     }
@@ -804,21 +764,7 @@ fn zygisk_ndk_dir(root: &Path, requested_version: Option<&str>) -> Result<(PathB
     if !ndk_dir.is_dir() {
         bail!("Zygisk NDK {ndk_version} not found: {}", ndk_dir.display());
     }
-    let toolchain = ndk_dir.join("build/cmake/android.toolchain.cmake");
-    if !toolchain.is_file() {
-        bail!(
-            "Zygisk NDK toolchain file not found: {}",
-            toolchain.display()
-        );
-    }
-    Ok((ndk_dir, config.platform))
-}
-
-fn zygisk_build_dir(root: &Path, profile: ZygiskBuildProfile, abi: &ZygiskAbiSpec) -> PathBuf {
-    zygisk_dir(root)
-        .join("my_build")
-        .join(profile.name())
-        .join(abi.android_name)
+    Ok(ndk_dir)
 }
 
 fn zygisk_native_output_dir(
@@ -840,49 +786,6 @@ fn zygisk_symbols_dir(root: &Path, profile: ZygiskBuildProfile, abi: &ZygiskAbiS
         .join(abi.android_name)
 }
 
-fn configure_zygisk_abi(
-    root: &Path,
-    profile: ZygiskBuildProfile,
-    abi: &ZygiskAbiSpec,
-    ndk_dir: &Path,
-    android_platform: &str,
-) -> Result<()> {
-    let module_dir = zygisk_dir(root);
-    let source_dir = module_dir.join("native");
-    let build_dir = zygisk_build_dir(root, profile, abi);
-    let library_dir = zygisk_native_output_dir(root, profile, abi);
-    let binary_dir = module_dir
-        .join("output/native")
-        .join(profile.name())
-        .join("bin")
-        .join(abi.android_name);
-    let symbols_dir = zygisk_symbols_dir(root, profile, abi);
-    let toolchain = ndk_dir.join("build/cmake/android.toolchain.cmake");
-
-    let args = vec![
-        "-S".to_owned(),
-        source_dir.display().to_string(),
-        "-B".to_owned(),
-        build_dir.display().to_string(),
-        format!("-DANDROID_ABI={}", abi.android_name),
-        format!("-DANDROID_PLATFORM={android_platform}"),
-        format!("-DANDROID_NDK={}", ndk_dir.display()),
-        "-DANDROID_STL=c++_static".to_owned(),
-        "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON".to_owned(),
-        format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()),
-        format!("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={}", binary_dir.display()),
-        format!("-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={}", library_dir.display()),
-        format!("-DDEBUG_SYMBOLS_PATH={}", symbols_dir.display()),
-        format!("-DCMAKE_BUILD_TYPE={}", profile.cmake_type()),
-        format!("-DMODULE_NAME={ZYGISK_MODULE_ID}"),
-        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON".to_owned(),
-        "-G".to_owned(),
-        "Ninja".to_owned(),
-    ];
-    println!("zygisk(config): {} ({})", abi.android_name, profile.name());
-    run_cmd_owned("cmake", &args, root)
-}
-
 fn build_zygisk_native(
     root: &Path,
     profile: ZygiskBuildProfile,
@@ -891,7 +794,7 @@ fn build_zygisk_native(
     force: bool,
 ) -> Result<()> {
     let abis = resolve_zygisk_abis(abi_names)?;
-    let (ndk_dir, _android_platform) = zygisk_ndk_dir(root, requested_ndk)?;
+    let ndk_dir = zygisk_ndk_dir(root, requested_ndk)?;
     task_configure()?;
 
     for abi in abis {
@@ -922,7 +825,7 @@ fn build_zygisk_native_rust(
     let mut args = vec![
         "build".to_owned(),
         "-p".to_owned(),
-        "wekit_zygisk".to_owned(),
+        ZYGISK_CARGO_PACKAGE.to_owned(),
         "--target".to_owned(),
         cargo_triple.to_owned(),
     ];
@@ -943,14 +846,17 @@ fn build_zygisk_native_rust(
         .join(profile_dir)
         .join(format!("lib{ZYGISK_MODULE_ID}.so"));
 
-    // Save unstripped copy
+    // Publish only this build. Stale libraries from an earlier module ID must
+    // not leak into the module ZIP.
     let sym_dir = zygisk_symbols_dir(root, profile, abi);
+    remove_dir_if_exists(&sym_dir)?;
     fs::create_dir_all(&sym_dir)?;
     let sym_so = sym_dir.join(format!("lib{ZYGISK_MODULE_ID}.so"));
     fs::copy(&src_so, &sym_so).with_context(|| format!("copy unstripped: {}", src_so.display()))?;
 
     // Strip into output/native
     let out_dir = zygisk_native_output_dir(root, profile, abi);
+    remove_dir_if_exists(&out_dir)?;
     fs::create_dir_all(&out_dir)?;
     let out_so = out_dir.join(format!("lib{ZYGISK_MODULE_ID}.so"));
     fs::copy(&src_so, &out_so)?;
@@ -975,24 +881,13 @@ fn build_zygisk_native_rust(
     Ok(())
 }
 
-fn task_zygisk_config(args: &ZygiskConfigArgs) -> Result<()> {
-    let root = workspace_root();
-    let profile = args.profile.resolve();
-    let abis = resolve_zygisk_abis(&args.abis)?;
-    let (ndk_dir, android_platform) = zygisk_ndk_dir(&root, args.ndk.as_deref())?;
-    for abi in abis {
-        configure_zygisk_abi(&root, profile, abi, &ndk_dir, &android_platform)?;
-    }
-    Ok(())
-}
-
 fn task_zygisk_native(args: &ZygiskNativeArgs) -> Result<()> {
     let root = workspace_root();
     build_zygisk_native(
         &root,
-        args.config.profile.resolve(),
-        args.config.ndk.as_deref(),
-        &args.config.abis,
+        args.profile.resolve(),
+        args.ndk.as_deref(),
+        &args.abis,
         args.force,
     )
 }
@@ -1577,7 +1472,6 @@ fn task_zygisk_clean(args: &ZygiskCleanArgs) -> Result<()> {
     for profile in profiles {
         for abi in &abis {
             for path in [
-                zygisk_build_dir(&root, profile, abi),
                 zygisk_native_output_dir(&root, profile, abi),
                 zygisk_symbols_dir(&root, profile, abi),
             ] {
@@ -1704,7 +1598,7 @@ mod tests {
             let profile = match Cli::try_parse_from(argv).unwrap().command {
                 Cmd::Zygisk(ZygiskArgs {
                     command: ZygiskCmd::Native(args),
-                }) => args.config.profile.resolve(),
+                }) => args.profile.resolve(),
                 _ => unreachable!(),
             };
             assert_eq!(profile, expected);
@@ -1724,30 +1618,25 @@ mod tests {
     }
 
     #[test]
-    fn parses_zygisk_values_from_gradle_version_catalog() {
-        let config = parse_zygisk_build_config(
+    fn parses_zygisk_ndk_from_gradle_version_catalog() {
+        let ndk_version = parse_zygisk_ndk_version(
             "[versions]\nndk = \"30.0.14904198\"\nminSdk = \"28\"\n",
             Path::new(VERSION_CATALOG_PATH),
         )
         .unwrap();
 
-        assert_eq!(config.ndk_version, "30.0.14904198");
-        assert_eq!(config.platform, "android-28");
+        assert_eq!(ndk_version, "30.0.14904198");
     }
 
     #[test]
-    fn rejects_missing_zygisk_values() {
-        for catalog in [
-            "[versions]\nminSdk = \"28\"\n",
-            "[versions]\nndk = \"30.0.14904198\"\n",
-        ] {
-            assert!(parse_zygisk_build_config(catalog, Path::new(VERSION_CATALOG_PATH)).is_err());
-        }
+    fn rejects_missing_zygisk_ndk_version() {
+        let catalog = "[versions]\nminSdk = \"28\"\n";
+        assert!(parse_zygisk_ndk_version(catalog, Path::new(VERSION_CATALOG_PATH)).is_err());
     }
 
     #[test]
     fn rejects_empty_ndk_version() {
-        let error = parse_zygisk_build_config(
+        let error = parse_zygisk_ndk_version(
             "[versions]\nndk = \"  \"\nminSdk = \"28\"\n",
             Path::new(VERSION_CATALOG_PATH),
         )
@@ -1755,16 +1644,5 @@ mod tests {
         .unwrap();
 
         assert!(error.to_string().contains("[versions].ndk"));
-    }
-
-    #[test]
-    fn rejects_invalid_min_sdk() {
-        for min_sdk in ["0", "android-28"] {
-            let catalog = format!("[versions]\nndk = \"30.0.14904198\"\nminSdk = \"{min_sdk}\"\n");
-            let error =
-                parse_zygisk_build_config(&catalog, Path::new(VERSION_CATALOG_PATH)).unwrap_err();
-
-            assert!(error.to_string().contains("[versions].minSdk"));
-        }
     }
 }
