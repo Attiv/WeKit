@@ -7,6 +7,7 @@ mod logging;
 mod natives;
 mod payload;
 mod protocol;
+mod so_hider;
 mod zygisk;
 
 use lifecycle::WeKitModule;

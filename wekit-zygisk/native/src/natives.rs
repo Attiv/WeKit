@@ -84,9 +84,10 @@ extern "C" fn jni_allocate_instance(
 }
 
 extern "C" fn jni_hide_loaded_module_libraries(_env: *mut RawJNIEnv, _class: jclass) -> jboolean {
-    // Implemented in Task 7 (so_hider::hide_path)
-    loge!("Zygisk: nativeHideLoadedModuleLibraries not yet implemented");
-    JNI_FALSE
+    let ok = crate::so_hider::hide_path("libdexkit.so") >= 0
+        && crate::so_hider::hide_path("libwekit_native.so") >= 0
+        && crate::so_hider::hide_path("libmmkv.so") >= 0;
+    if ok { JNI_TRUE } else { JNI_FALSE }
 }
 
 // ── ZygiskEntry JNI implementations ──────────────────────────────────────────
