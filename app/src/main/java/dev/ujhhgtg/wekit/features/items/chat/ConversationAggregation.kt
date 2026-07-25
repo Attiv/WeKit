@@ -51,8 +51,6 @@ import dev.ujhhgtg.wekit.features.api.core.models.IWeContact
 import dev.ujhhgtg.wekit.features.api.ui.WeStartActivityApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
-import dev.ujhhgtg.wekit.features.items.chat.ConversationAggregation.clearStaleFolderMappings
-import dev.ujhhgtg.wekit.features.items.chat.ConversationAggregation.composeFolderFlag
 import dev.ujhhgtg.wekit.features.items.chat.ConversationAggregation.syncFoldersToDatabase
 import dev.ujhhgtg.wekit.features.items.contacts.CustomLocalFriendAvatars
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -76,6 +74,7 @@ import java.lang.reflect.Proxy
 import java.text.Collator
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -204,6 +203,12 @@ object ConversationAggregation : ClickableFeature(),
 
     private val folderMembersCache = ConcurrentHashMap<String, List<String>>()
 
+    @Volatile
+    private var membersByFolder: Map<String, List<String>> = emptyMap()
+
+    @Volatile
+    private var folderByMember: Map<String, String> = emptyMap()
+
     private val suppressQueryRewrite = ThreadLocal.withInitial { false }
 
     // Reactive refresh: WeChat updates member conversation rows (new message / read state)
@@ -213,6 +218,11 @@ object ConversationAggregation : ClickableFeature(),
     // row tracks its members in real time.
     private const val REFRESH_DEBOUNCE_MS = 250L
     private val REFRESH_TASK_TOKEN = Any()
+    private val RECONCILE_TASK_TOKEN = Any()
+    private const val SQLITE_BIND_CHUNK_SIZE = 900
+    private val pendingRefreshMembers = ConcurrentHashMap.newKeySet<String>()
+    private val pendingRefreshLock = Any()
+    private val refreshAllFolders = AtomicBoolean(false)
 
     @Volatile
     private var refreshThread: HandlerThread? = null
@@ -250,7 +260,6 @@ object ConversationAggregation : ClickableFeature(),
         if (WeDatabaseApi.isReady) {
             syncFoldersToDatabase()
         }
-        WeConversationApi.reloadConversations()
     }
 
     override fun onDisable() {
@@ -275,10 +284,12 @@ object ConversationAggregation : ClickableFeature(),
         runCatching {
             withQueryRewriteSuppressed {
                 if (!isFolderSchemaReady()) return@withQueryRewriteSuppressed
-                // Preserve each folder's pin / move-up bits in memory so a later onEnable in the
-                // same process restores them when composeFolderFlag recreates the rows.
-                snapshotFolderPinFlags(loadFolders())
-                clearStaleFolderMappings()
+                val folders = loadFolders()
+                persistChangedPinFlags(folders, readStoredFolderRows().mapValues { it.value.flag })
+                WeDatabaseApi.transaction { clearStaleFolderMappings() }
+                membersByFolder = emptyMap()
+                folderByMember = emptyMap()
+                folderMembersCache.clear()
             }
             WeConversationApi.reloadConversations()
             WeLogger.i(TAG, "released all folders on disable")
@@ -315,11 +326,9 @@ object ConversationAggregation : ClickableFeature(),
             folder = updated,
             onFolderUpdated = {
                 syncFoldersToDatabase()
-                WeConversationApi.reloadConversations()
             },
             onFolderDeleted = {
                 syncFoldersToDatabase()
-                WeConversationApi.reloadConversations()
             }
         )
         return true
@@ -337,7 +346,6 @@ object ConversationAggregation : ClickableFeature(),
             val updated = folder.copy(members = (folder.members + talker).distinct().sorted())
             saveFolders(loadFolders().map { if (it.id == updated.id) updated else it })
             syncFoldersToDatabase()
-            WeConversationApi.reloadConversations()
         }
         return true
     }
@@ -356,7 +364,6 @@ object ConversationAggregation : ClickableFeature(),
         val updated = folder.copy(members = folder.members.filterNot { it == talker })
         saveFolders(loadFolders().map { if (it.id == updated.id) updated else it })
         syncFoldersToDatabase()
-        WeConversationApi.reloadConversations()
         showToast("已移出「${folder.name}」")
     }
 
@@ -365,7 +372,7 @@ object ConversationAggregation : ClickableFeature(),
         if (table != ConversationTable.NAME) return
         val username = values.getAsString(ConversationTable.USERNAME) ?: return
         if (isFolderId(username)) return  // skip our own folder row writes
-        scheduleRefresh()
+        scheduleRefresh(username)
     }
 
     // Called by WeDatabaseListenerApi when WeChat updates conversation rows
@@ -378,14 +385,22 @@ object ConversationAggregation : ClickableFeature(),
     ) {
         if (table != ConversationTable.NAME) return
         // Skip updates that target only folder rows
-        val targetUsername = whereArgs?.singleOrNull()
+        val targetUsername = values.getAsString(ConversationTable.USERNAME)
+            ?: whereArgs?.singleOrNull()?.takeIf {
+                whereClause?.contains(ConversationTable.USERNAME, ignoreCase = true) == true
+            }
         if (targetUsername != null && isFolderId(targetUsername)) return
-        scheduleRefresh()
+        scheduleRefresh(targetUsername)
     }
 
-    private fun scheduleRefresh() {
+    private fun scheduleRefresh(username: String?) {
         val handler = refreshHandler ?: return
         if (loadFolders().isEmpty()) return
+        if (username == null) {
+            refreshAllFolders.set(true)
+        } else {
+            synchronized(pendingRefreshLock) { pendingRefreshMembers += username }
+        }
         handler.removeCallbacksAndMessages(REFRESH_TASK_TOKEN)
         handler.postAtTime(
             ::doRefreshFolderSummaries,
@@ -398,22 +413,48 @@ object ConversationAggregation : ClickableFeature(),
         if (!WeDatabaseApi.isReady) return
         val folders = loadFolders()
         if (folders.isEmpty()) return
+        val changedMembers = synchronized(pendingRefreshLock) {
+            pendingRefreshMembers.toSet().also { pendingRefreshMembers.clear() }
+        }
+        val refreshAll = refreshAllFolders.getAndSet(false)
+
+        // A custom SQL rule may depend on any rconversation column. Reconcile it before using the
+        // reverse index, because this write may have changed membership rather than just a summary.
+        if (folders.any { it.type == FolderType.SQL } ||
+            changedMembers.any { it !in folderByMember } && folders.any { it.type != FolderType.MANUAL }
+        ) {
+            reconcileFolders(folders)
+            return
+        }
+
+        val affectedFolderIds = if (refreshAll) {
+            membersByFolder.keys
+        } else {
+            changedMembers.mapNotNullTo(linkedSetOf()) { folderByMember[it] }
+        }
+        if (affectedFolderIds.isEmpty()) return
+
         runCatching {
+            val startedAt = SystemClock.elapsedRealtime()
             withQueryRewriteSuppressed {
                 if (!isFolderSchemaReady()) return@withQueryRewriteSuppressed
-                folders.forEach { folder ->
-                    val members = getFolderMembers(folder).filterNot(::isFolderId).distinct()
-                    if (members.isEmpty()) return@forEach
-                    // WeChat's REPLACE INTO on new-message receipt can recreate the member row
-                    // without parentRef (REPLACE = DELETE + INSERT, and WeChat's INSERT omits
-                    // parentRef).  Re-anchor any member whose parentRef was cleared before
-                    // reading the summary so the folder container query still finds them and
-                    // ORDER BY flag DESC, conversationTime DESC puts the new-message member first.
-                    reanchorFolderMembers(folder.id, members)
-                    writeFolderSummaryRow(folder.id, readFolderSummary(members))
+                val affectedMembers = membersByFolder.filterKeys { it in affectedFolderIds }
+                WeDatabaseApi.transaction {
+                    affectedMembers.forEach { (folderId, members) ->
+                        reanchorFolderMembers(folderId, members)
+                    }
+                    val summaries = readFolderSummaries(affectedMembers)
+                    affectedFolderIds.forEach { folderId ->
+                        writeFolderSummaryRow(folderId, summaries[folderId] ?: FolderSummary())
+                    }
                 }
             }
             WeConversationApi.reloadConversations()
+            WeLogger.d(
+                TAG,
+                "refreshed ${affectedFolderIds.size} folders for ${changedMembers.size} members in " +
+                        "${SystemClock.elapsedRealtime() - startedAt}ms"
+            )
         }.onFailure {
             WeLogger.e(TAG, "failed to refresh folder summaries", it)
         }
@@ -427,16 +468,17 @@ object ConversationAggregation : ClickableFeature(),
      */
     private fun reanchorFolderMembers(folderId: String, members: List<String>) {
         if (members.isEmpty()) return
-        val placeholders = members.joinToString(",") { "?" }
-        WeDatabaseApi.execStatement(
-            """
-            UPDATE ${ConversationTable.NAME}
-            SET ${ConversationTable.PARENT_REF}=?
-            WHERE ${ConversationTable.USERNAME} IN ($placeholders)
-              AND (${ConversationTable.PARENT_REF} IS NULL OR ${ConversationTable.PARENT_REF}='')
-            """.trimIndent(),
-            arrayOf(folderId, *members.toTypedArray())
-        )
+        members.chunked(SQLITE_BIND_CHUNK_SIZE - 1).forEach { chunk ->
+            WeDatabaseApi.execStatement(
+                """
+                UPDATE ${ConversationTable.NAME}
+                SET ${ConversationTable.PARENT_REF}=?
+                WHERE ${ConversationTable.USERNAME} IN (${placeholders(chunk.size)})
+                  AND (${ConversationTable.PARENT_REF} IS NULL OR ${ConversationTable.PARENT_REF}='')
+                """.trimIndent(),
+                arrayOf(folderId, *chunk.toTypedArray())
+            )
+        }
     }
 
     private fun startRefreshThread() {
@@ -452,21 +494,15 @@ object ConversationAggregation : ClickableFeature(),
         refreshHandler = null
         refreshThread?.quitSafely()
         refreshThread = null
+        synchronized(pendingRefreshLock) { pendingRefreshMembers.clear() }
+        refreshAllFolders.set(false)
     }
 
     override fun onQuery(sql: String): String? {
         if (suppressQueryRewrite.get()!!) return null
 
-        val folderId = activeFolderId
-        if (folderId != null) {
-            val containerSql = rewriteContainerSql(sql, folderId)
-            if (containerSql != sql) return containerSql
-        }
-
-        if (!sql.contains(ConversationTable.NAME, ignoreCase = true)) return null
-        if (sql.contains(FOLDER_PREFIX, ignoreCase = true)) return null
-        if (!looksLikeConversationListQuery(sql)) return null
-        return appendParentRefFilter(sql)
+        val folderId = activeFolderId ?: return null
+        return rewriteContainerSql(sql, folderId).takeIf { it != sql }
     }
 
     override fun onStartActivity(param: HookParam, intent: Intent) {
@@ -835,41 +871,211 @@ object ConversationAggregation : ClickableFeature(),
     }
 
     private fun syncFoldersToDatabase() {
-        foldersCache = null
-        folderMembersCache.clear()
-        val folders = loadFolders()
+        val handler = refreshHandler ?: return
+        handler.removeCallbacksAndMessages(RECONCILE_TASK_TOKEN)
+        handler.postAtTime(
+            { reconcileFolders(loadFolders()) },
+            RECONCILE_TASK_TOKEN,
+            SystemClock.uptimeMillis()
+        )
+    }
+
+    private fun reconcileFolders(folders: List<ChatFolder>) {
+        if (!WeDatabaseApi.isReady) return
+        val startedAt = SystemClock.elapsedRealtime()
+        var databaseChanged = false
         runCatching {
             withQueryRewriteSuppressed {
                 if (!isFolderSchemaReady()) return@withQueryRewriteSuppressed
-                // clearStaleFolderMappings() deletes the folder rows, which would drop the
-                // pin / move-up bits WeChat stored on them. Snapshot those bits first so
-                // composeFolderFlag() can restore them when the rows are recreated below.
-                snapshotFolderPinFlags(folders)
-                clearStaleFolderMappings()
-                folders.forEach { syncFolder(it) }
+                folderMembersCache.clear()
+                val desiredMembers = resolveOwnedMembers(folders)
+                val desiredOwners = reverseMemberIndex(desiredMembers)
+                val currentOwners = readCurrentMemberOwners()
+                val storedRows = readStoredFolderRows()
+                val liveFlags = storedRows.mapValues { it.value.flag }
+                persistChangedPinFlags(folders, liveFlags)
+
+                val desiredFolderIds = folders.mapTo(linkedSetOf()) { it.id }
+                val storedFolderIds = readStoredFolderIds()
+                val removedFolderIds = storedFolderIds - desiredFolderIds
+                val changedOwnerMembers = currentOwners.filter { (member, owner) ->
+                    desiredOwners[member] != owner
+                }.keys
+                val removedMembers = changedOwnerMembers.filterTo(linkedSetOf()) { it !in desiredOwners }
+                val changedBindings = desiredOwners.filter { (member, owner) ->
+                    currentOwners[member] != owner
+                }
+                val existingContacts = readFolderContactNames(desiredFolderIds)
+                val existingAvatarRows = readExistingAvatarRows(desiredFolderIds)
+                val summaries = readFolderSummaries(desiredMembers, storedRows)
+                val changedSummaries = folders.mapNotNull { folder ->
+                    val summary = summaries[folder.id] ?: FolderSummary()
+                    val stored = storedRows[folder.id]
+                    if (stored == null ||
+                        stored.summary != summary ||
+                        stored.attrFlag != summary.attrFlag ||
+                        stored.flag and FLAG_TIME_MASK != summary.conversationTime and FLAG_TIME_MASK
+                    ) {
+                        folder.id to summary
+                    } else {
+                        null
+                    }
+                }
+                databaseChanged = changedBindings.isNotEmpty() || changedSummaries.isNotEmpty() ||
+                        removedMembers.isNotEmpty() || removedFolderIds.isNotEmpty() ||
+                        folders.any { it.id !in storedRows || existingContacts[it.id] != it.name } ||
+                        desiredFolderIds.any { it !in existingAvatarRows }
+
+                if (databaseChanged) {
+                    WeDatabaseApi.transaction {
+                        deleteEmptyPlaceholderRows(removedMembers)
+                        unbindMembers(removedMembers)
+                        ensureManualMemberRows(folders, changedBindings.keys)
+                        bindMembers(changedBindings)
+                        deleteStoredFolders(removedFolderIds)
+
+                        folders.forEach { folder ->
+                            if (folder.id !in storedRows) {
+                                ensureFolderConversationRow(folder)
+                            }
+                            if (existingContacts[folder.id] != folder.name) {
+                                writeFolderContact(folder)
+                            }
+                            if (folder.id !in existingAvatarRows) {
+                                writeFolderAvatar(folder.id)
+                            }
+                        }
+
+                        changedSummaries.forEach { (folderId, summary) ->
+                            writeFolderSummaryRow(folderId, summary)
+                        }
+                    }
+                }
+
+                membersByFolder = desiredMembers
+                folderByMember = desiredOwners
+                desiredMembers.forEach { (folderId, members) ->
+                    folderMembersCache[folderId] = members
+                }
+
+                WeLogger.i(
+                    TAG,
+                    "reconciled ${folders.size} folders: bindings=${changedBindings.size}, " +
+                    "unbound=${removedMembers.size}, removed=${removedFolderIds.size}, " +
+                            "elapsed=${SystemClock.elapsedRealtime() - startedAt}ms"
+                )
             }
-            WeLogger.i(TAG, "synced ${folders.size} folders")
+            if (databaseChanged) WeConversationApi.reloadConversations()
         }.onFailure {
             WeLogger.e(TAG, "failed to sync folders", it)
         }
     }
 
-    /**
-     * Captures each folder row's live pin / move-up bits into [ChatFolder.pinFlag] and persists the
-     * folder list, just before [clearStaleFolderMappings] deletes the rows. Since the pin flag is
-     * stored in chat_folders.json, it survives a process restart between onDisable (which deletes
-     * every row) and the next onEnable — [composeFolderFlag] restores it when recreating the rows.
-     *
-     * Only folders whose row actually exists update the snapshot — the live row is WeChat's current
-     * truth (pin set/cleared via setPlacedTop). When no row exists (e.g. the first sync after
-     * re-enabling in a fresh process, where onDisable already deleted every row), the previously
-     * persisted [ChatFolder.pinFlag] is left intact rather than overwritten with 0, so the user's
-     * pin choice isn't silently lost.
-     */
-    private fun snapshotFolderPinFlags(folders: List<ChatFolder>) {
+    private fun resolveOwnedMembers(folders: List<ChatFolder>): Map<String, List<String>> {
+        val candidates = linkedMapOf<String, List<String>>()
+        val ownerByMember = linkedMapOf<String, String>()
+        folders.forEach { folder ->
+            val members = resolveFolderMembers(folder).filterNot(::isFolderId).distinct()
+            candidates[folder.id] = members
+            members.forEach { ownerByMember[it] = folder.id }
+        }
+        return candidates.mapValues { (folderId, members) ->
+            members.filter { ownerByMember[it] == folderId }
+        }
+    }
+
+    private fun reverseMemberIndex(byFolder: Map<String, List<String>>): Map<String, String> =
+        buildMap { byFolder.forEach { (folderId, members) -> members.forEach { put(it, folderId) } } }
+
+    private fun readCurrentMemberOwners(): Map<String, String> {
+        val result = linkedMapOf<String, String>()
+        WeDatabaseApi.rawQuery(
+            "SELECT ${ConversationTable.USERNAME}, ${ConversationTable.PARENT_REF} " +
+                    "FROM ${ConversationTable.NAME} WHERE ${ConversationTable.PARENT_REF} LIKE ?",
+            arrayOf("$FOLDER_PREFIX%")
+        ).use { cursor ->
+            while (cursor.moveToNext()) result[cursor.getString(0)] = cursor.getString(1)
+        }
+        return result
+    }
+
+    private fun readStoredFolderRows(): Map<String, StoredFolderRow> {
+        val result = linkedMapOf<String, StoredFolderRow>()
+        WeDatabaseApi.rawQuery(
+            """
+            SELECT ${ConversationTable.USERNAME}, ${ConversationTable.FLAG}, ${ConversationTable.DIGEST},
+                   ${ConversationTable.DIGEST_USER}, ${ConversationTable.IS_SEND}, ${ConversationTable.STATUS},
+                   ${ConversationTable.CONVERSATION_TIME}, ${ConversationTable.UNREAD_COUNT},
+                   ${ConversationTable.UNREAD_MUTE_COUNT}, ${ConversationTable.CONTENT},
+                   ${ConversationTable.MSG_TYPE}, ${ConversationTable.CHAT_MODE}, ${ConversationTable.ATTR_FLAG}
+            """.trimIndent() + " " +
+                    "FROM ${ConversationTable.NAME} WHERE ${ConversationTable.USERNAME} LIKE ?",
+            arrayOf("$FOLDER_PREFIX%")
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result[cursor.getString(0)] = StoredFolderRow(
+                    flag = cursor.getLongOrZero(ConversationTable.FLAG),
+                    attrFlag = cursor.getIntOrZero(ConversationTable.ATTR_FLAG),
+                    summary = FolderSummary(
+                        digest = cursor.getStringOrEmpty(ConversationTable.DIGEST),
+                        digestUser = cursor.getStringOrEmpty(ConversationTable.DIGEST_USER),
+                        isSend = cursor.getIntOrZero(ConversationTable.IS_SEND),
+                        status = cursor.getIntOrZero(ConversationTable.STATUS),
+                        conversationTime = cursor.getLongOrZero(ConversationTable.CONVERSATION_TIME),
+                        unreadCount = cursor.getIntOrZero(ConversationTable.UNREAD_COUNT),
+                        unreadMuteCount = cursor.getIntOrZero(ConversationTable.UNREAD_MUTE_COUNT),
+                        content = cursor.getStringOrEmpty(ConversationTable.CONTENT),
+                        msgType = cursor.getStringOrEmpty(ConversationTable.MSG_TYPE),
+                        chatMode = cursor.getIntOrZero(ConversationTable.CHAT_MODE)
+                    )
+                )
+            }
+        }
+        return result
+    }
+
+    private fun readStoredFolderIds(): Set<String> {
+        val result = linkedSetOf<String>()
+        listOf(ConversationTable.NAME, ContactTable.NAME, "img_flag").forEach { table ->
+            WeDatabaseApi.rawQuery(
+                "SELECT username FROM $table WHERE username LIKE ?",
+                arrayOf("$FOLDER_PREFIX%")
+            ).use { cursor -> while (cursor.moveToNext()) result += cursor.getString(0) }
+        }
+        return result
+    }
+
+    private fun readFolderContactNames(folderIds: Set<String>): Map<String, String> {
+        if (folderIds.isEmpty()) return emptyMap()
+        val result = linkedMapOf<String, String>()
+        folderIds.chunked(SQLITE_BIND_CHUNK_SIZE).forEach { ids ->
+            WeDatabaseApi.rawQuery(
+                "SELECT ${ContactTable.USERNAME}, ${ContactTable.NICKNAME} FROM ${ContactTable.NAME} " +
+                        "WHERE ${ContactTable.USERNAME} IN (${placeholders(ids.size)})",
+                ids.toTypedArray()
+            ).use { cursor ->
+                while (cursor.moveToNext()) result[cursor.getString(0)] = cursor.getString(1) ?: ""
+            }
+        }
+        return result
+    }
+
+    private fun readExistingAvatarRows(folderIds: Set<String>): Set<String> {
+        if (folderIds.isEmpty()) return emptySet()
+        val result = linkedSetOf<String>()
+        folderIds.chunked(SQLITE_BIND_CHUNK_SIZE).forEach { ids ->
+            WeDatabaseApi.rawQuery(
+                "SELECT username FROM img_flag WHERE username IN (${placeholders(ids.size)})",
+                ids.toTypedArray()
+            ).use { cursor -> while (cursor.moveToNext()) result += cursor.getString(0) }
+        }
+        return result
+    }
+
+    private fun persistChangedPinFlags(folders: List<ChatFolder>, liveFlags: Map<String, Long>) {
         var changed = false
         val updated = folders.map { folder ->
-            val liveHigh = existingFolderFlag(folder.id)?.and(FLAG_HIGH_MASK) ?: return@map folder
+            val liveHigh = liveFlags[folder.id]?.and(FLAG_HIGH_MASK) ?: return@map folder
             if (liveHigh == folder.pinFlag) return@map folder
             changed = true
             folder.copy(pinFlag = liveHigh)
@@ -913,125 +1119,237 @@ object ConversationAggregation : ClickableFeature(),
         }
     }
 
-    private fun syncFolder(folder: ChatFolder) {
-        val members = getFolderMembers(folder).filterNot(::isFolderId).distinct()
-        if (members.isNotEmpty()) {
-            if (folder.type == FolderType.MANUAL) {
-                ensureMemberConversationRows(folder.id, members)
-            }
-            val placeholders = members.joinToString(",") { "?" }
+    private fun placeholders(count: Int): String = List(count) { "?" }.joinToString(",")
+
+    private fun deleteEmptyPlaceholderRows(members: Collection<String>) {
+        members.chunked(SQLITE_BIND_CHUNK_SIZE).forEach { chunk ->
             WeDatabaseApi.execStatement(
-                "UPDATE ${ConversationTable.NAME} SET ${ConversationTable.PARENT_REF}=? WHERE ${ConversationTable.USERNAME} IN ($placeholders)",
-                arrayOf(folder.id, *members.toTypedArray())
+                """
+                DELETE FROM ${ConversationTable.NAME}
+                WHERE ${ConversationTable.USERNAME} IN (${placeholders(chunk.size)})
+                  AND ${ConversationTable.PARENT_REF} LIKE ?
+                  AND ${ConversationTable.DIGEST}='' AND ${ConversationTable.CONTENT}=''
+                  AND ${ConversationTable.UNREAD_COUNT}=0 AND ${ConversationTable.CONVERSATION_TIME}=0
+                  AND ${ConversationTable.FLAG}=0 AND ${ConversationTable.MSG_TYPE}=''
+                  AND ${ConversationTable.STATUS}=0 AND ${ConversationTable.IS_SEND}=0
+                """.trimIndent(),
+                arrayOf(*chunk.toTypedArray(), "$FOLDER_PREFIX%")
             )
         }
+    }
 
+    private fun unbindMembers(members: Collection<String>) {
+        members.chunked(SQLITE_BIND_CHUNK_SIZE).forEach { chunk ->
+            WeDatabaseApi.execStatement(
+                "UPDATE ${ConversationTable.NAME} SET ${ConversationTable.PARENT_REF}='' " +
+                        "WHERE ${ConversationTable.USERNAME} IN (${placeholders(chunk.size)}) " +
+                        "AND ${ConversationTable.PARENT_REF} LIKE ?",
+                arrayOf(*chunk.toTypedArray(), "$FOLDER_PREFIX%")
+            )
+        }
+    }
+
+    private fun ensureManualMemberRows(folders: List<ChatFolder>, changedMembers: Collection<String>) {
+        val changed = changedMembers.toHashSet()
+        folders.filter { it.type == FolderType.MANUAL }.forEach { folder ->
+            folder.members.asSequence()
+                .filter { it in changed && !isFolderId(it) }
+                .distinct()
+                .chunked(SQLITE_BIND_CHUNK_SIZE / 2)
+                .forEach { chunk ->
+                    val values = chunk.joinToString(",") { "(?, ?, '', '', 0, 0, 0, 0, 0, 0, '', '', 0)" }
+                    val args: Array<Any> = chunk.flatMap { listOf<Any>(it, folder.id) }.toTypedArray()
+                    WeDatabaseApi.execStatement(
+                        """
+                        INSERT OR IGNORE INTO ${ConversationTable.NAME} (
+                            ${ConversationTable.USERNAME}, ${ConversationTable.PARENT_REF}, ${ConversationTable.DIGEST},
+                            ${ConversationTable.DIGEST_USER}, ${ConversationTable.IS_SEND}, ${ConversationTable.STATUS},
+                            ${ConversationTable.CONVERSATION_TIME}, ${ConversationTable.FLAG}, ${ConversationTable.UNREAD_COUNT},
+                            ${ConversationTable.UNREAD_MUTE_COUNT}, ${ConversationTable.CONTENT},
+                            ${ConversationTable.MSG_TYPE}, ${ConversationTable.CHAT_MODE}
+                        ) VALUES $values
+                        """.trimIndent(),
+                        args
+                    )
+                }
+        }
+    }
+
+    private fun bindMembers(bindings: Map<String, String>) {
+        bindings.entries.groupBy({ it.value }, { it.key }).forEach { (folderId, members) ->
+            members.chunked(SQLITE_BIND_CHUNK_SIZE - 1).forEach { chunk ->
+                WeDatabaseApi.execStatement(
+                    "UPDATE ${ConversationTable.NAME} SET ${ConversationTable.PARENT_REF}=? " +
+                            "WHERE ${ConversationTable.USERNAME} IN (${placeholders(chunk.size)})",
+                    arrayOf(folderId, *chunk.toTypedArray())
+                )
+            }
+        }
+    }
+
+    private fun deleteStoredFolders(folderIds: Set<String>) {
+        folderIds.chunked(SQLITE_BIND_CHUNK_SIZE).forEach { chunk ->
+            val where = "username IN (${placeholders(chunk.size)})"
+            listOf(ConversationTable.NAME, ContactTable.NAME, "img_flag").forEach { table ->
+                WeDatabaseApi.execStatement("DELETE FROM $table WHERE $where", chunk.toTypedArray())
+            }
+        }
+    }
+
+    private fun ensureFolderConversationRow(folder: ChatFolder) {
         WeDatabaseApi.execStatement(
             """
-            REPLACE INTO ${ContactTable.NAME} (${ContactTable.USERNAME}, ${ContactTable.NICKNAME}, ${ContactTable.TYPE}, ${ContactTable.VERIFY_FLAG})
-            VALUES (?, ?, 3, 0)
+            INSERT OR IGNORE INTO ${ConversationTable.NAME} (
+                ${ConversationTable.USERNAME}, ${ConversationTable.PARENT_REF}, ${ConversationTable.FLAG},
+                ${ConversationTable.CONVERSATION_TIME}, ${ConversationTable.DIGEST}, ${ConversationTable.CONTENT}
+            ) VALUES (?, '', ?, 0, '', '')
+            """.trimIndent(),
+            arrayOf(folder.id, folder.pinFlag and FLAG_HIGH_MASK)
+        )
+    }
+
+    private fun writeFolderContact(folder: ChatFolder) {
+        WeDatabaseApi.execStatement(
+            """
+            REPLACE INTO ${ContactTable.NAME} (
+                ${ContactTable.USERNAME}, ${ContactTable.NICKNAME}, ${ContactTable.TYPE}, ${ContactTable.VERIFY_FLAG}
+            ) VALUES (?, ?, 3, 0)
             """.trimIndent(),
             arrayOf(folder.id, folder.name)
         )
-
-        WeDatabaseApi.execStatement(
-            """
-            REPLACE INTO img_flag (username, imgflag, lastupdatetime, reserved1, reserved2)
-            VALUES (?, 3, ?, 0, ?)
-            """.trimIndent(),
-            arrayOf(folder.id, System.currentTimeMillis() / 1000, "http://wekit.local/avatar/${folder.id}")
-        )
-
-        val summary = readFolderSummary(members)
-        writeFolderSummaryRow(folder.id, summary)
     }
 
-    /** Writes (REPLACEs) a folder's aggregate row in rconversation from its computed summary. */
+    private fun writeFolderAvatar(folderId: String) {
+        WeDatabaseApi.execStatement(
+            """
+            INSERT OR IGNORE INTO img_flag (username, imgflag, lastupdatetime, reserved1, reserved2)
+            VALUES (?, 3, ?, 0, ?)
+            """.trimIndent(),
+            arrayOf(folderId, System.currentTimeMillis() / 1000, "http://wekit.local/avatar/$folderId")
+        )
+    }
+
+    /** Updates a materialized folder row while preserving WeChat's live pin bits. */
     private fun writeFolderSummaryRow(folderId: String, summary: FolderSummary) {
         WeDatabaseApi.execStatement(
             """
-            REPLACE INTO ${ConversationTable.NAME} (
-                ${ConversationTable.USERNAME}, ${ConversationTable.DIGEST}, ${ConversationTable.DIGEST_USER}, ${ConversationTable.IS_SEND}, ${ConversationTable.STATUS},
-                ${ConversationTable.CONVERSATION_TIME}, ${ConversationTable.FLAG}, ${ConversationTable.UNREAD_COUNT}, ${ConversationTable.UNREAD_MUTE_COUNT}, ${ConversationTable.CONTENT}, ${ConversationTable.MSG_TYPE}, ${ConversationTable.CHAT_MODE}, ${ConversationTable.ATTR_FLAG}
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            UPDATE ${ConversationTable.NAME} SET
+                ${ConversationTable.DIGEST}=?, ${ConversationTable.DIGEST_USER}=?,
+                ${ConversationTable.IS_SEND}=?, ${ConversationTable.STATUS}=?,
+                ${ConversationTable.CONVERSATION_TIME}=?,
+                ${ConversationTable.FLAG}=(${ConversationTable.FLAG} & ?) | ?,
+                ${ConversationTable.UNREAD_COUNT}=?, ${ConversationTable.UNREAD_MUTE_COUNT}=?,
+                ${ConversationTable.CONTENT}=?, ${ConversationTable.MSG_TYPE}=?,
+                ${ConversationTable.CHAT_MODE}=?, ${ConversationTable.ATTR_FLAG}=?
+            WHERE ${ConversationTable.USERNAME}=?
             """.trimIndent(),
             arrayOf(
-                folderId,
                 summary.digest,
                 summary.digestUser,
                 summary.isSend,
                 summary.status,
                 summary.conversationTime,
-                composeFolderFlag(folderId, summary.conversationTime),
+                FLAG_HIGH_MASK,
+                summary.conversationTime and FLAG_TIME_MASK,
                 summary.unreadCount,
                 summary.unreadMuteCount,
                 summary.content,
                 summary.msgType,
                 summary.chatMode,
-                summary.attrFlag
+                summary.attrFlag,
+                folderId
             )
         )
     }
 
-    private fun ensureMemberConversationRows(folderId: String, members: List<String>) {
-        members.forEach { member ->
-            WeDatabaseApi.execStatement(
+    private fun readFolderSummaries(
+        byFolder: Map<String, List<String>>,
+        storedRows: Map<String, StoredFolderRow> = emptyMap()
+    ): Map<String, FolderSummary> {
+        val ownerByMember = reverseMemberIndex(byFolder)
+        val states = byFolder.mapValuesTo(linkedMapOf()) { SummaryAccumulator() }
+        val members = ownerByMember.keys.toList()
+
+        members.chunked(SQLITE_BIND_CHUNK_SIZE).forEach { chunk ->
+            WeDatabaseApi.rawQuery(
                 """
-                INSERT OR IGNORE INTO ${ConversationTable.NAME} (
-                    ${ConversationTable.USERNAME}, ${ConversationTable.PARENT_REF}, ${ConversationTable.DIGEST}, ${ConversationTable.DIGEST_USER}, ${ConversationTable.IS_SEND},
-                    ${ConversationTable.STATUS}, ${ConversationTable.CONVERSATION_TIME}, ${ConversationTable.FLAG}, ${ConversationTable.UNREAD_COUNT}, ${ConversationTable.UNREAD_MUTE_COUNT}, ${ConversationTable.CONTENT},
-                    ${ConversationTable.MSG_TYPE}, ${ConversationTable.CHAT_MODE}
-                ) VALUES (?, ?, '', '', 0, 0, 0, 0, 0, 0, '', '', 0)
+                SELECT r.${ConversationTable.USERNAME}, r.${ConversationTable.DIGEST},
+                       r.${ConversationTable.DIGEST_USER}, r.${ConversationTable.IS_SEND},
+                       r.${ConversationTable.STATUS}, r.${ConversationTable.CONVERSATION_TIME},
+                       r.${ConversationTable.UNREAD_COUNT}, r.${ConversationTable.CONTENT},
+                       r.${ConversationTable.MSG_TYPE}, r.${ConversationTable.CHAT_MODE},
+                       c.${ContactTable.TYPE}, c.${ContactTable.LV_BUFF},
+                       c.${ContactTable.CON_REMARK}, c.${ContactTable.NICKNAME}
+                FROM ${ConversationTable.NAME} r
+                LEFT JOIN ${ContactTable.NAME} c
+                  ON c.${ContactTable.USERNAME}=r.${ConversationTable.USERNAME}
+                WHERE r.${ConversationTable.USERNAME} IN (${placeholders(chunk.size)})
                 """.trimIndent(),
-                arrayOf(member, folderId)
-            )
-        }
-    }
+                chunk.toTypedArray()
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val username = cursor.getStringOrEmpty(ConversationTable.USERNAME)
+                    val folderId = ownerByMember[username] ?: continue
+                    val state = states.getValue(folderId)
+                    val unread = cursor.getIntOrZero(ConversationTable.UNREAD_COUNT).coerceAtLeast(0)
+                    if (unread > 0) {
+                        val muted = if (username.endsWith("@chatroom")) {
+                            val index = cursor.getColumnIndex(ContactTable.LV_BUFF)
+                            val lvBuff = if (index >= 0 && !cursor.isNull(index)) cursor.getBlob(index) else null
+                            WeConversationApi.parseChatRoomNotify(lvBuff) == 0
+                        } else {
+                            cursor.getIntOrZero(ContactTable.TYPE) and 512 != 0
+                        }
+                        if (muted) state.mutedUnread += unread else state.normalUnread += unread
+                    }
 
-    private fun readFolderSummary(members: List<String>): FolderSummary {
-        if (members.isEmpty()) return FolderSummary()
-        val placeholders = members.joinToString(",") { "?" }
-        val cursor = WeDatabaseApi.rawQuery(
-            """
-            SELECT ${ConversationTable.USERNAME}, ${ConversationTable.DIGEST}, ${ConversationTable.DIGEST_USER}, ${ConversationTable.IS_SEND}, ${ConversationTable.STATUS}, ${ConversationTable.CONVERSATION_TIME},
-                   ${ConversationTable.FLAG}, ${ConversationTable.UNREAD_COUNT}, ${ConversationTable.UNREAD_MUTE_COUNT}, ${ConversationTable.CONTENT}, ${ConversationTable.MSG_TYPE}, ${ConversationTable.CHAT_MODE}
-            FROM ${ConversationTable.NAME}
-            WHERE ${ConversationTable.USERNAME} IN ($placeholders)
-            ORDER BY ${ConversationTable.CONVERSATION_TIME} DESC
-            LIMIT 1
-            """.trimIndent(),
-            arrayOf(*members.toTypedArray())
-        )
-        val fallbackTime = System.currentTimeMillis()
-        // Split unread once (a single pass over the member rows) and reuse for both buckets.
-        val (normalUnread, mutedUnread) = unreadSplitForMembers(members)
-        // NOTE: flag is intentionally NOT derived from member rows. The folder row's high
-        // 8 bits hold the pin / move-up state that WeChat writes directly via setPlacedTop.
-        // Deriving it from members would clobber the user's pin choice on every sync. The
-        // write sites compose the final flag via composeFolderFlag(), preserving those bits.
-        val latest = cursor.use { cursor ->
-            if (!cursor.moveToFirst()) null else FolderSummary(
-                digest = prefixWithConversationName(
-                    cursor.getStringOrEmpty(ConversationTable.USERNAME),
-                    cursor.getStringOrEmpty(ConversationTable.DIGEST)
-                ),
-                digestUser = cursor.getStringOrEmpty(ConversationTable.DIGEST_USER),
-                isSend = cursor.getIntOrZero(ConversationTable.IS_SEND),
-                status = cursor.getIntOrZero(ConversationTable.STATUS),
-                conversationTime = cursor.getLongOrZero(ConversationTable.CONVERSATION_TIME).takeIf { it > 0L }
-                    ?: fallbackTime,
-                unreadCount = normalUnread,
-                unreadMuteCount = mutedUnread,
-                content = cursor.getStringOrEmpty(ConversationTable.CONTENT),
-                msgType = cursor.getStringOrEmpty(ConversationTable.MSG_TYPE),
-                chatMode = cursor.getIntOrZero(ConversationTable.CHAT_MODE)
-            )
+                    val time = cursor.getLongOrZero(ConversationTable.CONVERSATION_TIME)
+                    if (state.latest == null || time > state.latest!!.conversationTime) {
+                        val nickname = cursor.getStringOrEmpty(ContactTable.NICKNAME)
+                        val remark = cursor.getStringOrEmpty(ContactTable.CON_REMARK)
+                        val displayName = if (username.endsWith("@chatroom")) nickname else remark.ifBlank { nickname }
+                        state.latest = MemberSummaryRow(
+                            digest = prefixWithConversationName(
+                                displayName.takeIf { it.isNotBlank() && it != username },
+                                cursor.getStringOrEmpty(ConversationTable.DIGEST)
+                            ),
+                            digestUser = cursor.getStringOrEmpty(ConversationTable.DIGEST_USER),
+                            isSend = cursor.getIntOrZero(ConversationTable.IS_SEND),
+                            status = cursor.getIntOrZero(ConversationTable.STATUS),
+                            conversationTime = time,
+                            content = cursor.getStringOrEmpty(ConversationTable.CONTENT),
+                            msgType = cursor.getStringOrEmpty(ConversationTable.MSG_TYPE),
+                            chatMode = cursor.getIntOrZero(ConversationTable.CHAT_MODE)
+                        )
+                    }
+                }
+            }
         }
-        return latest ?: FolderSummary(
-            conversationTime = fallbackTime,
-            unreadCount = normalUnread,
-            unreadMuteCount = mutedUnread
-        )
+
+        return states.mapValues { (folderId, state) ->
+            val latest = state.latest
+            if (latest == null) {
+                FolderSummary(
+                    conversationTime = storedRows[folderId]?.summary?.conversationTime
+                        ?: System.currentTimeMillis()
+                )
+            } else {
+                FolderSummary(
+                    digest = latest.digest,
+                    digestUser = latest.digestUser,
+                    isSend = latest.isSend,
+                    status = latest.status,
+                    conversationTime = latest.conversationTime.takeIf { it > 0L }
+                        ?: storedRows[folderId]?.summary?.conversationTime
+                        ?: System.currentTimeMillis(),
+                    unreadCount = state.normalUnread,
+                    unreadMuteCount = state.mutedUnread,
+                    content = latest.content,
+                    msgType = latest.msgType,
+                    chatMode = latest.chatMode
+                )
+            }
+        }
     }
 
     /**
@@ -1040,81 +1358,9 @@ object ConversationAggregation : ClickableFeature(),
      * source is ambiguous once several chats are aggregated. Returns the digest untouched
      * when it is blank or the name can't be resolved, to avoid a dangling "name: " prefix.
      */
-    private fun prefixWithConversationName(username: String, digest: String): String {
-        if (digest.isBlank() || username.isBlank()) return digest
-        val name = runCatching { WeDatabaseApi.getDisplayName(username) }
-            .getOrNull()
-            ?.takeIf { it.isNotBlank() && it != username }
-            ?: return digest
-        return "$name: $digest"
-    }
-
-    /**
-     * Builds the folder row's `flag` so its pin / move-up state (high 8 bits, owned by
-     * WeChat's setPlacedTop / unSetPlacedTop) survives our REPLACE, while the low 56 bits
-     * track the latest member's conversationTime. Mirrors WeChat's xg3.b.c() packing.
-     *
-     * Prefers the live folder row's high bits (WeChat's current truth); when the row was just
-     * deleted by clearStaleFolderMappings — or was never created because the process restarted
-     * while disabled — falls back to the pin flag persisted on the folder in chat_folders.json.
-     */
-    private fun composeFolderFlag(folderId: String, conversationTime: Long): Long {
-        val liveHigh = existingFolderFlag(folderId)?.and(FLAG_HIGH_MASK)
-        val highBits = liveHigh ?: (folderById(folderId)?.pinFlag ?: 0L)
-        return highBits or (conversationTime and FLAG_TIME_MASK)
-    }
-
-    /** Returns the folder row's raw flag, or null when no such row exists. */
-    private fun existingFolderFlag(folderId: String): Long? {
-        val cursor = WeDatabaseApi.rawQuery(
-            "SELECT ${ConversationTable.FLAG} FROM ${ConversationTable.NAME} WHERE ${ConversationTable.USERNAME}=? LIMIT 1",
-            arrayOf(folderId)
-        )
-        return cursor.use { c ->
-            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
-        }
-    }
-
-    /**
-     * Splits the members' unread into (nonMutedUnread, mutedUnread).
-     *
-     * WeChat stores every child's unread in unReadCount regardless of mute (member rows never
-     * populate unReadMuteCount themselves); the homepage badge classifier then re-decides
-     * dot-vs-number per row with a LIVE mute check. Our synthetic folder row can't trigger that
-     * live check, so we pre-split the members' unread into a number bucket (non-muted) and a dot
-     * bucket (muted) ourselves — the folder's attrflag mute bit then renders a dot when the whole
-     * folder only has muted unread.
-     *
-     * Mute is NOT a single column: friends/biz use rcontact.type & 512 (c01.e2.P), but a group's
-     * mute lives in the ChatRoomNotify flag (z3.T) packed inside the rcontact.lvbuff blob with no
-     * column of its own (WeChat's w3.b tests `R4(username) && z3.T == 0`). So we read the members'
-     * rows once, join their contact type + lvbuff, and classify each in Kotlin.
-     */
-    private fun unreadSplitForMembers(members: List<String>): Pair<Int, Int> {
-        if (members.isEmpty()) return 0 to 0
-        val placeholders = members.joinToString(",") { "?" }
-        val cursor = WeDatabaseApi.rawQuery(
-            """
-            SELECT r.${ConversationTable.USERNAME}, r.${ConversationTable.UNREAD_COUNT}
-            FROM ${ConversationTable.NAME} r
-            LEFT JOIN ${ContactTable.NAME} c ON c.${ContactTable.USERNAME} = r.${ConversationTable.USERNAME}
-            WHERE r.${ConversationTable.USERNAME} IN ($placeholders)
-            """.trimIndent(),
-            arrayOf(*members.toTypedArray())
-        )
-        var normal = 0
-        var muted = 0
-        cursor.use { c ->
-            val userIdx = c.getColumnIndex(ConversationTable.USERNAME)
-            val unreadIdx = c.getColumnIndex(ConversationTable.UNREAD_COUNT)
-            while (c.moveToNext()) {
-                val unread = if (unreadIdx >= 0 && !c.isNull(unreadIdx)) c.getInt(unreadIdx) else 0
-                if (unread <= 0) continue
-                val username = if (userIdx >= 0) c.getString(userIdx) ?: "" else ""
-                if (WeConversationApi.isDnd(username)) muted += unread else normal += unread
-            }
-        }
-        return normal to muted
+    private fun prefixWithConversationName(displayName: String?, digest: String): String {
+        if (digest.isBlank() || displayName.isNullOrBlank()) return digest
+        return "$displayName: $digest"
     }
 
     private fun isFolderSchemaReady(): Boolean {
@@ -1152,28 +1398,6 @@ object ConversationAggregation : ClickableFeature(),
             }
         }
         return columns
-    }
-
-    private fun looksLikeConversationListQuery(sql: String): Boolean {
-        val lower = sql.lowercase()
-        if (!lower.contains("select")) return false
-        if (!lower.contains("from ${ConversationTable.NAME}")) return false
-        return lower.contains(ConversationTable.PARENT_REF.lowercase()) ||
-                lower.contains(ConversationTable.CONVERSATION_TIME.lowercase()) ||
-                lower.contains(ConversationTable.UNREAD_COUNT.lowercase())
-    }
-
-    private fun appendParentRefFilter(sql: String): String {
-        val insertionPoint = listOf(" order by ", " group by ", " limit ")
-            .map { sql.indexOf(it, ignoreCase = true) }
-            .filter { it >= 0 }
-            .minOrNull() ?: sql.length
-        val head = sql.substring(0, insertionPoint)
-        val tail = sql.substring(insertionPoint)
-        val condition = listOf(FOLDER_PREFIX)
-            .joinToString(" AND ") { "ifnull(${ConversationTable.PARENT_REF},'') NOT LIKE '$it%'" }
-        val connector = if (head.contains(" where ", ignoreCase = true)) " AND " else " WHERE "
-        return "$head$connector$condition$tail"
     }
 
     private fun rewriteContainerSql(sql: String, folderId: String): String {
@@ -1684,8 +1908,7 @@ object ConversationAggregation : ClickableFeature(),
     private fun latestActiveMember(members: List<String>): String? {
         if (members.isEmpty() || !WeDatabaseApi.isReady) return null
         return runCatching {
-            // Suppress query rewrite: these members' parentRef is the folder id, which
-            // appendParentRefFilter would otherwise filter out, hiding every row.
+            // Suppress the container SQL fallback while querying aggregate members directly.
             withQueryRewriteSuppressed {
                 val placeholders = members.joinToString(",") { "?" }
                 val cursor = WeDatabaseApi.rawQuery(
@@ -1762,9 +1985,32 @@ object ConversationAggregation : ClickableFeature(),
         val whereClause: String = "",
         // High 8 bits (pin / move-up state, owned by WeChat's setPlacedTop / unSetPlacedTop) of this
         // folder's rconversation row, mirrored here so it survives onDisable deleting the row. Kept
-        // in sync from the live row by snapshotFolderPinFlags and restored by composeFolderFlag.
+        // in sync from the live row before a folder row is removed.
         val pinFlag: Long = 0L
     )
+
+    private data class StoredFolderRow(
+        val flag: Long,
+        val attrFlag: Int,
+        val summary: FolderSummary
+    )
+
+    private data class MemberSummaryRow(
+        val digest: String,
+        val digestUser: String,
+        val isSend: Int,
+        val status: Int,
+        val conversationTime: Long,
+        val content: String,
+        val msgType: String,
+        val chatMode: Int
+    )
+
+    private class SummaryAccumulator {
+        var latest: MemberSummaryRow? = null
+        var normalUnread: Int = 0
+        var mutedUnread: Int = 0
+    }
 
     private data class FolderSummary(
         val digest: String = "",
@@ -1827,6 +2073,8 @@ object ConversationAggregation : ClickableFeature(),
         const val NAME = "rcontact"
         const val USERNAME = "username"
         const val NICKNAME = "nickname"
+        const val CON_REMARK = "conRemark"
+        const val LV_BUFF = "lvbuff"
         const val TYPE = "type"
         const val VERIFY_FLAG = "verifyFlag"
 
@@ -1834,6 +2082,8 @@ object ConversationAggregation : ClickableFeature(),
             USERNAME,
             NICKNAME,
             TYPE,
+            CON_REMARK,
+            LV_BUFF,
             VERIFY_FLAG
         )
     }

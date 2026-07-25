@@ -5,6 +5,7 @@ import android.widget.ImageButton
 import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
+import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarMenuApi
 import dev.ujhhgtg.wekit.features.core.ApiFeature
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.ui.utils.findViewByChildIndexes
@@ -15,8 +16,6 @@ import android.widget.Button as AndroidButton
 @Feature(name = "聊天输入栏钩子", categories = ["API"], description = "集中提供聊天输入栏相关钩子")
 object ChatFooterHooks : ApiFeature(), IResolveDex {
 
-    // ChatFooter.l0() is the deobfuscated initSmileyBtn — found by the string reference
-    // WeChat emits in its internal tracing framework at ChatFooter.java:4198.
     private val methodInitSmileyBtn by dexMethod {
         searchPackages("com.tencent.mm.pluginsdk.ui.chat")
         matcher {
@@ -48,20 +47,22 @@ object ChatFooterHooks : ApiFeature(), IResolveDex {
                 }
             }
 
-            if (ChatInputBarEnhancements.isEnabled) {
-                val menuBtn = imgButtons.last()
-                val sendBtn = searchedView.findViewWhich<AndroidButton> { view ->
-                    view.javaClass.name == "android.widget.Button" && run {
-                        val text = (view as AndroidButton).text?.toString()?.trim() ?: ""
-                        text == "发送" || text.equals("send", ignoreCase = true)
-                    }
-                }!!
+            val menuBtn = imgButtons.last()
+            val sendBtn = searchedView.findViewWhich<AndroidButton> { view ->
+                view.javaClass.name == "android.widget.Button" && run {
+                    val text = (view as AndroidButton).text?.toString()?.trim() ?: ""
+                    text == "发送" || text.equals("send", ignoreCase = true)
+                }
+            }!!
 
-                listOf(menuBtn, sendBtn).forEach {
-                    it.setOnLongClickListener { view ->
-                        val context = view.context
-                        ChatInputBarEnhancements.showMenu(context, chatFooter)
-                        return@setOnLongClickListener true
+            listOf(menuBtn, sendBtn).forEach {
+                it.setOnLongClickListener { view ->
+                    val context = view.context
+                    if (WeChatInputBarMenuApi.hasItems(context, chatFooter)) {
+                        WeChatInputBarMenuApi.showMenu(context, chatFooter)
+                        true
+                    } else {
+                        false
                     }
                 }
             }

@@ -43,6 +43,7 @@ android {
         versionName = "git+$gitHash"
 
         ndk {
+            // noinspection ChromeOsAbiSupport
             abiFilters += setOf("arm64-v8a", "armeabi-v7a")
         }
 
@@ -150,6 +151,13 @@ android {
         resValues = false
         compose = true
         buildConfig = true
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            it.useJUnitPlatform()
+        }
     }
 }
 
@@ -278,6 +286,8 @@ dependencies {
     implementation(libs.osmdroid.android)
 
     compileOnly(project(":libs:common:stubs"))
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 // markwon conflict

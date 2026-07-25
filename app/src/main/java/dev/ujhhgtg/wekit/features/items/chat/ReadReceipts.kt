@@ -20,6 +20,7 @@ import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.features.api.core.WeApi
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
+import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarMenuApi
 import dev.ujhhgtg.wekit.features.api.ui.WeChatMessageViewApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
@@ -152,7 +153,7 @@ object ReadReceipts : ClickableFeature(), WeChatMessageViewApi.ICreateViewListen
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     override fun onEnable() {
-        ChatInputBarEnhancements.methodSendMessage.hookBefore(100) {
+        WeChatInputBarMenuApi.methodSendMessage.hookBefore(100) {
             val chatFooter = thisObject!!.reflekt().firstField {
                 type = ChatFooter::class
             }.get()!! as ChatFooter

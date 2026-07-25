@@ -134,7 +134,7 @@ object WePacketHelper : ApiFeature(), IResolveDex {
             }
         }
     }
-    private val classNetScenePat by dexClass {
+    val classNetScenePat by dexClass {
         matcher {
             classNetSceneBase.clazz.let { superClass = it.name }
 
@@ -209,12 +209,7 @@ object WePacketHelper : ApiFeature(), IResolveDex {
 
     private val cgiReqClassMap = mutableMapOf<Int, Class<*>>()
 
-    private val signers = listOf(
-        NewSendMsgSigner,
-        EmojiSigner,
-        AppMsgSigner,
-        SendPatSigner { classNetScenePat.clazz }
-    )
+    private val signers get() = WePacketSigner.signers
 
     private const val TAG = "WePacketHelper"
 
@@ -411,7 +406,7 @@ object WePacketHelper : ApiFeature(), IResolveDex {
                 val signer = signers.firstOrNull { it.match(cgiId) }
                 if (signer != null) {
                     val result = signer.sign(cl, jsonObj)
-                    jsonObj = result.json
+                    result.json?.let { jsonObj = it }
                     nativeNetScene = result.nativeNetScene
                     successAction = result.onSendSuccess
                 }

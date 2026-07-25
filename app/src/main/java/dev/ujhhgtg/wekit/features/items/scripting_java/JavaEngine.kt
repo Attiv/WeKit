@@ -206,7 +206,7 @@ object JavaEngine {
             try {
                 val bshMethod = plugin.interpreter.nameSpace.getMethod(
                     "onNewFriend",
-                    arrayOf(String::class.java, String::class.java, Integer.TYPE)
+                    arrayOf(String::class.java, String::class.java, int)
                 )
                 bshMethod?.apply {
                     invoke(arrayOf<Any>(wxid, ticket, scene), plugin.interpreter)

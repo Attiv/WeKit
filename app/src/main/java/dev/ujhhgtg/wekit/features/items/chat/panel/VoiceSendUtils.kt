@@ -33,7 +33,7 @@ import kotlin.io.path.outputStream
 /**
  * Opens a system file picker to select an audio file and send it as a WeChat voice message.
  *
- * Extracted from [dev.ujhhgtg.wekit.features.items.chat.ChatInputBarEnhancements] so that
+ * Extracted from [dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarMenuApi] so that
  * [dev.ujhhgtg.wekit.features.items.chat.VoicePanel] can offer the same escape-hatch without
  * duplicating the logic.
  */

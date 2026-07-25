@@ -54,7 +54,7 @@ object FeaturesLoader {
                 feature.startup()
             }
         }
-        WeLogger.i(TAG, "enabling all hook items took $elapsed")
+        WeLogger.i(TAG, "loading all features took $elapsed")
 
         if (TargetProcesses.isInMain && Preferences.showStartupToast) {
             showToast("WeKit 加载成功!")

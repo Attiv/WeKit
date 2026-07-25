@@ -37,6 +37,7 @@ import com.tencent.mm.ui.widget.MMNeat7extView
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
+import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.core.models.MessageInfo
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
@@ -47,6 +48,7 @@ import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.isDarkMode
+import dev.ujhhgtg.wekit.utils.reflection.int
 import dev.ujhhgtg.wekit.utils.strings.replaceEmojis
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.Markwon
@@ -60,15 +62,22 @@ import org.commonmark.node.BulletList
 import org.commonmark.node.Heading
 import org.commonmark.node.OrderedList
 import org.commonmark.node.Paragraph
+import java.lang.reflect.Field
 
 @Feature(name = "Markdown 渲染", categories = ["聊天"], description = "渲染 Markdown 消息")
 object MarkdownRendering : ClickableFeature(), IResolveDex {
 
     private const val TAG = "MarkdownRendering"
 
-    private const val KEY_USE_MARKWON = "use_markwon"
+    private const val KEY_RENDER_MODE = "render_mode"
     private const val KEY_COMPACT_HTML = "compact_html"
     private const val KEY_NO_TEXT_SIZING = "no_text_sizing"
+
+    private const val WECHAT_TEXT_MESSAGE_TYPE = 1
+    private const val WECHAT_MARKDOWN_MESSAGE_TYPE = 16777265
+
+    private val nativeMarkdownItemTypeKey =
+        "${WECHAT_MARKDOWN_MESSAGE_TYPE}_1_true_0".hashCode()
 
     private lateinit var markwon: Markwon
 
@@ -77,10 +86,25 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
     // Apply a small compensation to the max width to prevent unnecessary text wrapping
     private const val MAX_WIDTH_BUFFER = 40
 
+    private var nativeRendererAvailable = false
+
+    private val messageFields by lazy {
+        MessageFields(
+            content = findMessageField("field_content"),
+            isSend = findMessageField("field_isSend"),
+            talker = findMessageField("field_talker"),
+            type = findMessageField("field_type")
+        )
+    }
+
     override fun onEnable() {
+        installNativeRenderer()
+
         MMNeat7extView::class.reflekt()
             .firstMethod { name = "onDraw" }
             .hookBefore {
+                if (activeRenderMode == RenderMode.NATIVE) return@hookBefore
+
                 val neatTextView = thisObject as View
                 if (!::markwon.isInitialized) {
                     markwon = buildMarkwon(neatTextView.context)
@@ -152,7 +176,7 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
 
                 if (maxWidth <= 0) return@hookBefore
 
-                if (WePrefs.getBoolOrFalse(KEY_USE_MARKWON)) {
+                if (activeRenderMode == RenderMode.MARKWON) {
                     drawMarkdownWithMarkwon(
                         canvas,
                         origText,
@@ -180,6 +204,120 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
                     }
                 }
             }
+    }
+
+    private fun installNativeRenderer() {
+        if (classItemFactory.isPlaceholder || methodMarkdownPreprocess.isPlaceholder) {
+            WeLogger.w(TAG, "WeChat native Markdown renderer is unavailable in this version")
+            return
+        }
+
+        val itemTypeMethod = classItemFactory.reflekt().firstMethodOrNull {
+            parameters(WeMessageApi.classMsgInfo.clazz)
+            returnType = int
+            superclass()
+        } ?: run {
+            WeLogger.w(TAG, "failed to resolve WeChat message item selector")
+            return
+        }
+
+        itemTypeMethod.hookBefore {
+            if (selectedRenderMode != RenderMode.NATIVE) return@hookBefore
+
+            val msg = args[0] ?: return@hookBefore
+            if (!isNativeRendererCandidate(msg)) return@hookBefore
+            result = nativeMarkdownItemTypeKey
+        }
+
+        methodMarkdownPreprocess.hookBefore {
+            val msg = extractMsgInfo(args.getOrNull(1) ?: return@hookBefore) ?: return@hookBefore
+            if (!isNativeRendererCandidate(msg)) return@hookBefore
+
+            val fields = messageFields
+            val originalContent = fields.content.get(msg) as String
+            extra = originalContent
+            fields.content.set(msg, toNativeMarkdownAppMsg(nativeMarkdownContent(msg)))
+        }
+
+        methodMarkdownPreprocess.hookAfter {
+            val originalContent = extra as? String ?: return@hookAfter
+            val msg = extractMsgInfo(args.getOrNull(1) ?: return@hookAfter) ?: return@hookAfter
+            messageFields.content.set(msg, originalContent)
+        }
+
+        nativeRendererAvailable = true
+    }
+
+    private val selectedRenderMode: RenderMode
+        get() = RenderMode.fromPreference(
+            WePrefs.getStringOrDef(KEY_RENDER_MODE, RenderMode.HTML.preference)
+        )
+
+    private val activeRenderMode: RenderMode
+        get() {
+            val selectedMode = selectedRenderMode
+            return if (selectedMode == RenderMode.NATIVE && !nativeRendererAvailable) RenderMode.HTML else selectedMode
+        }
+
+    private fun setRenderMode(mode: RenderMode) {
+        WePrefs.putString(KEY_RENDER_MODE, mode.preference)
+    }
+
+    private fun isNativeRendererCandidate(msg: Any): Boolean {
+        val fields = messageFields
+        return fields.type.getInt(msg) == WECHAT_TEXT_MESSAGE_TYPE &&
+                !(fields.content.get(msg) as String).isBlank()
+    }
+
+    private fun nativeMarkdownContent(msg: Any): String {
+        val fields = messageFields
+        val content = fields.content.get(msg) as String
+        val talker = fields.talker.get(msg) as String
+        if (!talker.endsWith("@chatroom") && !talker.endsWith("@im.chatroom")) return content
+
+        val senderSeparator = content.indexOf(':')
+        return if (senderSeparator in 0 until content.lastIndex &&
+            !content.substring(0, senderSeparator).contains('<')
+        ) {
+            content.substring(senderSeparator + 1).trim()
+        } else {
+            content
+        }
+    }
+
+    private fun extractMsgInfo(msgData: Any): Any? {
+        val messageClass = WeMessageApi.classMsgInfo.clazz
+        for (field in instanceFields(msgData.javaClass)) {
+            val nested = field.get(msgData) ?: continue
+            if (messageClass.isInstance(nested)) return nested
+            for (nestedField in instanceFields(nested.javaClass)) {
+                val msg = nestedField.get(nested)
+                if (msg != null && messageClass.isInstance(msg)) return msg
+            }
+        }
+        return null
+    }
+
+    private fun findMessageField(name: String): Field {
+        return instanceFields(WeMessageApi.classMsgInfo.clazz).first { it.name == name }
+    }
+
+    private fun instanceFields(clazz: Class<*>): Sequence<Field> = sequence {
+        var current: Class<*>? = clazz
+        while (current != null) {
+            for (field in current.declaredFields) {
+                field.isAccessible = true
+                yield(field)
+            }
+            current = current.superclass
+        }
+    }
+
+    private fun toNativeMarkdownAppMsg(markdown: String): String {
+        val cdataSafeMarkdown = markdown.replace("]]>", "]]]]><![CDATA[>")
+        return "<msg><appmsg appid=\"\" sdkver=\"0\"><title><![CDATA[$cdataSafeMarkdown]]></title>" +
+                "<action>view</action><type>1</type><showtype>0</showtype><contentattr>0</contentattr>" +
+                "</appmsg></msg>"
     }
 
     private fun drawMarkdownWithMarkwon(
@@ -291,7 +429,7 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
                 title = { Text("Markdown 渲染") },
                 text = {
                     Column {
-                        var useMarkwon by remember { mutableStateOf(WePrefs.getBoolOrFalse(KEY_USE_MARKWON)) }
+                        var renderMode by remember { mutableStateOf(selectedRenderMode) }
 
                         Text(
                             "解析与渲染引擎",
@@ -300,20 +438,39 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
                             fontWeight = FontWeight.SemiBold
                         )
                         ListItem(
-                            modifier = Modifier.clickable {
-                                useMarkwon = false
-                                WePrefs.putBool(KEY_USE_MARKWON, false)
+                            modifier = if (nativeRendererAvailable) {
+                                Modifier.clickable {
+                                    renderMode = RenderMode.NATIVE
+                                    setRenderMode(renderMode)
+                                }
+                            } else {
+                                Modifier
                             },
-                            trailingContent = { RadioButton(!useMarkwon, null) },
+                            trailingContent = {
+                                RadioButton(
+                                    selected = renderMode == RenderMode.NATIVE,
+                                    onClick = null,
+                                    enabled = nativeRendererAvailable
+                                )
+                            },
+                            supportingContent = { Text("使用微信 OpenClaw 路径执行原生 Markdown 渲染") },
+                            headlineContent = { Text("微信原生") },
+                        )
+                        ListItem(
+                            modifier = Modifier.clickable {
+                                renderMode = RenderMode.HTML
+                                setRenderMode(renderMode)
+                            },
+                            trailingContent = { RadioButton(renderMode == RenderMode.HTML, null) },
                             supportingContent = { Text("使用 Rust crate 解析并转换为 HTML, 再使用 android.text.HTML 渲染") },
                             headlineContent = { Text("markdown-rs + Html") },
                         )
                         ListItem(
                             modifier = Modifier.clickable {
-                                useMarkwon = true
-                                WePrefs.putBool(KEY_USE_MARKWON, true)
+                                renderMode = RenderMode.MARKWON
+                                setRenderMode(renderMode)
                             },
-                            trailingContent = { RadioButton(useMarkwon, null) },
+                            trailingContent = { RadioButton(renderMode == RenderMode.MARKWON, null) },
                             supportingContent = { Text("使用 Markwon Java 库直接渲染 Markdown") },
                             headlineContent = { Text("Markwon") },
                         )
@@ -356,6 +513,39 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
                     }
                 },
                 confirmButton = { TextButton(onDismiss) { Text("关闭") } }
+            )
+        }
+    }
+
+    private enum class RenderMode(val preference: String) {
+        NATIVE("native"),
+        HTML("html"),
+        MARKWON("markwon");
+
+        companion object {
+            fun fromPreference(value: String): RenderMode =
+                entries.firstOrNull { it.preference == value } ?: HTML
+        }
+    }
+
+    private data class MessageFields(
+        val content: Field,
+        val isSend: Field,
+        val talker: Field,
+        val type: Field
+    )
+
+    private val classItemFactory by dexClass(allowFailure = true) {
+        matcher {
+            usingEqStrings("MicroMsg.ItemFactoryNew", "initChattingItemConfig")
+        }
+    }
+
+    private val methodMarkdownPreprocess by dexMethod(allowFailure = true) {
+        matcher {
+            usingEqStrings(
+                "MicroMsg.ChattingItemMarkdownMvvm",
+                "[STREAM_TRACE] preDealData: msgId=%d, msgSvrId=%d, contentLen=%d, isStreaming=%b"
             )
         }
     }

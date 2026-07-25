@@ -24,9 +24,9 @@ import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
 import dev.ujhhgtg.wekit.features.api.core.WeDatabaseListenerApi
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
+import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarMenuApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
-import dev.ujhhgtg.wekit.features.items.chat.ChatInputBarEnhancements
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
@@ -82,7 +82,7 @@ object JavaScriptingHook : ClickableFeature(), IResolveDex, WeDatabaseListenerAp
             JavaEngine.executeAllOnHandleMsg(scripts, msgBean)
         }
 
-        ChatInputBarEnhancements.methodSendMessage.hookBefore {
+        WeChatInputBarMenuApi.methodSendMessage.hookBefore {
             val chatFooter = thisObject!!.reflekt().firstField {
                 type = ChatFooter::class
             }.get()!! as ChatFooter
@@ -233,7 +233,8 @@ object JavaScriptingHook : ClickableFeature(), IResolveDex, WeDatabaseListenerAp
             val isSend = values.getAsInteger("isSend") ?: 0
             if (isSend == 0) {
                 val msgContent = values.getAsString("msgContent") ?: ""
-                val fromusername = extractXmlAttr(msgContent, "fromusername").takeIf { it.isNotEmpty() }
+                val fromusername = extractXmlAttr(msgContent, "encryptusername").takeIf { it.isNotEmpty() }
+                    ?: extractXmlAttr(msgContent, "fromusername").takeIf { it.isNotEmpty() }
                     ?: extractXmlTag(msgContent, "fromusername")
                 val ticket = extractXmlAttr(msgContent, "ticket").takeIf { it.isNotEmpty() }
                     ?: extractXmlTag(msgContent, "ticket")
