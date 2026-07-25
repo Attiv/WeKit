@@ -34,53 +34,56 @@ unsafe fn load_class_via_loader(env: *mut RawJNIEnv, loader: jobject, dot_name: 
 // ── ArtHookBridge JNI implementations ────────────────────────────────────────
 
 extern "C" fn jni_get_art_method(
-    _env: *mut RawJNIEnv,
+    env: *mut RawJNIEnv,
     _class: jclass,
-    _executable: jobject,
+    executable: jobject,
 ) -> jlong {
-    // Implemented in Task 10 (art::get_art_method)
-    loge!("Zygisk: nativeGetArtMethod not yet implemented");
-    0
+    crate::art::get_art_method(env, executable) as jlong
 }
 
 extern "C" fn jni_hook_method(
-    _env: *mut RawJNIEnv,
+    env: *mut RawJNIEnv,
     _class: jclass,
-    _target_art: jlong,
-    _backup_art: jlong,
-    _bridge_art: jlong,
+    target_art: jlong,
+    backup_art: jlong,
+    bridge_art: jlong,
     _hook_id: jlong,
 ) -> jint {
-    loge!("Zygisk: nativeHookMethod not yet implemented");
-    -1
+    crate::art::hook_method(
+        env,
+        target_art as usize,
+        backup_art as usize,
+        bridge_art as usize,
+    ) as jint
 }
 
 extern "C" fn jni_unhook_method(
-    _env: *mut RawJNIEnv,
+    env: *mut RawJNIEnv,
     _class: jclass,
-    _target_art: jlong,
-    _backup_art: jlong,
+    target_art: jlong,
+    backup_art: jlong,
 ) -> jint {
-    loge!("Zygisk: nativeUnhookMethod not yet implemented");
-    -1
+    crate::art::unhook_method(env, target_art as usize, backup_art as usize) as jint
 }
 
 extern "C" fn jni_trust_dex_file(
-    _env: *mut RawJNIEnv,
+    env: *mut RawJNIEnv,
     _class: jclass,
-    _dex_file: jobject,
+    dex_file: jobject,
 ) -> jboolean {
-    loge!("Zygisk: nativeTrustDexFile not yet implemented");
-    JNI_FALSE
+    if crate::art::trust_dex_file(env, dex_file) {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
 }
 
 extern "C" fn jni_allocate_instance(
-    _env: *mut RawJNIEnv,
+    env: *mut RawJNIEnv,
     _class: jclass,
-    _target_class: jclass,
+    target_class: jclass,
 ) -> jobject {
-    loge!("Zygisk: nativeAllocateInstance not yet implemented");
-    std::ptr::null_mut()
+    crate::art::allocate_instance(env, target_class)
 }
 
 extern "C" fn jni_hide_loaded_module_libraries(_env: *mut RawJNIEnv, _class: jclass) -> jboolean {
@@ -92,10 +95,12 @@ extern "C" fn jni_hide_loaded_module_libraries(_env: *mut RawJNIEnv, _class: jcl
 
 // ── ZygiskEntry JNI implementations ──────────────────────────────────────────
 
-extern "C" fn jni_native_initialize(_env: *mut RawJNIEnv, _class: jclass) -> jboolean {
-    // Implemented in Task 10 (art::init)
-    loge!("Zygisk: nativeInitialize not yet implemented");
-    JNI_FALSE
+extern "C" fn jni_native_initialize(env: *mut RawJNIEnv, _class: jclass) -> jboolean {
+    if crate::art::init(env) {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
 }
 
 extern "C" fn jni_has_telegram_root_companion(_env: *mut RawJNIEnv, _class: jclass) -> jboolean {
