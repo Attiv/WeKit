@@ -2,7 +2,6 @@ package dev.ujhhgtg.wekit.activity.settings
 
 
 import android.content.Context
-import android.content.Intent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -36,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,9 +73,8 @@ import com.mikepenz.aboutlibraries.Libs
 import com.mikepenz.aboutlibraries.entity.Library
 import com.tencent.mm.ui.LauncherUI
 import dev.ujhhgtg.wekit.BuildConfig
-import dev.ujhhgtg.wekit.aboutlibraries.AboutLibrariesProvider
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.activity.TransparentActivity
-import dev.ujhhgtg.wekit.constants.PackageNames
 import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.features.api.core.WeApi
 import dev.ujhhgtg.wekit.features.items.debug.ResetDexCache
@@ -271,11 +270,12 @@ fun SettingsPager(onOpenLicense: () -> Unit) {
                     summary = "支持项目开发 (模块完全开源免费, 捐赠无特权)",
                     icon = MaterialSymbols.Outlined.Volunteer_activism,
                     onClick = {
-                        context.startActivity(Intent().apply {
-                            setClassName(HostInfo.packageName, "${PackageNames.WECHAT}.plugin.collect.reward.ui.QrRewardSelectMoneyUI")
-                            putExtra("key_qrcode_url", "m0n#Z7LGW*s4AVH!z'd(?)")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        })
+//                        context.startActivity(Intent().apply {
+//                            setClassName(HostInfo.packageName, "${PackageNames.WECHAT}.plugin.collect.reward.ui.QrRewardSelectMoneyUI")
+//                            putExtra("key_qrcode_url", "m0n#Z7LGW*s4AVH!z'd(?)")
+//                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+//                        })
+                        "https://ifdian.net/a/ujhhgtg".toUri().openInSystem(context, true)
                     },
                 )
                 PrefArrow(
@@ -291,7 +291,7 @@ fun SettingsPager(onOpenLicense: () -> Unit) {
                     onClick = { "https://github.com/Ujhhgtg/WeKit".toUri().openInSystem(context, true) })
                 PrefArrow(
                     title = "Telegram",
-                    summary = "Telegram 超级群组",
+                    summary = "https://t.me/+7j5dJ6g16B43OWVl",
                     icon = TelegramIcon,
                     onClick = { "https://t.me/+7j5dJ6g16B43OWVl".toUri().openInSystem(context, true) })
             }
@@ -834,8 +834,12 @@ private fun MiuixMessageDialog(
 
 @Composable
 fun LicenseScreen(onBack: () -> Unit) {
-    val libraries = remember {
-        Libs.Builder().withJson(AboutLibrariesProvider.ABOUT_LIBRARIES_JSON).build().libraries
+    val resources = LocalResources.current
+    val libraries = remember(resources) {
+        val json = resources.openRawResource(R.raw.aboutlibraries)
+            .bufferedReader()
+            .use { it.readText() }
+        Libs.Builder().withJson(json).build().libraries
     }
 
     val queryState = rememberTextFieldState()

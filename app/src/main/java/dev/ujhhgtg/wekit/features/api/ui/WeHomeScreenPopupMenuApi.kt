@@ -6,7 +6,6 @@ import android.widget.BaseAdapter
 import android.widget.ImageView
 import androidx.collection.mutableIntObjectMapOf
 import androidx.core.util.size
-import de.robv.android.xposed.XC_MethodHook
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.createInstance
 import dev.ujhhgtg.reflekt.utils.isSubclassOf
@@ -15,19 +14,21 @@ import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.core.ApiFeature
 import dev.ujhhgtg.wekit.features.core.Feature
+import dev.ujhhgtg.wekit.utils.HookHandle
+import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.runOnUiThread
 import dev.ujhhgtg.wekit.utils.hookBeforeDirectly
-import dev.ujhhgtg.wekit.utils.reflection.BBool
-import dev.ujhhgtg.wekit.utils.reflection.BInt
 import dev.ujhhgtg.wekit.utils.reflection.BString
+import dev.ujhhgtg.wekit.utils.reflection.bool
+import dev.ujhhgtg.wekit.utils.reflection.int
 import java.util.concurrent.CopyOnWriteArrayList
 
 @Feature(name = "首页菜单服务", categories = ["API"], description = "提供向首页右上角菜单添加菜单项的能力")
 object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
 
     interface IMenuItemsProvider {
-        fun getMenuItems(param: XC_MethodHook.MethodHookParam): List<MenuItem>
+        fun getMenuItems(param: HookParam): List<MenuItem>
     }
 
     data class MenuItem(
@@ -71,9 +72,9 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
         searchPackages("com.tencent.mm.ui")
         matcher {
             addFieldForType(BString)
-            addFieldForType(BInt)
-            addFieldForType(BInt)
-            addFieldForType(BInt)
+            addFieldForType(int)
+            addFieldForType(int)
+            addFieldForType(int)
             addFieldForType(BString)
             fieldCount(5)
             methods {
@@ -86,7 +87,7 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
     private val classMenuItemWrapper by dexClass {
         searchPackages("com.tencent.mm.ui")
         matcher {
-            addFieldForType(BBool)
+            addFieldForType(bool)
             addFieldForType(classMenuItemData.clazz)
         }
     }
@@ -94,7 +95,7 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
     override fun onEnable() {
         // WeChat 8.0.70 moved this to com.tencent.mm.ui.HomeUI
         methodAddItem.hookAfter {
-            var thisObj = thisObject
+            var thisObj = thisObject!!
 
             if (thisObj.javaClass.simpleName == "HomeUI") {
                 thisObj = thisObj.reflekt()
@@ -117,7 +118,7 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
             baseAdapter.reflekt().firstMethod {
                 name = "getView"
             }.apply {
-                var unhook: XC_MethodHook.Unhook? = null
+                var unhook: HookHandle? = null
 
                 hookBefore {
                     unhook = ImageView::class.reflekt().firstMethod {
@@ -170,7 +171,7 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
         }
 
         methodHandleItemClick.hookBefore {
-            val thisObj = thisObject
+            val thisObj = thisObject!!
 
             @Suppress("UNCHECKED_CAST")
             val items = thisObj.reflekt()

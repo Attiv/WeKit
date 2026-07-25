@@ -2,7 +2,6 @@ package dev.ujhhgtg.wekit.activity.settings
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.Keep
@@ -39,14 +38,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,8 +81,9 @@ import dev.ujhhgtg.wekit.ui.content.FloatingBottomBar
 import dev.ujhhgtg.wekit.ui.content.FloatingBottomBarDefaults
 import dev.ujhhgtg.wekit.ui.content.FloatingBottomBarItem
 import dev.ujhhgtg.wekit.ui.content.MiuixStackNavigator
-import dev.ujhhgtg.wekit.ui.content.liquid.vibrancy
-import dev.ujhhgtg.wekit.ui.utils.CommonContextWrapper
+import dev.ujhhgtg.wekit.ui.content.miuixAppBarBlur
+import dev.ujhhgtg.wekit.ui.content.miuixAppBarColor
+import dev.ujhhgtg.wekit.ui.content.rememberMiuixBlurBackdrop
 import dev.ujhhgtg.wekit.ui.utils.theme.ModuleTheme
 import dev.ujhhgtg.wekit.utils.WeLogger
 import kotlinx.coroutines.launch
@@ -101,8 +97,6 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TopAppBar
-import top.yukonga.miuix.kmp.blur.blur
-import top.yukonga.miuix.kmp.blur.drawBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -121,14 +115,8 @@ class SettingsActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val context = CommonContextWrapper(this)
-        val resources = context.resources
-
         setContent {
             CompositionLocalProvider(
-                LocalContext provides context,
-                LocalResources provides resources,
-                LocalActivity provides this,
                 LocalComponentActivity provides this
             ) {
                 ModuleTheme {
@@ -321,25 +309,14 @@ fun MiuixListScaffold(
     content: LazyListScope.() -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
-    // The LazyColumn is registered as the blur source; the top bar samples that captured
-    // layer through drawBackdrop and paints itself transparent, so scrolled content shows
-    // through blurred behind the collapsed bar (InstallerX's useBlur pattern, on miuix-blur glass).
-    val barBackdrop = rememberLayerBackdrop()
-    val barTint = MiuixTheme.colorScheme.surface.copy(alpha = 0.67f)
+    // Match KernelSU / InstallerX's miuix app bar blur path: textureBlur uses a fixed pixel
+    // radius, avoiding the oversized dp->px blur that made section titles smear into blocks.
+    val barBackdrop = rememberMiuixBlurBackdrop()
     Scaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBackdrop(
-                    backdrop = barBackdrop,
-                    shape = { RectangleShape },
-                    effects = {
-                        vibrancy()
-                        blur(24.dp.toPx(), 24.dp.toPx())
-                    },
-                    onDrawSurface = { drawRect(barTint) },
-                ),
-                // Transparent so the miuix bar's own opaque surface doesn't hide the blur.
-                color = Color.Transparent,
+                modifier = Modifier.miuixAppBarBlur(barBackdrop),
+                color = barBackdrop.miuixAppBarColor(),
                 title = title,
                 scrollBehavior = scrollBehavior,
                 navigationIcon = { navigationIcon?.invoke() },
@@ -350,7 +327,7 @@ fun MiuixListScaffold(
         LazyColumn(
             modifier = Modifier
                 .fillMaxHeight()
-                .layerBackdrop(barBackdrop)
+                .then(barBackdrop?.let { Modifier.layerBackdrop(it) } ?: Modifier)
                 .scrollEndHaptic()
                 .overScrollVertical()
                 .nestedScroll(scrollBehavior.nestedScrollConnection)
@@ -460,7 +437,6 @@ fun FeatureRow(
         )
     }
 }
-
 
 
 

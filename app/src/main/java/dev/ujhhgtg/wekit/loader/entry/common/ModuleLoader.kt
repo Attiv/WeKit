@@ -8,18 +8,10 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 object ModuleLoader {
 
     private const val TAG = "ModuleLoader"
-    private var isInitialized = false
+    private val initLock = Any()
 
-//    private lateinit var savedHostClassLoader: ClassLoader
-//    private lateinit var savedModulePath: String
-//
-//    fun saveInitParams(
-//        hostClassLoader: ClassLoader,
-//        modulePath: String
-//    ) {
-//        savedHostClassLoader = hostClassLoader
-//        savedModulePath = modulePath
-//    }
+    @Volatile
+    private var isInitialized = false
 
     @Suppress("unused")
     @JvmStatic
@@ -30,20 +22,19 @@ object ModuleLoader {
         hookBridge: IHookBridge?,
         modulePath: String,
         allowDynamicLoad: Boolean
-    ) {
-        if (isInitialized) return
-        isInitialized = true
+    ): Boolean = synchronized(initLock) {
+        if (isInitialized) return@synchronized true
 
-        WeLogger.i(TAG, "loading in entry point ${loaderService.entryPointName}")
-        runCatching {
+        try {
+            WeLogger.i(TAG, "loading in entry point ${loaderService.entryPointName}")
             UnifiedEntryPoint.entry(loaderService, hookBridge, initialClassLoader, modulePath)
-        }.onFailure { WeLogger.e(TAG, "UnifiedEntryPoint failed", it) }
+            isInitialized = true
+            true
+        } catch (t: Throwable) {
+            // Do not poison this process's loader state: a later lifecycle
+            // callback may have a usable host class loader.
+            WeLogger.e(TAG, "UnifiedEntryPoint failed", t)
+            false
+        }
     }
-
-//    fun hotReload(loaderService: ILoaderService, hookBridge: IHookBridge?) {
-//        WeLogger.i(TAG, "hot-reloading in entry point ${loaderService.entryPointName}")
-//        runCatching {
-//            UnifiedEntryPoint.entry(loaderService, hookBridge, savedHostClassLoader, savedModulePath)
-//        }.onFailure { WeLogger.e(TAG, "UnifiedEntryPoint failed", it) }
-//    }
 }

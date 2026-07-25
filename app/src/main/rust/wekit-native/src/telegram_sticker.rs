@@ -10,7 +10,6 @@ use webm_iterable::{
 };
 
 const OUTPUT_SIZE: u32 = 512;
-const TARGET_FPS: f32 = 20.0;
 const MAX_FRAMES: usize = 90;
 const WEBM_TARGET_FPS: f64 = 15.0;
 
@@ -347,10 +346,10 @@ impl YuvFrame {
         alpha: Option<&YuvFrame>,
         remove_rounded_canvas_mask: bool,
     ) -> Result<Vec<u8>, String> {
-        if let Some(alpha) = alpha {
-            if alpha.width != self.width || alpha.height != self.height {
-                return Err("VP9 color and alpha frames have different dimensions".to_string());
-            }
+        if let Some(alpha) = alpha
+            && (alpha.width != self.width || alpha.height != self.height)
+        {
+            return Err("VP9 color and alpha frames have different dimensions".to_string());
         }
         let mut alpha_values = alpha.map(|frame| {
             frame
@@ -359,10 +358,8 @@ impl YuvFrame {
                 .map(|value| alpha_luma(*value, frame.full_range))
                 .collect::<Vec<_>>()
         });
-        if remove_rounded_canvas_mask {
-            if let Some(values) = &mut alpha_values {
-                remove_rounded_canvas_alpha(values, self.width, self.height);
-            }
+        if remove_rounded_canvas_mask && let Some(values) = &mut alpha_values {
+            remove_rounded_canvas_alpha(values, self.width, self.height);
         }
         let mut pixels = vec![0_u8; self.width * self.height * 4];
         for row in 0..self.height {
@@ -489,30 +486,23 @@ fn remove_rounded_canvas_alpha(alpha: &mut [u8], width: usize, height: usize) ->
     true
 }
 
-pub fn tgs_to_gif(input_path: &str, output_path: &str) -> Result<(), String> {
+pub fn tgs_to_gif(input_path: &str, output_path: &str, target_fps: f32) -> Result<(), String> {
     let input = fs::read(input_path).map_err(|error| format!("read TGS: {error}"))?;
     let json = decompress_tgs(&input)?;
     let animation =
         Animation::from_json_str(&json).map_err(|error| format!("parse Lottie: {error}"))?;
 
     let source_fps = animation.frame_rate.max(1.0);
+    let target_fps = target_fps.clamp(1.0, source_fps);
     let start = animation.in_point.floor();
     let end = animation.out_point.ceil().max(start + 1.0);
-    let frame_step = (source_fps / TARGET_FPS.min(source_fps)).round().max(1.0);
+    let frame_step = (source_fps / target_fps).round().max(1.0);
     let actual_fps = source_fps / frame_step;
     let mut frames = Vec::new();
     let mut frame = start;
     while frame < end {
         frames.push(frame);
         frame += frame_step;
-    }
-    if frames.len() > MAX_FRAMES {
-        let stride = (frames.len() as f32 / MAX_FRAMES as f32).ceil() as usize;
-        frames = frames
-            .into_iter()
-            .step_by(stride.max(1))
-            .take(MAX_FRAMES)
-            .collect();
     }
     if frames.is_empty() {
         return Err("TGS contains no renderable frames".to_string());
@@ -620,7 +610,7 @@ mod tests {
             return;
         };
         let output = std::env::temp_dir().join("wekit-telegram-tgs-test.gif");
-        tgs_to_gif(&input, output.to_str().expect("UTF-8 output path")).expect("convert TGS");
+        tgs_to_gif(&input, output.to_str().expect("UTF-8 output path"), 60.0).expect("convert TGS");
         let data = fs::read(&output).expect("read GIF output");
         assert!(data.starts_with(b"GIF8"));
         assert!(data.len() > 100);

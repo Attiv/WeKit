@@ -1,6 +1,6 @@
 [Unit]
 Description=WeKit read-receipts tracking server
-Documentation=https://github.com/WeKit
+Documentation=https://github.com/Ujhhgtg/WeKit
 After=network-online.target
 Wants=network-online.target
 

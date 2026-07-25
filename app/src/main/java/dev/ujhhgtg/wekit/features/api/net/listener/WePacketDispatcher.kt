@@ -5,6 +5,7 @@ import android.os.Looper
 import androidx.core.os.postDelayed
 import com.tencent.kinda.framework.module.impl.WXPCommReqResp
 import dev.ujhhgtg.reflekt.reflekt
+import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.features.api.net.WePacketHelper
@@ -13,6 +14,7 @@ import dev.ujhhgtg.wekit.features.core.ApiFeature
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.reflection.ClassLoaders
+import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Proxy
 import java.util.concurrent.ConcurrentHashMap
 
@@ -50,11 +52,30 @@ object WePacketDispatcher : ApiFeature(), IResolveDex {
                     val v0Ref = v0Var.reflekt()
                     val uri = v0Ref.invokeMethod("getUri", superclass = true) as? String? ?: "null"
                     val cgiId = v0Ref.invokeMethod("getType", superclass = true) as Int
+                    if (!Preferences.verboseLog && !WePacketManager.hasInterceptors()) return@hookBefore
+
                     try {
                         val reqWrapper = v0Ref.invokeMethod("getReqObj", superclass = true)!!
                         val reqPbObj = reqWrapper.reflekt().getField("a", superclass = true)!!
-                        val reqBytes = reqPbObj.reflekt().firstMethodOrNull { name = "toByteArray"; superclass() }
-                            ?.invoke() as? ByteArray ?: return@hookBefore
+                        val reqBytes = try {
+                            reqPbObj.reflekt().firstMethodOrNull { name = "toByteArray"; superclass() }
+                                ?.invoke() as? ByteArray
+                        } catch (e: InvocationTargetException) {
+                            // Some WeChat protobufs carry nullable nested fields; if serialization
+                            // blows up here, skip tamper and let the original request continue.
+                            if (e.cause is NullPointerException) {
+                                if (Preferences.verboseLog) {
+                                    WeLogger.w(
+                                        TAG,
+                                        "skip request tamper because toByteArray failed: ${reqPbObj.javaClass.name}",
+                                        e.cause ?: e
+                                    )
+                                }
+                                null
+                            } else {
+                                throw e
+                            }
+                        } ?: return@hookBefore
 
                         // 构造唯一标识符
                         val key =

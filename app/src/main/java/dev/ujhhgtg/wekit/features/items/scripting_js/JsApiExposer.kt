@@ -2,7 +2,6 @@ package dev.ujhhgtg.wekit.features.items.scripting_js
 
 import android.os.Handler
 import android.os.Looper
-import de.robv.android.xposed.XC_MethodHook
 import dev.ujhhgtg.reflekt.utils.createInstance
 import dev.ujhhgtg.reflekt.utils.makeAccessible
 import dev.ujhhgtg.reflekt.utils.toClass
@@ -10,14 +9,15 @@ import dev.ujhhgtg.wekit.features.api.core.WeApi
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.net.WePacketHelper
 import dev.ujhhgtg.wekit.features.api.net.WeProtoData
+import dev.ujhhgtg.wekit.utils.HookHandle
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.fs.createDirsSafe
 import dev.ujhhgtg.wekit.utils.hookAfterDirectly
 import dev.ujhhgtg.wekit.utils.hookBeforeDirectly
-import dev.ujhhgtg.wekit.utils.reflection.DexKit
 import dev.ujhhgtg.wekit.utils.reflection.asMethod
+import dev.ujhhgtg.wekit.utils.reflection.withDexKit
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -1301,7 +1301,7 @@ object JsApiExposer {
         return obj
     }
 
-    private fun createHookHandle(unhook: XC_MethodHook.Unhook): NativeObject {
+    private fun createHookHandle(unhook: HookHandle): NativeObject {
         val handle = NativeObject()
         ScriptableObject.putProperty(handle, "unhook", object : BaseFunction() {
             override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<Any?>): Any {
@@ -1838,20 +1838,22 @@ object JsApiExposer {
                 val searcher = args.getOrNull(0) as? NativeObject
                     ?: return NativeObject()
                 return try {
-                    val results = DexKit.findMethod {
-                        val pkgs = getStringArrayProperty(searcher, "searchPackages")
-                        if (pkgs != null) searchPackages(*pkgs)
-                        matcher {
-                            getStringProperty(searcher, "declaringClass")?.let { declaredClass = it }
-                            getStringProperty(searcher, "name")?.let { name = it }
-                            getStringProperty(searcher, "returnType")?.let { returnType = it }
-                            getIntProperty(searcher, "paramCount")?.let { paramCount = it }
-                            getStringArrayProperty(searcher, "paramTypes")?.let { paramTypes(*it) }
-                            getStringArrayProperty(searcher, "usingEqStrings")?.let { usingEqStrings(*it) }
-                            getNumberArrayProperty(searcher, "usingNumbers")?.let { usingNumbers(*it) }
+                    withDexKit { dexKit ->
+                        val results = dexKit.findMethod {
+                            val pkgs = getStringArrayProperty(searcher, "searchPackages")
+                            if (pkgs != null) searchPackages(*pkgs)
+                            matcher {
+                                getStringProperty(searcher, "declaringClass")?.let { declaredClass = it }
+                                getStringProperty(searcher, "name")?.let { name = it }
+                                getStringProperty(searcher, "returnType")?.let { returnType = it }
+                                getIntProperty(searcher, "paramCount")?.let { paramCount = it }
+                                getStringArrayProperty(searcher, "paramTypes")?.let { paramTypes(*it) }
+                                getStringArrayProperty(searcher, "usingEqStrings")?.let { usingEqStrings(*it) }
+                                getNumberArrayProperty(searcher, "usingNumbers")?.let { usingNumbers(*it) }
+                            }
                         }
+                        createDexMethodResult(results.toList(), cx, scope)
                     }
-                    createDexMethodResult(results.toList(), cx, scope)
                 } catch (e: Exception) {
                     WeLogger.e(TAG_DEXKIT_API, "dexkit.findMethod failed", e)
                     createDexMethodResult(emptyList(), cx, scope)
@@ -1869,19 +1871,21 @@ object JsApiExposer {
                 val searcher = args.getOrNull(0) as? NativeObject
                     ?: return NativeObject()
                 return try {
-                    val results = DexKit.findClass {
-                        val pkgs = getStringArrayProperty(searcher, "searchPackages")
-                        if (pkgs != null) searchPackages(*pkgs)
-                        matcher {
-                            getStringProperty(searcher, "name")?.let { className = it }
-                            getStringProperty(searcher, "superclass")?.let { superClass = it }
-                            getStringArrayProperty(searcher, "usingEqStrings")?.let { usingEqStrings(*it) }
-                            getStringArrayProperty(searcher, "interfaces")?.forEach { ifaceName ->
-                                addInterface { className = ifaceName }
+                    withDexKit { dexKit ->
+                        val results = dexKit.findClass {
+                            val pkgs = getStringArrayProperty(searcher, "searchPackages")
+                            if (pkgs != null) searchPackages(*pkgs)
+                            matcher {
+                                getStringProperty(searcher, "name")?.let { className = it }
+                                getStringProperty(searcher, "superclass")?.let { superClass = it }
+                                getStringArrayProperty(searcher, "usingEqStrings")?.let { usingEqStrings(*it) }
+                                getStringArrayProperty(searcher, "interfaces")?.forEach { ifaceName ->
+                                    addInterface { className = ifaceName }
+                                }
                             }
                         }
+                        createDexClassResult(results.toList(), cx, scope)
                     }
-                    createDexClassResult(results.toList(), cx, scope)
                 } catch (e: Exception) {
                     WeLogger.e(TAG_DEXKIT_API, "dexkit.findClass failed", e)
                     createDexClassResult(emptyList(), cx, scope)

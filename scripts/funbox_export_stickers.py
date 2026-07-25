@@ -426,12 +426,13 @@ def export(args: argparse.Namespace) -> int:
                 try:
                     was_downloaded, filename, size = future.result()
                     completed += 1
-                    print(
-                        f"[{index + 1}/{len(catalog)}] {title}: "
-                        f"{completed}/{len(items)} "
-                        f"{'saved' if was_downloaded else 'skipped'} {filename} ({size} B)",
-                        flush=True,
-                    )
+                    if was_downloaded:
+                        print(
+                            f"[{index + 1}/{len(catalog)}] {title}: "
+                            f"{completed}/{len(items)} "
+                            f"saved {filename} ({size} B)",
+                            flush=True,
+                        )
                 except Exception as error:
                     identifier = item.get("md5") or item.get("image_id") or "<unknown>"
                     failed.append(str(identifier))

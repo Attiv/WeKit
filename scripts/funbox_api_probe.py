@@ -499,6 +499,21 @@ def image_type(data: bytes) -> str | None:
         return "webp"
     if data.startswith(b"\xff\xd8\xff"):
         return "jpeg"
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        box_data = data[8:]
+        major = box_data[:4]
+        heif_brands = {b"mif1", b"msf1", b"heic", b"heix", b"hevc", b"hevx"}
+        if major in heif_brands:
+            return "heic"
+        if major == b"avif":
+            return "avif"
+        # scan compatible brands
+        if len(box_data) >= 8:
+            brands = {box_data[i:i+4] for i in range(8, len(box_data) - 3, 4)}
+            if brands & heif_brands:
+                return "heic"
+            if b"avif" in brands:
+                return "avif"
     return None
 
 
