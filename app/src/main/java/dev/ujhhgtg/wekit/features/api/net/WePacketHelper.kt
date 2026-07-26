@@ -342,11 +342,11 @@ object WePacketHelper : ApiFeature(), IResolveDex {
         cgiId: Int,
         funcId: Int,
         routeId: Int,
-        jsonPayload: String,
+        reqJson: String,
         dslBlock: WeRequestDsl.() -> Unit
     ) {
         val dsl = WeRequestDsl().apply(dslBlock)
-        sendCgi(uri, cgiId, funcId, routeId, jsonPayload, dsl)
+        sendCgi(uri, cgiId, funcId, routeId, reqJson, dsl)
     }
 
     /**
@@ -357,7 +357,7 @@ object WePacketHelper : ApiFeature(), IResolveDex {
      * as the oplog operations). The bytes are dispatched through the generic request path;
      * signer-based CGIs are not supported here.
      */
-    fun sendCgiRaw(
+    fun sendCgi(
         uri: String,
         cgiId: Int,
         funcId: Int,
@@ -366,10 +366,10 @@ object WePacketHelper : ApiFeature(), IResolveDex {
         dslBlock: WeRequestDsl.() -> Unit
     ) {
         val dsl = WeRequestDsl().apply(dslBlock)
-        sendCgiRaw(uri, cgiId, funcId, routeId, reqBytes, dsl)
+        sendCgi(uri, cgiId, funcId, routeId, reqBytes, dsl)
     }
 
-    fun sendCgiRaw(
+    fun sendCgi(
         uri: String,
         cgiId: Int,
         funcId: Int,
@@ -403,9 +403,9 @@ object WePacketHelper : ApiFeature(), IResolveDex {
                 var successAction: (() -> Unit)? = null
 
                 // 签名分发
-                val signer = signers.firstOrNull { it.match(cgiId) }
+                val signer = signers.firstOrNull { it.matchesJson(cgiId) }
                 if (signer != null) {
-                    val result = signer.sign(cl, jsonObj)
+                    val result = signer.preprocessJson(cl, jsonObj)
                     result.json?.let { jsonObj = it }
                     nativeNetScene = result.nativeNetScene
                     successAction = result.onSendSuccess

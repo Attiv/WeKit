@@ -50,7 +50,7 @@ object WeContactApi : ApiFeature(), IResolveDex {
                     add(OpLog.operation(OpLog.CMD_DELETE_CONTACT, DelContactProto(UserNameProto(wxId))))
                 }
 
-                WePacketHelper.sendCgiRaw(
+                WePacketHelper.sendCgi(
                     "/cgi-bin/micromsg-bin/oplog", 681, 0, 0, OpLog.encodeRequest(operations)
                 ) {
                     onSuccess { _ -> if (cont.isActive) cont.resume(true) }

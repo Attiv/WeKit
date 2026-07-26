@@ -155,7 +155,7 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
     private fun actualFetchRealName(senderId: String, groupId: String?, onResult: (FetchResult) -> Unit) {
         CoroutineScope(Dispatchers.IO).launch {
             val reqBytes = BeforeTransferReqProto(userName = senderId, groupId = groupId).encode()
-            WePacketHelper.sendCgiRaw(
+            WePacketHelper.sendCgi(
                 "/cgi-bin/mmpay-bin/beforetransfer", 2783, 0, 0,
                 reqBytes
             ) {

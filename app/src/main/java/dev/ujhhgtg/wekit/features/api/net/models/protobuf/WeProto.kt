@@ -22,6 +22,10 @@ object WeProto {
         encodeDefaults = true
     }
 
+    @Deprecated(
+        message = "You might want encodeWithDefaults() instead. Use encode() when you are absolutely sure.",
+        level = DeprecationLevel.WARNING
+    )
     inline fun <reified T : Any> encode(value: T): ByteArray {
         val processed = WePacketSigner.preprocess(value)
         return protoBuf.encodeToByteArray(processed)

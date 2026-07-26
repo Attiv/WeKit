@@ -1,12 +1,13 @@
 package dev.ujhhgtg.wekit.features.api.net.abc
 
-import dev.ujhhgtg.wekit.features.api.net.models.SignResult
+import dev.ujhhgtg.wekit.features.api.net.models.PreprocessResult
 import org.json.JSONObject
 
-interface ISigner {
+interface IPacketPreprocessor {
     fun matchesJson(cgiId: Int): Boolean
+    fun preprocessJson(cl: ClassLoader, json: JSONObject): PreprocessResult
+
     fun matchesProto(value: Any): Boolean = false
-    fun preprocessJson(cl: ClassLoader, json: JSONObject): SignResult
     @Suppress("UNCHECKED_CAST")
     fun <T : Any> preprocessProto(value: T): T = value
 }

@@ -126,9 +126,9 @@ object MentionMembers : SwitchFeature() {
                                     count = 1,
                                     items = listOf(item)
                                 )
-                                val reqBytes = WeProto.encode(reqProto)
+                                val reqBytes = WeProto.encodeWithDefaults(reqProto)
 
-                                WePacketHelper.sendCgiRaw(
+                                WePacketHelper.sendCgi(
                                     "/cgi-bin/micromsg-bin/newsendmsg",
                                     522,
                                     0,

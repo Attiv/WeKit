@@ -34,7 +34,7 @@ object ClearProfileDetails : ClickableFeature() {
                             ModProfileProto()
                         )
 
-                        WePacketHelper.sendCgiRaw(
+                        WePacketHelper.sendCgi(
 //                        WePacketHelper.sendCgi(
                             "/cgi-bin/micromsg-bin/oplog",
                             681, 0, 0,

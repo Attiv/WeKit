@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package dev.ujhhgtg.wekit
 
 import dev.ujhhgtg.wekit.features.api.net.models.protobuf.AppMsgItemProto

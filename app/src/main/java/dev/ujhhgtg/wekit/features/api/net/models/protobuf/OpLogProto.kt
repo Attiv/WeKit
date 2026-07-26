@@ -203,6 +203,7 @@ object OpLog {
         OperationProto(cmdId, OpBufProto.fromBytes(bytes))
 
     /** Build the full oplog request bytes for a set of [operations]. */
+    @Suppress("DEPRECATION")
     fun encodeRequest(operations: List<OperationProto>): ByteArray =
         WeProto.encode(OpLogReqProto(OpLogListProto(count = operations.size, operations = operations)))
 
