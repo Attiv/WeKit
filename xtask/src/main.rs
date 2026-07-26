@@ -907,6 +907,18 @@ fn task_zygisk_build(args: &ZygiskBuildArgs) -> Result<PathBuf> {
     let apk_profile = args.apk_profile.resolve();
     let zygisk_profile = args.zygisk_profile.resolve();
     if !args.skip_apk_build {
+        // Gradle does NOT compile wekit-native — the `configureCargo` / native-build tasks were
+        // removed from the build script when the toolchain moved into xtask, so `assemble*` only
+        // packages whatever prebuilt .so already sits in app/src/main/jniLibs. `task_build_android`
+        // and `task_run` account for that; this path used to not, which meant `./x zygisk build`
+        // and `./x zygisk flash` silently shipped a stale libwekit_native.so no matter how many
+        // times the Rust sources changed.
+        //
+        // Both ABIs unconditionally: the module payload requires a universal APK (see
+        // `resolve_zygisk_payload_apk`), so a single-ABI build would be rejected later anyway.
+        task_configure()?;
+        task_build_native(&[])?;
+
         let gradle_task = gradle_variant_task(
             "assemble",
             Some(&Flavor::Standard),
