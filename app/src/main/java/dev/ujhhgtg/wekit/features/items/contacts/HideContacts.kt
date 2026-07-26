@@ -26,8 +26,6 @@ import com.tencent.mm.ui.LauncherUI
 import com.tencent.mm.ui.chatting.ChattingUI
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.isSubclassOf
-import dev.ujhhgtg.reflekt.utils.makeAccessible
-import dev.ujhhgtg.wekit.constants.PackageNames
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeConversationApi
@@ -37,6 +35,7 @@ import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarApi
 import dev.ujhhgtg.wekit.features.api.ui.WeMainActivityBeautifyApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
+import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installListHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installMomentsHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installSqlHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installVoipHooks
@@ -56,6 +55,7 @@ import java.lang.ref.WeakReference
 import kotlin.math.sqrt
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
+import org.luckypray.dexkit.query.enums.MatchType
 import java.lang.reflect.Modifier as JavaModifier
 
 
@@ -77,6 +77,10 @@ import java.lang.reflect.Modifier as JavaModifier
 12. 共同好友朋友圈动态下的内联点赞/评论 (非 SnsComment 表, 随动态本身下发)
 13. 发现页「N 位朋友的新动态」头像与红点
 14. 新消息通知 (含微信在 push 进程内直接弹出的轻量推送通知)
+15. 群聊内 @成员选择器
+16. 群成员列表 (查看全部群成员、删除成员、邀请成员)
+17. 收藏列表
+18. 视频号点赞列表 (朋友❤过)
 注: 临时显示 (#show / 三击标题) 只恢复界面上的显示, 不恢复通知"""
 )
 object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputBarListener,
@@ -305,33 +309,12 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             }
         }
 
-        // --- friends & groups list ---
+        // --- adapter/list-level surfaces (通讯录, @成员选择器, 群成员列表, 收藏, 视频号点赞) ---
+        //
+        // Everything whose rows never pass through a query the SQL rewriter above can see. See
+        // hidecontacts/HideContactsLists.kt.
 
-        methodAddressMvvmListPreprocessList.hookBefore {
-            if (temporarilyShown) return@hookBefore
-
-            val contacts = args[0] as MutableList<*>
-            // MvvmList hands us an empty snapshot on the initial load and whenever a filter matches
-            // nothing; contacts[0] below would throw there, and hook bodies must not fail.
-            if (contacts.isEmpty()) return@hookBefore
-
-            val contactInfoField = contacts[0]!!.reflekt()
-                .firstField { type { it.name.startsWith("${PackageNames.WECHAT}.storage") } }
-                .self
-            val usernameField = contactInfoField.type.reflekt()
-                .firstField {
-                    name = "field_username"
-                    superclass()
-                }.self.makeAccessible()
-
-            val hiddenContacts = hiddenContacts
-
-            contacts.removeAll { contact ->
-                val contactInfo = contactInfoField.get(contact!!)
-                val username = usernameField.get(contactInfo) as String
-                username in hiddenContacts
-            }
-        }
+        installListHooks()
 
         // NB: the 通讯录 -> 群聊 list (ChatroomContactAdapter) is NOT hooked at the adapter level.
         // Its cursor comes from ContactStorage.y(), whose SQL carries `from rcontact` + `pyInitial`
@@ -609,10 +592,126 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             returnType("android.database.Cursor")
         }
     }
-    private val methodAddressMvvmListPreprocessList by dexMethod {
+    /**
+     * `AddressLiveList.e(List snapshotList)` — the 通讯录 MvvmList preprocessor.
+     * See hidecontacts/HideContactsLists.kt for why this is the right cut point.
+     */
+    internal val methodAddressMvvmListPreprocessList by dexMethod {
         matcher {
             declaredClass = "com.tencent.mm.ui.contact.address.AddressLiveList"
             usingEqStrings("snapshotList")
+        }
+    }
+
+    /**
+     * `AtSomeoneLiveList.e(List snapshotList)` — the @成员选择器's MvvmList preprocessor, structurally
+     * identical to [methodAddressMvvmListPreprocessList] and filtered by the same shared helper.
+     *
+     * `AtSomeoneLiveList` declares only `<init>`, `c()` (the log tag) and `e(List)`, and `"snapshotList"`
+     * is the `o.g(...)` null-check literal that only `e` carries — unambiguous on 8.0.76
+     * (`ui/chatting/atsomeone/AtSomeoneLiveList.java:35-36`) and on 8.0.69 (same file, same lines).
+     *
+     * `allowFailure` because this is a single opt-in surface: if the class is renamed on some version
+     * in 8.0.65–8.0.76 we want the @成员 list to stay unfiltered, not to fail dex resolution for the
+     * whole feature and take every other hidden-contact surface down with it.
+     */
+    internal val methodAtSomeoneMvvmListPreprocessList by dexMethod(allowFailure = true) {
+        matcher {
+            declaredClass = "com.tencent.mm.ui.chatting.atsomeone.AtSomeoneLiveList"
+            usingEqStrings("snapshotList")
+        }
+    }
+
+    /**
+     * `cc.d(List usernames)` — `SeeRoomMemberUI`'s adapter rebuild (`tc.d` on 8.0.69).
+     *
+     * Among the classes that carry the `"MicroMsg.SeeRoomMemberUI"` tag (the Activity itself plus its
+     * adapter and three listeners) exactly one declares a `void (List)` method: the adapter, at
+     * `chatroom/ui/cc.java:96` on 8.0.76 and `chatroom/ui/tc.java:95` on 8.0.69.
+     */
+    internal val methodSeeRoomMemberSetMemberList by dexMethod(allowFailure = true) {
+        matcher {
+            declaredClass {
+                usingEqStrings("MicroMsg.SeeRoomMemberUI")
+            }
+            paramTypes("java.util.List")
+            returnType("void")
+        }
+    }
+
+    /**
+     * `SelectMemberUI.V6()` — the member-username list the @全体成员 / 删除成员 / 邀请 adapters load
+     * from (`j7()` on 8.0.69).
+     *
+     * The class name is real, and it declares exactly one no-argument `List`-returning method on both
+     * trees (`chatroom/ui/SelectMemberUI.java:115` on 8.0.76, `:178` on 8.0.69), so class + arity +
+     * return type is unambiguous without needing the obfuscated method name.
+     */
+    internal val methodSelectMemberUiGetMemberList by dexMethod(allowFailure = true) {
+        matcher {
+            declaredClass = "com.tencent.mm.chatroom.ui.SelectMemberUI"
+            paramCount = 0
+            returnType("java.util.List")
+        }
+    }
+
+    /**
+     * `c.r(List)` — `FavoriteAdapter`'s single data-list setter (`c.t(List)` on 8.0.69).
+     *
+     * `"MicroMsg.FavoriteAdapter"` occurs in exactly one class app-wide
+     * (`plugin/fav/ui/adapter/c.java` on both trees). That class declares two `void (List)` methods —
+     * `d(List)` and `r(List)` — and only `r` uses the tag (in its catch block,
+     * `c.java:1054` on 8.0.76 / `c.java:1051` on 8.0.69), so the tag + shape pair resolves to `r`
+     * alone. `d(List)` uses no string constants at all.
+     */
+    internal val methodFavoriteAdapterSetDataList by dexMethod(allowFailure = true) {
+        matcher {
+            usingEqStrings("MicroMsg.FavoriteAdapter")
+            paramTypes("java.util.List")
+            returnType("void")
+        }
+    }
+
+    /**
+     * The 视频号 like-drawer *refresh* callback — `jd.call(Object)` on 8.0.76
+     * (`plugin/finder/feed/jd.java:50`), `zc.call(Object)` on 8.0.69.
+     *
+     * Two methods on each tree pair `"Finder.DrawerPresenter"` with `"[refreshData] Cost="`
+     * (8.0.76: `feed/jd` + `feed/s5`; 8.0.69: `feed/zc` + `feed/t5`) — the like drawer and the
+     * comment drawer. They are told apart by the builder whose retry-view they drive: the like
+     * drawer carries `"…/FinderLikeDrawerBuilder"`, the comment drawer
+     * `"…/FinderTimelineDrawerBuilder"`. All three strings together resolve to exactly one method on
+     * each tree. Strings are preferred over a structural discriminator here because `allowFailure`
+     * only guards the 0-hit case — a multi-hit would `error(...)` and take the whole feature down.
+     */
+    internal val methodFinderLikeDrawerRefresh by dexMethod(allowFailure = true) {
+        matcher {
+            usingEqStrings(
+                "Finder.DrawerPresenter",
+                "[refreshData] Cost=",
+                "com/tencent/mm/plugin/finder/view/builder/FinderLikeDrawerBuilder"
+            )
+        }
+    }
+
+    /**
+     * The 视频号 like-drawer *load-more* callback — `yc.call(Object)` on 8.0.76
+     * (`plugin/finder/feed/yc.java:31`), `sc.call(Object)` on 8.0.69.
+     *
+     * `"Finder.DrawerPresenter"` + `"[loadMoreData] empty!"` matches two methods per tree (8.0.76:
+     * `feed/yc` + `feed/v3`; 8.0.69: `feed/sc` + `feed/x3`). Unlike the refresh callback there is no
+     * third string to separate them — the competing method carries *only* those two constants — so
+     * the discriminator has to be structural: the like-drawer one calls
+     * `FinderItem.getUnsignedId()` to stamp each entry with its feed id, the other never does.
+     * `FinderItem` is an unobfuscated (kept) class, so that method name is stable across versions.
+     */
+    internal val methodFinderLikeDrawerLoadMore by dexMethod(allowFailure = true) {
+        matcher {
+            usingEqStrings("Finder.DrawerPresenter", "[loadMoreData] empty!")
+            invokeMethods {
+                add { name = "getUnsignedId" }
+                matchType = MatchType.Contains
+            }
         }
     }
 
