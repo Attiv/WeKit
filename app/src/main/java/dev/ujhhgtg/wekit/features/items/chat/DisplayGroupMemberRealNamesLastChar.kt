@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +26,7 @@ import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.TextButton
+import dev.ujhhgtg.wekit.ui.content.WeColorField
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.currentWxId
@@ -68,8 +68,8 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
                 title = { Text("显示群成员实名尾字") },
                 text = {
                     DefaultColumn(Modifier.verticalScroll(rememberScrollState())) {
-                        TextField(
-                            label = { Text("前景色 (ARGB)") },
+                        WeColorField(
+                            label = "前景色",
                             value = fg,
                             onValueChange = { fg = it })
                     }

@@ -47,6 +47,7 @@ import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.TextButton
+import dev.ujhhgtg.wekit.ui.content.WeColorField
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.android.isDarkMode
@@ -311,17 +312,17 @@ object MessageTimeEnhancements : ClickableFeature(),
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        TextField(
+                        WeColorField(
                             value = textColorLightInput,
                             onValueChange = { textColorLightInput = it },
-                            label = { Text("字体颜色 (亮色模式)") },
+                            label = "字体颜色 (亮色模式)",
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        TextField(
+                        WeColorField(
                             value = textColorDarkInput,
                             onValueChange = { textColorDarkInput = it },
-                            label = { Text("字体颜色 (暗色模式)") },
+                            label = "字体颜色 (暗色模式)",
                             modifier = Modifier.fillMaxWidth()
                         )
 

@@ -46,6 +46,7 @@ import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.TextButton
+import dev.ujhhgtg.wekit.ui.content.WeColorField
 import dev.ujhhgtg.wekit.ui.utils.findViewsWhich
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -241,18 +242,16 @@ object CenterProfileCard : ClickableFeature(), IResolveDex {
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        OutlinedTextField(
+                        WeColorField(
                             value = lightBg,
                             onValueChange = { lightBg = it },
-                            label = { Text("亮色背景 ARGB") },
-                            singleLine = true,
+                            label = "亮色背景",
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        OutlinedTextField(
+                        WeColorField(
                             value = darkBg,
                             onValueChange = { darkBg = it },
-                            label = { Text("暗色背景 ARGB") },
-                            singleLine = true,
+                            label = "暗色背景",
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

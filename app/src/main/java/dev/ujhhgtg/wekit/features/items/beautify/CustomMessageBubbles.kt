@@ -15,22 +15,17 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -42,7 +37,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.get
 import androidx.core.graphics.toColorInt
@@ -63,6 +57,7 @@ import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.IconButton
 import dev.ujhhgtg.wekit.ui.content.TextButton
+import dev.ujhhgtg.wekit.ui.content.WeColorField
 import dev.ujhhgtg.wekit.ui.utils.findViewWhich
 import dev.ujhhgtg.wekit.ui.utils.findViewsWhich
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
@@ -77,7 +72,6 @@ import kotlin.io.path.absolutePathString
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.div
 import kotlin.io.path.exists
-import androidx.compose.ui.graphics.Color as ComposeColor
 
 @Feature(name = "自定义消息气泡", categories = ["界面美化", "聊天"], description = "自定义聊天中的消息气泡图片和颜色")
 object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateViewListener {
@@ -446,37 +440,6 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
     }
 
     @Composable
-    private fun ColorField(
-        label: String,
-        value: String,
-        onValueChange: (String) -> Unit,
-        modifier: Modifier = Modifier,
-    ) {
-        val parsedColor = remember(value) {
-            value.takeIf { it.isNotBlank() }?.let { runCatching { it.toColorInt() }.getOrNull() }
-        }
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            label = { Text(label) },
-            singleLine = true,
-            isError = value.isNotBlank() && parsedColor == null,
-            trailingIcon = parsedColor?.let { color ->
-                {
-                    Box(
-                        Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(ComposeColor(color))
-                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
-                    )
-                }
-            },
-            modifier = modifier,
-        )
-    }
-
-    @Composable
     private fun BubbleEditor(
         form: BubbleForm,
         onFormChange: (BubbleForm) -> Unit,
@@ -492,13 +455,13 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ColorField(
+            WeColorField(
                 label = "亮色模式",
                 value = form.foregroundLight,
                 onValueChange = { onFormChange(form.copy(foregroundLight = it)) },
                 modifier = Modifier.weight(1f),
             )
-            ColorField(
+            WeColorField(
                 label = "暗色模式",
                 value = form.foregroundDark,
                 onValueChange = { onFormChange(form.copy(foregroundDark = it)) },
@@ -515,13 +478,13 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ColorField(
+            WeColorField(
                 label = "亮色模式",
                 value = form.backgroundLight,
                 onValueChange = { onFormChange(form.copy(backgroundLight = it)) },
                 modifier = Modifier.weight(1f),
             )
-            ColorField(
+            WeColorField(
                 label = "暗色模式",
                 value = form.backgroundDark,
                 onValueChange = { onFormChange(form.copy(backgroundDark = it)) },
