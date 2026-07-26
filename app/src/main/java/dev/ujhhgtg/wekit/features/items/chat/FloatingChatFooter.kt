@@ -13,6 +13,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
+import com.tencent.mm.pluginsdk.ui.chat.ChatFooterBottom
+import com.tencent.mm.pluginsdk.ui.chat.ChattingScrollLayout
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
@@ -24,6 +26,7 @@ import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.TextButton
+import dev.ujhhgtg.wekit.ui.utils.findViewWhich
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.constructor
@@ -37,6 +40,10 @@ import kotlin.math.roundToInt
 object FloatingChatFooter : ClickableFeature(), IResolveDex {
 
     private const val TAG = "FloatingChatFooter"
+
+    // ChatFooter.switchPanel(state, ...) 的状态取值
+    private const val PANEL_STATE_SMILEY = 2
+    private const val PANEL_STATE_APP = 3
 
     private const val DEFAULT_CORNER_RADIUS = 24
     private const val DEFAULT_SIDE_MARGIN = 12
@@ -68,6 +75,31 @@ object FloatingChatFooter : ClickableFeature(), IResolveDex {
         }
     }
 
+    /**
+     * ChatFooter.switchPanel(int state, boolean, int) —— 底部面板状态机。
+     * state: 0=收起 1=键盘 2=表情面板 3=工具面板 4=语音。
+     */
+    private val methodSwitchPanel by dexMethod {
+        searchPackages("com.tencent.mm.pluginsdk.ui.chat")
+        matcher {
+            usingEqStrings("MicroMsg.ChatFooter", "switchPanel: %s, %s")
+        }
+    }
+
+    /**
+     * ChattingScrollLayout.scrollContentTo(int y, boolean, int, int) —— 微信展开面板的方式:
+     * 对除消息列表宿主外的所有子 View 做 translationY(-y)。
+     */
+    private val methodScrollContentTo by dexMethod {
+        searchPackages("com.tencent.mm.pluginsdk.ui.chat")
+        matcher {
+            usingEqStrings(
+                "MicroMsg.ChattingScrollLayout",
+                "scrollContentTo: y:%s, targetScroll:%s, alwaysScroll:%s"
+            )
+        }
+    }
+
     override fun onEnable() {
         val reflekt = ChatFooter::class.reflekt()
 
@@ -88,7 +120,41 @@ object FloatingChatFooter : ClickableFeature(), IResolveDex {
         methodRefreshBottomHeight.hookAfter {
             applyBottomGap(thisObject as ChatFooter)
         }
+
+        // TEMPORARY (Task 1 only): 验证锚点定位与参数含义, Task 2 会替换掉
+        methodSwitchPanel.hookBefore {
+            val footer = thisObject as ChatFooter
+            val panel = footer.bottomPanel
+            WeLogger.d(
+                TAG,
+                "probe switchPanel: state=${args[0]} panelVisibility=${panel?.visibility} " +
+                    "panelHeight=${panel?.height} footerBottomMargin=" +
+                    "${(footer.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin}"
+            )
+        }
+
+        methodScrollContentTo.hookBefore {
+            val panel = (thisObject as ChattingScrollLayout).footerBottomPanel
+            WeLogger.d(TAG, "probe scrollContentTo: y=${args[0]} panelVisibility=${panel?.visibility}")
+        }
     }
+
+    /** ChatFooter 子树里的表情/工具面板容器。 */
+    private val ChatFooter.bottomPanel: ChatFooterBottom?
+        get() = findViewWhich { it is ChatFooterBottom }
+
+    /**
+     * 从 ChattingScrollLayout 定位面板。只遍历 ChatFooter 子树 —— 直接对整个
+     * ChattingScrollLayout 做 DFS 会先把整条消息列表走一遍, 白白付出代价。
+     */
+    private val ChattingScrollLayout.footerBottomPanel: ChatFooterBottom?
+        get() {
+            for (i in 0 until childCount) {
+                val child = getChildAt(i)
+                if (child is ChatFooter) return child.bottomPanel
+            }
+            return null
+        }
 
     /** Sets the outline provider, corner clipping, and elevation — all drawing properties
      *  that don't require LayoutParams. Safe to call from the constructor hook. */

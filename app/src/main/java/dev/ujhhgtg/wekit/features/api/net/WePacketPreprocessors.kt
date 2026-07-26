@@ -4,8 +4,8 @@ import dev.ujhhgtg.reflekt.utils.createInstance
 import dev.ujhhgtg.wekit.features.api.core.WeApi
 import dev.ujhhgtg.wekit.features.api.net.MsgIdPreviewer.generateClientMsgId
 import dev.ujhhgtg.wekit.features.api.net.MsgIdPreviewer.previewNextId
-import dev.ujhhgtg.wekit.features.api.net.abc.ISigner
-import dev.ujhhgtg.wekit.features.api.net.models.SignResult
+import dev.ujhhgtg.wekit.features.api.net.abc.IPacketPreprocessor
+import dev.ujhhgtg.wekit.features.api.net.models.PreprocessResult
 import dev.ujhhgtg.wekit.features.api.net.models.protobuf.AppMsgItemProto
 import dev.ujhhgtg.wekit.features.api.net.models.protobuf.EmojiItemProto
 import dev.ujhhgtg.wekit.features.api.net.models.protobuf.IAppMsgProto
@@ -23,10 +23,10 @@ import org.json.JSONObject
 /**
  * 消息发送签名器 (CGI 522)
  */
-object NewSendMsgSigner : ISigner {
-    override fun match(cgiId: Int) = cgiId == 522
+object NewSendMsgSigner : IPacketPreprocessor {
+    override fun matchesJson(cgiId: Int) = cgiId == 522
 
-    override fun matchProto(value: Any): Boolean = value is INewSendMsgProto
+    override fun matchesProto(value: Any): Boolean = value is INewSendMsgProto
 
     @Suppress("UNCHECKED_CAST")
     override fun <T : Any> preprocessProto(value: T): T {
@@ -59,7 +59,7 @@ object NewSendMsgSigner : ISigner {
         }
     }
 
-    override fun sign(cl: ClassLoader, json: JSONObject): SignResult {
+    override fun preprocessJson(cl: ClassLoader, json: JSONObject): PreprocessResult {
         fun applySign(item: JSONObject) {
             val ts = System.currentTimeMillis()
             val selfWxId = runCatching { WeApi.selfWxId }.getOrNull() ?: ""
@@ -72,17 +72,17 @@ object NewSendMsgSigner : ISigner {
             for (i in 0 until list.length()) list.optJSONObject(i)?.let { applySign(it) }
         } else json.optJSONObject("2")?.let { applySign(it) }
 
-        return SignResult(json = json)
+        return PreprocessResult(json = json)
     }
 }
 
 /**
  * AppMsg 签名注入 (CGI 222)
  */
-object AppMsgSigner : ISigner {
-    override fun match(cgiId: Int) = cgiId == 222
+object AppMsgSigner : IPacketPreprocessor {
+    override fun matchesJson(cgiId: Int) = cgiId == 222
 
-    override fun matchProto(value: Any): Boolean = value is IAppMsgProto
+    override fun matchesProto(value: Any): Boolean = value is IAppMsgProto
 
     @Suppress("UNCHECKED_CAST")
     override fun <T : Any> preprocessProto(value: T): T {
@@ -120,8 +120,8 @@ object AppMsgSigner : ISigner {
         }
     }
 
-    override fun sign(cl: ClassLoader, json: JSONObject): SignResult {
-        val innerMsg = json.optJSONObject("2") ?: return SignResult(json = json)
+    override fun preprocessJson(cl: ClassLoader, json: JSONObject): PreprocessResult {
+        val innerMsg = json.optJSONObject("2") ?: return PreprocessResult(json = json)
         val toUser = innerMsg.optString("4")
 
         val nextId = previewNextId("message")
@@ -135,17 +135,17 @@ object AppMsgSigner : ISigner {
         json.put("4", (nowMs / 1000).toInt()) // lr5.ReqTime
 
         WeLogger.i("AppMsgSigner", "成功: ID=$nextId, Sign=$signature")
-        return SignResult(json = json)
+        return PreprocessResult(json = json)
     }
 }
 
 /**
  * 表情签名器 (CGI 175)
  */
-object EmojiSigner : ISigner {
-    override fun match(cgiId: Int) = cgiId == 175
+object EmojiSigner : IPacketPreprocessor {
+    override fun matchesJson(cgiId: Int) = cgiId == 175
 
-    override fun matchProto(value: Any): Boolean = value is ISendEmojiProto
+    override fun matchesProto(value: Any): Boolean = value is ISendEmojiProto
 
     @Suppress("UNCHECKED_CAST")
     override fun <T : Any> preprocessProto(value: T): T {
@@ -170,23 +170,23 @@ object EmojiSigner : ISigner {
         }
     }
 
-    override fun sign(cl: ClassLoader, json: JSONObject): SignResult {
+    override fun preprocessJson(cl: ClassLoader, json: JSONObject): PreprocessResult {
         val tag3Obj = json.optJSONObject("3")
         if (tag3Obj != null) {
             val ts = System.currentTimeMillis().toString()
             tag3Obj.put("9", ts)
         }
-        return SignResult(json = json)
+        return PreprocessResult(json = json)
     }
 }
 
 /**
  * 拍一拍签名器 (CGI 849)
  */
-class SendPatSigner(private val lazyClass: () -> Class<*>?) : ISigner {
-    override fun match(cgiId: Int) = cgiId == 849
+class SendPatSigner(private val lazyClass: () -> Class<*>?) : IPacketPreprocessor {
+    override fun matchesJson(cgiId: Int) = cgiId == 849
 
-    override fun matchProto(value: Any): Boolean = value is ISendPatProto
+    override fun matchesProto(value: Any): Boolean = value is ISendPatProto
 
     @Suppress("UNCHECKED_CAST")
     override fun <T : Any> preprocessProto(value: T): T {
@@ -209,8 +209,8 @@ class SendPatSigner(private val lazyClass: () -> Class<*>?) : ISigner {
         }
     }
 
-    override fun sign(cl: ClassLoader, json: JSONObject): SignResult {
-        val cls = lazyClass() ?: return SignResult(json = json)
+    override fun preprocessJson(cl: ClassLoader, json: JSONObject): PreprocessResult {
+        val cls = lazyClass() ?: return PreprocessResult(json = json)
 
         try {
             val chatUserName = json.optString("3")
@@ -225,16 +225,16 @@ class SendPatSigner(private val lazyClass: () -> Class<*>?) : ISigner {
                 pattedUser,
                 scene
             )
-            return SignResult(json = json, nativeNetScene = nativeScene)
+            return PreprocessResult(json = json, nativeNetScene = nativeScene)
         } catch (e: Throwable) {
             WeLogger.e("SendPatSigner", "实例化原生 NetScene 失败: ${e.message}")
-            return SignResult(json = json)
+            return PreprocessResult(json = json)
         }
     }
 }
 
 object WePacketSigner {
-    val signers: List<ISigner> by lazy {
+    val signers: List<IPacketPreprocessor> by lazy {
         listOf(
             NewSendMsgSigner,
             EmojiSigner,
@@ -246,7 +246,7 @@ object WePacketSigner {
     fun <T : Any> preprocess(value: T): T {
         var current = value
         for (signer in signers) {
-            if (signer.matchProto(current)) {
+            if (signer.matchesProto(current)) {
                 current = signer.preprocessProto(current)
             }
         }
