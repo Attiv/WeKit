@@ -153,8 +153,19 @@ object ActivityProxy {
         const val SETTINGS_PROXY = "${PackageNames.WECHAT}.app.WeChatSplashActivity"
         const val TRANSPARENT_PROXY = "${PackageNames.WECHAT}.plugin.appbrand.ipc.AppBrandProxyTransparentUI"
 
+        /**
+         * 这些模块 Activity 不借宿主的 stub，直接在模块自己的进程里启动：
+         *  - MainActivity 本来就是从桌面启动的；
+         *  - PipVoipActivity 需要清单里的 `supportsPictureInPicture`。system_server 校验的是
+         *    被启动组件在清单里的 flag（见 `ActivityRecord.supportsPictureInPicture()`），
+         *    而宿主没有任何 Activity 声明过它，借壳就永远进不了画中画。也正因为如此，
+         *    对应的功能只能在 LSPosed 模式下用（Zygisk 模式下模块应用没有安装）。
+         */
+        private val NON_PROXY_ACTIVITIES = listOf("MainActivity", "PipVoipActivity")
+
         fun isModuleProxyActivity(className: String?): Boolean =
-            className?.startsWith(PackageNames.MODULE) == true && !className.contains("MainActivity")
+            className?.startsWith(PackageNames.MODULE) == true &&
+                NON_PROXY_ACTIVITIES.none { className.contains(it) }
     }
 
     private class IActivityManagerHandler(private val origin: Any) : InvocationHandler {
