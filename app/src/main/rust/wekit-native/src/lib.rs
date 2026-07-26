@@ -45,19 +45,22 @@ fn native_error_string(env: *mut RawJNIEnv, result: Result<(), String>) -> jstri
 
 /// Install the native crash handler.
 ///
-/// Java signature: `(Ljava/lang/String;)Z`
+/// Java signature: `(Ljava/lang/String;Ljava/lang/String;)Z`
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_crash_NativeCrashHandler_installNative(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     crash_log_dir: jstring,
+    crash_log_file_name_prefix: jstring,
 ) -> jboolean {
     with_jstring(env, crash_log_dir, |dir| {
-        if install_crash_handler(dir) {
-            JNI_TRUE
-        } else {
-            JNI_FALSE
-        }
+        with_jstring(env, crash_log_file_name_prefix, |prefix| {
+            if install_crash_handler(dir, prefix) {
+                JNI_TRUE
+            } else {
+                JNI_FALSE
+            }
+        })
     })
 }
 

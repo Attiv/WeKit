@@ -158,6 +158,12 @@ object CrashLogsManager {
 
     val crashLogDirPath: String get() = crashLogsDir.absolutePathString()
 
+    /**
+     * File-name prefix every crash report must carry — [allCrashLogs] filters on it. Handed to the
+     * native handler at install time so it names its reports the same way this object does.
+     */
+    val crashLogFileNamePrefix: String get() = CRASH_LOGS_PREFIX
+
     fun setPendingJavaCrashFlag(logFileName: String) {
         try {
             (crashLogsDir / PENDING_JAVA_CRASH_FLAG).writeText(logFileName)
