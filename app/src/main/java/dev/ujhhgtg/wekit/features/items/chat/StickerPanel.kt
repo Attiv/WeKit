@@ -6,7 +6,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import dev.ujhhgtg.wekit.activity.PickRootTelegramStickerSetsContract
 import dev.ujhhgtg.wekit.activity.RootTelegramStickerSetsResult
 import dev.ujhhgtg.wekit.activity.TransparentActivity
+import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
+import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
+import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
+import dev.ujhhgtg.wekit.features.api.core.WeServiceApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
@@ -20,37 +24,57 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.pickPanelFile
 import dev.ujhhgtg.wekit.features.items.chat.panel.pickPanelFiles
 import dev.ujhhgtg.wekit.features.items.chat.panel.service.FunBoxServiceClient
 import dev.ujhhgtg.wekit.features.items.chat.panel.service.FunBoxStickerRepository
-import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerPanelRepository
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerOnlineSourceRecoveryProgress
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerOnlineSourceRecoveryResult
+import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerPanelRepository
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramInstalledStickerSet
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerDatabase
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerPackRepository
 import dev.ujhhgtg.wekit.ui.panel.StickerImportMode
 import dev.ujhhgtg.wekit.ui.panel.StickerPanelActions
 import dev.ujhhgtg.wekit.ui.panel.TelegramDatabaseSource
+import dev.ujhhgtg.wekit.ui.panel.WeChatStickerImportPhase
+import dev.ujhhgtg.wekit.ui.panel.WeChatStickerImportProgress
 import dev.ujhhgtg.wekit.ui.panel.showStickerPanelSheet
 import dev.ujhhgtg.wekit.utils.fs.asPath
+import dev.ujhhgtg.wekit.utils.reflection.bool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.lang.reflect.Modifier
+import java.lang.reflect.Proxy
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlin.io.path.absolutePathString
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.div
+import kotlin.io.path.inputStream
 import kotlin.io.path.readBytes
 import kotlin.io.path.writeBytes
+import kotlin.time.Duration.Companion.minutes
 
 @Feature(
     name = "表情面板",
     categories = ["聊天"],
     description = "长按表情按钮打开表情面板"
 )
-object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHooks
+object StickerPanel : SwitchFeature(), IResolveDex { // entry implementation in ChatFooterHooks
+
+    private val methodLoadEmojiFile by dexMethod {
+        matcher {
+            usingEqStrings("MicroMsg.EmojiLoader", "load emoji file ")
+            paramTypes("com.tencent.mm.storage.emotion.EmojiInfo", "boolean", null)
+        }
+    }
 
     fun openPanel(anchor: View) {
         showStickerPanelSheet(
@@ -59,6 +83,8 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
                 reloadLocal = ::loadLocalPacks,
                 importSticker = { packId, mode, onStarted, onComplete ->
                     when (mode) {
+                        StickerImportMode.WECHAT_CUSTOM -> Unit
+
                         StickerImportMode.MULTIPLE_FILES -> pickPanelFiles(
                             anchor.context,
                             STICKER_MIME_TYPES,
@@ -101,6 +127,7 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
                             -> Unit
                     }
                 },
+                importWeChatCustomStickers = ::importWeChatCustomStickers,
                 importTelegramStickerSet = TelegramStickerPackRepository::importStickerSet,
                 pickTelegramStickerSets = { source, onComplete ->
                     pickTelegramStickerSets(anchor, source, onComplete)
@@ -388,7 +415,157 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
         }
     }
 
+    private suspend fun importWeChatCustomStickers(
+        packName: String,
+        onProgress: suspend (WeChatStickerImportProgress) -> Unit,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        cancellableResult {
+            val importContext = currentCoroutineContext()
+            onProgress(WeChatStickerImportProgress(WeChatStickerImportPhase.SCANNING))
+            check(WeDatabaseApi.isReady) { "微信数据库尚未就绪" }
+            val md5s = WeDatabaseApi.rawQuery(
+                "SELECT md5 FROM EmojiInfo WHERE catalog = ? AND temp = ? ORDER BY reserved3 ASC",
+                arrayOf(WECHAT_CUSTOM_EMOJI_CATALOG, 0),
+            ).use { cursor ->
+                val md5Column = cursor.getColumnIndexOrThrow("md5")
+                buildList {
+                    while (cursor.moveToNext()) {
+                        importContext.ensureActive()
+                        cursor.getString(md5Column)
+                            ?.takeIf {
+                                it.matches(WECHAT_EMOJI_MD5_REGEX) &&
+                                    it.lowercase() !in EmojiGameControl.GAME_EMOJI_MD5S
+                            }
+                            ?.let(::add)
+                    }
+                }.distinct()
+            }
+
+            importContext.ensureActive()
+            StickerPanelRepository.ensurePack(packName).getOrThrow()
+            var imported = 0
+            var unchanged = 0
+            val failures = mutableListOf<Pair<String, Throwable>>()
+            onProgress(
+                WeChatStickerImportProgress(
+                    phase = WeChatStickerImportPhase.IMPORTING,
+                    total = md5s.size,
+                ),
+            )
+
+            md5s.forEachIndexed { index, md5 ->
+                importContext.ensureActive()
+                if (StickerPanelRepository.hasWeChatSticker(packName, md5)) {
+                    unchanged++
+                } else {
+                    cancellableResult {
+                        check(cacheWeChatSticker(md5)) { "微信表情下载失败" }
+                        val exportedPath = WeMessageApi.saveStickerByMd5(
+                            md5,
+                            ".wekit-wechat-$md5-${UUID.randomUUID()}.gif",
+                        ) ?: error("无法导出微信表情")
+                        try {
+                            importContext.ensureActive()
+                            exportedPath.asPath.inputStream().use { input ->
+                                StickerPanelRepository.importWeChatSticker(
+                                    packName,
+                                    md5,
+                                    input,
+                                ).getOrThrow()
+                            }
+                        } finally {
+                            exportedPath.asPath.deleteIfExists()
+                        }
+                    }.onSuccess {
+                        imported++
+                    }.onFailure { error ->
+                        failures += md5 to error
+                    }
+                }
+                onProgress(
+                    WeChatStickerImportProgress(
+                        phase = WeChatStickerImportPhase.IMPORTING,
+                        processed = index + 1,
+                        total = md5s.size,
+                        failed = failures.size,
+                    ),
+                )
+            }
+
+            if (md5s.isNotEmpty() && imported == 0 && unchanged == 0) {
+                val firstFailure = failures.firstOrNull()?.second
+                throw IllegalStateException(
+                    "微信原生表情导入失败：${firstFailure?.message ?: "未知错误"}",
+                    firstFailure,
+                )
+            }
+
+            buildString {
+                if (md5s.isEmpty()) {
+                    append("微信没有「添加的单个表情」")
+                } else {
+                    append("已更新「$packName」：新增 $imported 个")
+                    if (unchanged > 0) append("，$unchanged 个无需更新")
+                    if (failures.isNotEmpty()) append("，${failures.size} 个失败")
+                }
+            }
+        }
+    }
+
+    private suspend fun cacheWeChatSticker(md5: String): Boolean =
+        withTimeoutOrNull(WECHAT_EMOJI_CACHE_TIMEOUT) {
+            suspendCancellableCoroutine { continuation ->
+                val loadMethod = methodLoadEmojiFile.method
+                val callbackType = loadMethod.parameterTypes[2]
+                val callback = Proxy.newProxyInstance(
+                    callbackType.classLoader,
+                    arrayOf(callbackType),
+                ) { proxy, callbackMethod, args ->
+                    when (callbackMethod.name) {
+                        "hashCode" -> System.identityHashCode(proxy)
+                        "equals" -> proxy === args?.getOrNull(0)
+                        "toString" -> "WeKitEmojiLoadCallback"
+                        else -> {
+                            if (
+                                callbackMethod.parameterCount == 1 &&
+                                callbackMethod.parameterTypes[0] == bool
+                            ) {
+                                val success = args?.getOrNull(0) as? Boolean ?: false
+                                if (continuation.isActive) continuation.resume(success)
+                            }
+                            null
+                        }
+                    }
+                }
+
+                try {
+                    val receiver = if (Modifier.isStatic(loadMethod.modifiers)) {
+                        null
+                    } else {
+                        loadMethod.declaringClass.declaredFields
+                            .firstOrNull {
+                                Modifier.isStatic(it.modifiers) &&
+                                    it.type == loadMethod.declaringClass
+                            }
+                            ?.apply { isAccessible = true }
+                            ?.get(null)
+                            ?: error("无法获取微信表情加载器")
+                    }
+                    val emojiInfo = WeServiceApi.getEmojiInfoByMd5(md5)
+                    loadMethod.invoke(receiver, emojiInfo, true, callback)
+                } catch (error: Throwable) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(error.cause ?: error)
+                    }
+                }
+            }
+        } ?: false
+
     private val STICKER_MIME_TYPES = arrayOf(
         "*/*",
     )
+
+    private const val WECHAT_CUSTOM_EMOJI_CATALOG = 81
+    private val WECHAT_EMOJI_CACHE_TIMEOUT = 2.minutes
+    private val WECHAT_EMOJI_MD5_REGEX = Regex("[A-Fa-f0-9]{32}")
 }

@@ -140,6 +140,10 @@ data class StickerPanelActions(
         onStarted: () -> Unit,
         onComplete: (Result<Unit>) -> Unit,
     ) -> Unit = { _, _, _, _ -> },
+    val importWeChatCustomStickers: suspend (
+        packId: String,
+        onProgress: suspend (WeChatStickerImportProgress) -> Unit,
+    ) -> Result<String> = { _, _ -> Result.failure(UnsupportedOperationException()) },
     val importTelegramStickerSet: suspend (
         value: String,
         onProgress: suspend (TelegramStickerImportProgress) -> Unit,
@@ -202,6 +206,7 @@ data class StickerPanelActions(
 )
 
 enum class StickerImportMode {
+    WECHAT_CUSTOM,
     MULTIPLE_FILES,
     DIRECTORY,
     TELEGRAM_SINGLE,
@@ -212,6 +217,18 @@ enum class TelegramDatabaseSource {
     ROOT,
     MANUAL,
 }
+
+enum class WeChatStickerImportPhase {
+    SCANNING,
+    IMPORTING,
+}
+
+data class WeChatStickerImportProgress(
+    val phase: WeChatStickerImportPhase,
+    val processed: Int = 0,
+    val total: Int = 0,
+    val failed: Int = 0,
+)
 
 private data class TelegramBatchImportProgress(
     val packIndex: Int,
@@ -303,6 +320,8 @@ private fun StickerPanelContent(
     var prompt by remember { mutableStateOf<StickerPrompt?>(null) }
     var operationMessage by remember { mutableStateOf<String?>(null) }
     var progressMessage by remember { mutableStateOf<String?>(null) }
+    var weChatImportProgress by remember { mutableStateOf<WeChatStickerImportProgress?>(null) }
+    var weChatImportJob by remember { mutableStateOf<Job?>(null) }
     var telegramNamePrompt by remember { mutableStateOf(false) }
     var telegramSourcePrompt by remember { mutableStateOf(false) }
     var telegramDiscoveredSets by remember { mutableStateOf<List<TelegramInstalledStickerSet>?>(null) }
@@ -1282,6 +1301,16 @@ private fun StickerPanelContent(
 
         uploadProgress?.let { PanelProgressOverlay("正在上传表情包", it) }
         progressMessage?.let { PanelProgressOverlay(it) }
+        weChatImportProgress?.let { progress ->
+            WeChatStickerImportProgressOverlay(
+                progress = progress,
+                onCancel = {
+                    weChatImportJob?.cancel()
+                    weChatImportJob = null
+                    weChatImportProgress = null
+                },
+            )
+        }
         telegramProgress?.let { progress ->
             TelegramImportProgressOverlay(
                 progress = progress,
@@ -1353,11 +1382,45 @@ private fun StickerPanelContent(
         when (val currentPrompt = prompt) {
             is StickerPrompt.Import -> StickerImportPrompt(
                 includeLocalImport = localPackLayout == StickerPackLayout.TABS || currentPrompt.pack != null,
+                includeWeChatImport = currentPrompt.pack == null || localPackLayout == StickerPackLayout.TABS,
                 includeTelegramImport = localPackLayout == StickerPackLayout.TABS || currentPrompt.pack == null,
                 onDismiss = { prompt = null },
                 onSelect = { mode ->
                     prompt = null
-                    if (mode == StickerImportMode.TELEGRAM_SINGLE || mode == StickerImportMode.TELEGRAM_BATCH) {
+                    if (mode == StickerImportMode.WECHAT_CUSTOM) {
+                        showPanelPackPicker(
+                            context = context,
+                            title = "导入微信原生表情",
+                            createLabel = "新建表情包",
+                            itemCountLabel = { count -> "$count 个表情" },
+                            packIcon = MaterialSymbols.Outlined.Folder,
+                            packs = editablePacks.map { PanelPackChoice(it.id, it.title, it.itemCount) },
+                            onCreatePack = actions.createPack,
+                            onSelect = { packId ->
+                                weChatImportProgress = WeChatStickerImportProgress(
+                                    WeChatStickerImportPhase.SCANNING,
+                                )
+                                weChatImportJob = scope.launch {
+                                    try {
+                                        val result = actions.importWeChatCustomStickers(packId) { progress ->
+                                            withContext(Dispatchers.Main) {
+                                                weChatImportProgress = progress
+                                            }
+                                        }
+                                        weChatImportProgress = null
+                                        operationMessage = result.fold(
+                                            onSuccess = { it },
+                                            onFailure = { it.message ?: "微信原生表情导入失败" },
+                                        )
+                                        if (result.isSuccess) refreshLocal()
+                                    } finally {
+                                        weChatImportProgress = null
+                                        weChatImportJob = null
+                                    }
+                                }
+                            },
+                        )
+                    } else if (mode == StickerImportMode.TELEGRAM_SINGLE || mode == StickerImportMode.TELEGRAM_BATCH) {
                         if (!PanelSettings.isValidTelegramBotToken(PanelSettings.telegramBotToken)) {
                             scope.launch { showToastSuspend(context, "请先在设置中填写 Telegram Bot Token") }
                         } else if (mode == StickerImportMode.TELEGRAM_BATCH) {
@@ -2564,12 +2627,23 @@ private fun stickerImageRequest(
 @Composable
 private fun StickerImportPrompt(
     includeLocalImport: Boolean,
+    includeWeChatImport: Boolean,
     includeTelegramImport: Boolean,
     onDismiss: () -> Unit,
     onSelect: (StickerImportMode) -> Unit,
 ) {
     PanelImportModePrompt(
         options = buildList {
+            if (includeWeChatImport) {
+                add(
+                    PanelImportOption(
+                        mode = StickerImportMode.WECHAT_CUSTOM,
+                        title = "从微信「添加的单个表情」导入",
+                        description = "选择或新建本地表情包后导入",
+                        icon = MaterialSymbols.Outlined.Sync,
+                    ),
+                )
+            }
             if (includeLocalImport) {
                 add(
                     PanelImportOption(
@@ -2857,6 +2931,44 @@ private fun TelegramImportProgressOverlay(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
         )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onCancel) { Text("中断") }
+        }
+    }
+}
+
+@Composable
+private fun WeChatStickerImportProgressOverlay(
+    progress: WeChatStickerImportProgress,
+    onCancel: () -> Unit,
+) {
+    PanelFullOverlay(onDismiss = onCancel, allowImplicitDismiss = false) {
+        when (progress.phase) {
+            WeChatStickerImportPhase.SCANNING -> {
+                Text("正在读取微信表情数据库", style = MaterialTheme.typography.titleMedium)
+                CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
+            }
+
+            WeChatStickerImportPhase.IMPORTING -> {
+                Text("正在导入微信原生表情", style = MaterialTheme.typography.titleMedium)
+                LinearProgressIndicator(
+                    progress = { progress.processed.toFloat() / progress.total.coerceAtLeast(1) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    buildString {
+                        append("已处理 ${progress.processed}/${progress.total}")
+                        if (progress.failed > 0) append("，失败 ${progress.failed}")
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,

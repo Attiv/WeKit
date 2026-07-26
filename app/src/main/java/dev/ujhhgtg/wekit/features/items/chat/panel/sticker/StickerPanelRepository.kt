@@ -250,14 +250,46 @@ object StickerPanelRepository {
         ) != null
     }.getOrDefault(false)
 
+    fun hasWeChatSticker(packName: String, md5: String): Boolean = runCatching {
+        existingStablePath(
+            packPath(requirePackName(packName)),
+            weChatIdentity(md5),
+        ) != null
+    }.getOrDefault(false)
+
     fun importTelegramSticker(
         packName: String,
         fileUniqueId: String,
         input: InputStream,
+    ): Result<StickerItem> = importStableSticker(
+        packName = packName,
+        identity = telegramIdentity(fileUniqueId),
+        input = input,
+        emptyDataMessage = "Telegram 未返回表情数据",
+        unsupportedFormatMessage = "Telegram 表情转换结果格式不受支持",
+    )
+
+    fun importWeChatSticker(
+        packName: String,
+        md5: String,
+        input: InputStream,
+    ): Result<StickerItem> = importStableSticker(
+        packName = packName,
+        identity = weChatIdentity(md5),
+        input = input,
+        emptyDataMessage = "微信未返回表情数据",
+        unsupportedFormatMessage = "微信表情导出结果格式不受支持",
+    )
+
+    private fun importStableSticker(
+        packName: String,
+        identity: String,
+        input: InputStream,
+        emptyDataMessage: String,
+        unsupportedFormatMessage: String,
     ): Result<StickerItem> = runCatching {
         val safePack = requirePackName(packName)
         val packDir = packPath(safePack).also { it.createDirectories() }
-        val identity = telegramIdentity(fileUniqueId)
         existingStablePath(packDir, identity)?.let { existing ->
             return@runCatching existing.toItem(
                 safePack,
@@ -269,9 +301,9 @@ object StickerPanelRepository {
         val temporary = packDir / "$identity.part"
         try {
             input.use { Files.copy(it, temporary, StandardCopyOption.REPLACE_EXISTING) }
-            require(Files.size(temporary) > 0L) { "Telegram 未返回表情数据" }
+            require(Files.size(temporary) > 0L) { emptyDataMessage }
             val extension = MediaFileTypeDetector.detectImage(temporary)?.extension
-                ?: throw IllegalArgumentException("Telegram 表情转换结果格式不受支持")
+                ?: throw IllegalArgumentException(unsupportedFormatMessage)
             val destination = packDir / "$identity.$extension"
             runCatching {
                 Files.move(
@@ -561,6 +593,11 @@ object StickerPanelRepository {
         "telegram_" + fileUniqueId.replace(Regex("[^A-Za-z0-9_-]"), "_")
             .ifBlank { "sticker" }
             .take(80)
+
+    private fun weChatIdentity(md5: String): String {
+        require(md5.matches(Regex("[A-Fa-f0-9]{32}"))) { "微信表情 MD5 无效" }
+        return "wechat_${md5.lowercase()}"
+    }
 
     private fun existingOnlinePath(packDir: Path, item: StickerItem): Path? {
         if (!packDir.isDirectory()) return null
