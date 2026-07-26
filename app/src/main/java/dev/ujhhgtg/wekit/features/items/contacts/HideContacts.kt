@@ -75,7 +75,9 @@ import java.lang.reflect.Modifier as JavaModifier
 10. 桌面角标与底栏未读计数
 11. 朋友圈消息列表 (点赞与评论)
 12. 共同好友朋友圈动态下的内联点赞/评论 (非 SnsComment 表, 随动态本身下发)
-13. 发现页「N 位朋友的新动态」头像与红点"""
+13. 发现页「N 位朋友的新动态」头像与红点
+14. 新消息通知 (含微信在 push 进程内直接弹出的轻量推送通知)
+注: 临时显示 (#show / 三击标题) 只恢复界面上的显示, 不恢复通知"""
 )
 object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputBarListener,
     WeDatabaseListenerApi.IQueryListener {
@@ -246,14 +248,6 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         ctx.startActivity(intent)
     }
 
-    private val methodDealNotify by dexMethod {
-        searchPackages("com.tencent.mm.booter.notification")
-        matcher {
-            paramCount(6)
-            usingEqStrings("jacks dealNotify, talker:%s, msgtype:%d, tipsFlag:%d, isRevokeMesasge:%B content:%s")
-        }
-    }
-
     override fun onEnable() {
         // --- home screen conversation list ---
 
@@ -367,13 +361,12 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         WeDatabaseListenerApi.addListener(this)
 
         // --- notification ---
-
-        methodDealNotify.hookBefore(100) {
-            val talker = args[1] as? String? ?: return@hookBefore
-            if (talker in hiddenContacts) {
-                result = null
-            }
-        }
+        //
+        // Deliberately NOT installed here. WeChat raises new-message notifications from
+        // CoreService, which the host manifest pins to :push — a process this feature never loads
+        // in — so a dealNotify hook registered from here would never fire where it matters. Both
+        // notification hooks now live in HideContactsNotifications, which loads in main + push and
+        // reads this feature's persisted state out of WePrefs.
 
         WeConversationApi.reloadConversations()
     }
