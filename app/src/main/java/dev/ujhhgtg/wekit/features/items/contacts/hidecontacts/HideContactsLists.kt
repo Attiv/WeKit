@@ -4,6 +4,7 @@ import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.makeAccessible
 import dev.ujhhgtg.wekit.constants.PackageNames
 import dev.ujhhgtg.wekit.dexkit.dsl.DexMethodDelegate
+import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
 import dev.ujhhgtg.wekit.features.items.contacts.HideContacts
 import dev.ujhhgtg.wekit.utils.WeLogger
 import java.util.LinkedList
@@ -32,6 +33,7 @@ private const val TAG = "HideContacts.Lists"
  */
 internal fun HideContacts.installListHooks() {
     installMvvmListHooks()
+    installContactCountHook()
     installGroupMemberHooks()
     installFavoriteHooks()
     installFinderLikeHooks()
@@ -94,6 +96,115 @@ private fun HideContacts.hookMvvmListPreprocess(target: DexMethodDelegate, label
         }
         if (removed) WeLogger.d(TAG, "filtered hidden contacts out of $label")
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 通讯录 「N 位联系人」
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The footer under 通讯录 (`ContactCountView`) has two producers, and only one of them can be fixed
+ * in SQL.
+ *
+ * - 群聊 (`contactType == 2`) counts inline in `ui/contact/f1.run()` and is rewritten by the
+ *   `group-count` rule in HideContactsSql.kt.
+ * - 联系人 (`contactType == 1`) calls `ContactStorage.getNormalContactCount`, whose statement ends in
+ *   a bare `or username = 'weixin'`. `AND` binds tighter than `OR`, so an appended predicate would
+ *   attach to that last operand and change nothing at all — the count has to be corrected after the
+ *   fact instead.
+ *
+ * The correction re-counts the hidden set against the same predicates *and the same excluded
+ * usernames* WeChat uses, so that hidden groups, 公众号, blocked contacts and helper accounts (none
+ * of which the footer counted in the first place) are never subtracted. `includeBlack` and the
+ * exclusion varargs are both mirrored from the call's own arguments.
+ *
+ * 「仅聊天的朋友」 needs nothing: `OnlyChatContactMgrUI` takes its count from an already-filtered
+ * `@social.black.android` cursor rather than from this method.
+ */
+private fun HideContacts.installContactCountHook() {
+    if (methodNormalContactCount.isPlaceholder) {
+        WeLogger.w(TAG, "getNormalContactCount wasn't resolved; 通讯录联系人计数 stays unadjusted")
+        return
+    }
+
+    methodNormalContactCount.hookAfter {
+        if (isTemporarilyShown) return@hookAfter
+        val total = result as? Int ?: return@hookAfter
+
+        val hidden = hiddenContacts
+        if (hidden.isEmpty()) return@hookAfter
+
+        // `O(boolean includeBlack, String[] excluded, String... more)` — both vararg groups are
+        // turned into `and rcontact.username != '<each>'` terms, so the population it counts is
+        // narrower than the bare predicates suggest. Reading them off the live call rather than
+        // hard-coding `e01.e2.f269714p` keeps the mirror correct for every caller and every version.
+        val excluded = buildSet {
+            addAll(stringArrayArg(args.getOrNull(1)))
+            addAll(stringArrayArg(args.getOrNull(2)))
+            // WeChat skips "weixin" in both loops (`if (!"weixin".equals(str))`) and re-admits it
+            // with the trailing `or username = 'weixin'`, so it is not an exclusion at all.
+            remove("weixin")
+        }
+
+        val hiddenNormal = countHiddenNormalContacts(
+            hidden,
+            includeBlack = args[0] == true,
+            excluded = excluded,
+        )
+        if (hiddenNormal <= 0) return@hookAfter
+
+        WeLogger.d(TAG, "adjusted 通讯录 contact count by -$hiddenNormal")
+        result = (total - hiddenNormal).coerceAtLeast(0)
+    }
+}
+
+/** Flattens a `String[]` / vararg argument into a list of non-null strings. */
+private fun stringArrayArg(arg: Any?): List<String> =
+    (arg as? Array<*>)?.mapNotNull { it as? String }.orEmpty()
+
+/**
+ * How many of the hidden contacts WeChat's own 「N 位联系人」 query would have counted.
+ *
+ * Mirrors `getNormalContactCount`'s predicates: a normal, non-hidden-flag contact
+ * (`type & 1 != 0`, `type & 32 = 0`), not a 公众号 (`verifyFlag & 8 = 0`), optionally excluding the
+ * blacklist (`type & 8 = 0`), and a plain wxid — `username not like '%@%'` is exactly what
+ * `e01.e2.b(username, "@micromsg.qq.com", …)` emits, and it is what keeps 群聊 (`@chatroom`) and
+ * 企业微信 (`@openim`) out of the total.
+ *
+ * [excluded] mirrors the two vararg groups WeChat turns into `and rcontact.username != '<each>'`
+ * terms. Skipping them would over-subtract: `ContactCountView` passes `e01.e2.f269714p` plus
+ * `z1.r(), "weixin", "helper_entry", "filehelper"`, and entries like `filehelper` or `medianote`
+ * satisfy `type & 1` and contain no `@`, so they are pickable as hidden contacts yet were never in
+ * WeChat's total to begin with.
+ *
+ * The `or username = 'weixin'` disjunct is reproduced too, parenthesised: it re-admits 微信团队
+ * unconditionally, whatever its flags, so a hidden `weixin` really is in WeChat's total.
+ *
+ * The statement runs on WeKit's own database handle rather than WeChat's storage wrapper, so it
+ * cannot re-enter the wrapper hook. Its formatting deliberately differs from WeChat's
+ * (`type & 1 != 0` vs `type & 1 !=0`, and the hidden-set predicate comes first) so it can never be
+ * mistaken for the query the `group-count` rule matches either.
+ */
+private fun countHiddenNormalContacts(
+    hidden: Set<String>,
+    includeBlack: Boolean,
+    excluded: Set<String>,
+): Int {
+    // `IN ()` is a SQLite syntax error; the caller already bails, this is belt-and-braces.
+    if (hidden.isEmpty()) return 0
+    if (!WeDatabaseApi.isReady) return 0
+
+    val blacklistClause = if (includeBlack) "" else "and type & 8 = 0 "
+    val excludedClause =
+        if (excluded.isEmpty()) "" else "and username not in (${excluded.toSqlList()}) "
+    val sql = "select count(username) from rcontact " +
+            "where username in (${hidden.toSqlList()}) " +
+            "and ( ( type & 1 != 0 and type & 32 = 0 $blacklistClause" +
+            "and verifyFlag & 8 = 0 and username not like '%@%' " +
+            "$excludedClause) or username = 'weixin' )"
+
+    val value = WeDatabaseApi.executeQuery(sql).firstOrNull()?.values?.firstOrNull()
+    return (value as? Long)?.toInt() ?: 0
 }
 
 // ---------------------------------------------------------------------------------------------

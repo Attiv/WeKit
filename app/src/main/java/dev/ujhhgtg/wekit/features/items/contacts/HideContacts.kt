@@ -37,6 +37,7 @@ import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installListHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installMomentsHooks
+import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installSearchHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installSqlHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installVoipHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.rewriteMomentsFeedSql
@@ -81,6 +82,10 @@ import java.lang.reflect.Modifier as JavaModifier
 16. 群成员列表 (查看全部群成员、删除成员、邀请成员)
 17. 收藏列表
 18. 视频号点赞列表 (朋友❤过)
+19. 全局搜索 (联系人、聊天记录、群成员、共同群聊、服务通知、小商店、AI 对话)
+20. 通讯录底部「N 位联系人」与「N 个群聊」计数
+21. 拍一拍消息
+22. 微信运动排行榜
 注: 临时显示 (#show / 三击标题) 只恢复界面上的显示, 不恢复通知"""
 )
 object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputBarListener,
@@ -267,6 +272,9 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         // source means the adapter never sees the row, so there is no flash at all.
         hookNewMessageNotification()
 
+        // Drop 拍一拍 messages sent by a hidden contact before they become a row.
+        hookPatMessage()
+
         WeMainActivityBeautifyApi.methodDoOnCreate.hookAfter {
             migrateLegacyHiddenParentRef()
 
@@ -315,6 +323,12 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         // hidecontacts/HideContactsLists.kt.
 
         installListHooks()
+
+        // --- global search results the SQL rewriter cannot reach ---
+        //
+        // 群聊内搜索成员 and 共同群聊好友建议. See hidecontacts/HideContactsSearch.kt.
+
+        installSearchHooks()
 
         // NB: the 通讯录 -> 群聊 list (ChatroomContactAdapter) is NOT hooked at the adapter level.
         // Its cursor comes from ContactStorage.y(), whose SQL carries `from rcontact` + `pyInitial`
@@ -520,6 +534,39 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         }
     }
 
+    /**
+     * Suppresses 拍一拍 ("… 拍了拍 …") from a hidden contact.
+     *
+     * `PatMsgExtension.insertPatMsg` is the single writer of the pat system message: it either
+     * creates a new `922746929` row or merges the pat into the existing one, and in both branches it
+     * is what refreshes the conversation's digest and bumps it to the top of the homepage list.
+     * Cancelling the call therefore removes the message row *and* the list disturbance in one go —
+     * neither the conversation-list rewriter nor the per-row notification suppressor can help here,
+     * because the row's talker is the *chat*, not the patter.
+     *
+     * The substituted return value is the method's own no-op result (`Pair.create(0L, 0L)`, taken
+     * from its `t8.N0(...)` guard at `nq3/l.java:568` / `ti3/l.java:266`), so every caller sees a
+     * shape it already handles: msgId 0 means "nothing was inserted".
+     *
+     * Only `fromUser` is tested. `talker` is the conversation the pat lands in, and a hidden
+     * *conversation* is already handled by the query-time filter; `pattedUser` is frequently the
+     * local user, whom we must never treat as hidden.
+     */
+    private fun hookPatMessage() {
+        if (methodPatMsgInsert.isPlaceholder) {
+            WeLogger.w(TAG, "pat-message insert wasn't resolved; 拍一拍 stays visible")
+            return
+        }
+
+        methodPatMsgInsert.hookBefore {
+            val fromUser = args[1] as? String ?: return@hookBefore
+            if (!isHiddenNow(fromUser)) return@hookBefore
+
+            WeLogger.d(TAG, "suppressed a pat message from a hidden contact")
+            result = android.util.Pair.create(0L, 0L)
+        }
+    }
+
     override fun onClick(context: ComponentActivity) {
         val regularContacts = WeDatabaseApi.getFriends() + WeDatabaseApi.getGroups()
 
@@ -712,6 +759,76 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                 add { name = "getUnsignedId" }
                 matchType = MatchType.Contains
             }
+        }
+    }
+
+    /**
+     * `fts.logic.q0.p(FTSResult)` — SearchChatroomMemberTask's body, the 群聊内搜索成员 task.
+     *
+     * `"SearchChatroomMemberTask"` is its `getName()` return value and occurs in exactly one class
+     * app-wide on both trees (8.0.76 `plugin/fts/logic/q0.java:25`, 8.0.69 same path `:25`). That
+     * class declares only `<init>(l, FTSRequest)`, `getName()` and `p(FTSResult)`, so class anchor +
+     * one parameter + `void` resolves to `p` alone. See hidecontacts/HideContactsSearch.kt.
+     */
+    internal val methodFtsSearchChatroomMemberTask by dexMethod(allowFailure = true) {
+        matcher {
+            declaredClass {
+                usingEqStrings("SearchChatroomMemberTask")
+            }
+            paramCount = 1
+            returnType("void")
+        }
+    }
+
+    /**
+     * `fts.logic.h.p(FTSResult)` — SearchCommonChatroomUserTask, the 共同群聊好友建议 task.
+     *
+     * Same shape argument as [methodFtsSearchChatroomMemberTask]:
+     * `"SearchCommonChatroomUserTask"` occurs in one class only (8.0.76
+     * `plugin/fts/logic/h.java:30`, 8.0.69 same path `:30`), which declares `<init>(k, FTSRequest)`,
+     * `getName()` and `p(FTSResult)`. NB: the neighbouring tasks `g` and `s0` both report
+     * `"SearchCommonChatroomTask"` — the `User` suffix is what makes this one unambiguous.
+     */
+    internal val methodFtsSearchCommonChatroomUserTask by dexMethod(allowFailure = true) {
+        matcher {
+            declaredClass {
+                usingEqStrings("SearchCommonChatroomUserTask")
+            }
+            paramCount = 1
+            returnType("void")
+        }
+    }
+
+    /**
+     * `ContactStorage.getNormalContactCount(boolean includeBlack, String[], String...) -> int`
+     * (`j4.O` on 8.0.76 `storage/j4.java:460`, `l3.O` on 8.0.69 `storage/l3.java:434`) — the
+     * 通讯录 「N 位联系人」 footer.
+     *
+     * The log format string is unique to this method on both trees. Its result is adjusted rather
+     * than its SQL rewritten: the statement ends in a bare `or username = 'weixin'`
+     * (`j4.java:487` / `l3.java:461`), so an appended `AND ...` would bind to that OR's right
+     * operand and silently do nothing. See hidecontacts/HideContactsLists.kt.
+     */
+    internal val methodNormalContactCount by dexMethod(allowFailure = true) {
+        matcher {
+            usingEqStrings(
+                "MicroMsg.ContactStorage",
+                "getNormalContactCount, sql:%s, result:%d, includeBlack:%s, time:%d"
+            )
+        }
+    }
+
+    /**
+     * `PatMsgExtension.insertPatMsg(String talker, String fromUser, String pattedUser, String
+     * suffix, int createTime, long svrId) -> android.util.Pair` — 拍一拍
+     * (`nq3/l.java:560` on 8.0.76, `ti3/l.java:260` on 8.0.69).
+     *
+     * `"insert pat msg %d %s %s"` appears in exactly one method per tree (`nq3/l.java:620`,
+     * `ti3/l.java:320`); pairing it with the class tag keeps the match method-local.
+     */
+    internal val methodPatMsgInsert by dexMethod(allowFailure = true) {
+        matcher {
+            usingEqStrings("MicroMsg.PatMsgExtension", "insert pat msg %d %s %s")
         }
     }
 

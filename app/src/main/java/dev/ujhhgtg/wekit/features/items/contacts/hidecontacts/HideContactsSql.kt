@@ -84,7 +84,67 @@ private val WRAPPER_RULES = listOf(
     SqlRule("moments-comments", { it.contains("from snscomment") }) {
         "talker NOT IN (${it.toSqlList()})"
     },
+    // 通讯录 -> 群聊 的底部「N 个群聊」计数 (ContactCountView with contactType == 2). The statement is
+    // built inline in `ui/contact/f1.run()` (8.0.76 `f1.java:28`, 8.0.69 `e1.java:28`).
+    //
+    // The prefix alone does NOT identify it: ContactStorage.O — the 通讯录 contact count — emits the
+    // exact same leading text whenever `includeBlack` is false (8.0.76 `storage/j4.java:462-466`,
+    // 8.0.69 `storage/l3.java:436-440` append "type & 8 =0 and " between the two halves), which is
+    // precisely how ContactCountView calls it for contactType == 1. That query's WHERE ends in a bare
+    // `or username = 'weixin'`, so injectCondition must never touch it (see its KDoc), and task 6A
+    // already corrects that count in a hookAfter — matching it here would compound the two.
+    // looksLikeGroupCountQuery therefore also requires the bare-OR tail to be absent; see there.
+    //
+    // Everything e2.c appends after the prefix is parenthesised or a plain `and`, and there is no
+    // ORDER BY / LIMIT tail, so appending is safe.
+    SqlRule("group-count", ::looksLikeGroupCountQuery) {
+        "rcontact.username NOT IN (${it.toSqlList()})"
+    },
+    // 微信运动排行榜. `ExdeviceRankInfoStg` reads the ranking with
+    // `select *, rowid from HardDeviceRankInfo where rankID = ? order by score desc`
+    // (8.0.76 `f42/c.java:40`, 8.0.69 `oy1/c.java:40`); the table carries a real `username` column.
+    // Ranks are renumbered by the UI afterwards, which is the intended result.
+    //
+    // Deliberately narrow: `select COUNT(*) from HardDeviceRankInfo where rankID = ?`
+    // (ExdeviceRankInfoUI) decides insert-vs-update when the server pushes new rank data, so
+    // filtering *that* could make WeChat insert duplicate rows.
+    SqlRule("exdevice-rank", ::looksLikeExdeviceRankQuery) {
+        "username NOT IN (${it.toSqlList()})"
+    },
 )
+
+/**
+ * Prefix of the 群聊 count statement, lowercased. `ui/contact/f1.run()` seeds its StringBuilder with
+ * exactly this literal (8.0.76 `f1.java:28`, 8.0.69 `e1.java:28`, byte-identical).
+ */
+private const val GROUP_COUNT_PREFIX =
+    "select count(username) from rcontact where type & 1 !=0 and type & 32 =0 and type & 8 =0 and verifyflag & 8 = 0"
+
+/**
+ * The tail that only `ContactStorage.O` (「N 位联系人」) ever produces — an unconditional
+ * `sb6.append(" or username = 'weixin'")` at the very end of the WHERE (8.0.76 `storage/j4.java:487`,
+ * 8.0.69 `storage/l3.java:461`).
+ *
+ * `O` assembles its statement as `"…type & 32 =0 and " + ("type & 8 =0 and " unless includeBlack) +
+ * "verifyFlag & 8 = 0 "`, so with `includeBlack = false` — the only way ContactCountView ever calls
+ * it (8.0.76 `ui/contact/f1.java:22`, 8.0.69 `ui/contact/e1.java:22`) — the text it emits starts with
+ * [GROUP_COUNT_PREFIX] verbatim. The two statements first diverge in what `e01.e2` appends next, and
+ * that differs again between the plain and the `usernameFlag` feature-flag path (`e2.b`/`e2.c` fork
+ * on `com.tencent.mm.contact.d.a()` into `m`/`o` on 8.0.76, `k`/`m` on 8.0.69), so no substring of
+ * that suffix is a stable discriminator.
+ *
+ * This tail is: it is emitted on every branch of `O` on both trees, and the 群聊 statement can never
+ * contain it — `f1`/`e1` only ever append ` and rcontact.username != '…'` terms after `e2.c`.
+ * Excluding it is also exactly the safety property [injectCondition] needs, since it is that bare OR
+ * that makes an appended `AND` bind to the wrong operand.
+ */
+private const val CONTACT_COUNT_BARE_OR_TAIL = "or username = 'weixin'"
+
+private fun looksLikeGroupCountQuery(lower: String): Boolean =
+    lower.startsWith(GROUP_COUNT_PREFIX) && !lower.contains(CONTACT_COUNT_BARE_OR_TAIL)
+
+private fun looksLikeExdeviceRankQuery(lower: String): Boolean =
+    lower.startsWith("select *, rowid from harddevicerankinfo") && lower.contains("order by score")
 
 private fun looksLikeNewFriendsQuery(lower: String): Boolean {
     if (!lower.contains("select")) return false
@@ -194,8 +254,60 @@ private const val SQL_SELECT_MESSAGE =
 private const val SQL_SELECT_MESSAGES_BY_KEYWORD =
     "SELECT FTS5MetaMessage.docid, type, subtype, entity_id, aux_index, timestamp, talker FROM FTS5MetaMessage"
 
+/**
+ * 服务通知搜索 (`FTS5ServiceNotifyStorage.queryNotifyMessage`, 8.0.76 `q23/j.java:112-135`,
+ * 8.0.69 `uv2/j.java:107-130`).
+ *
+ * Shaped like the [FTS_SQL_REGEX] queries but its `aux_index` is pinned to the literal
+ * `'notifymessage'` for every row, so an `aux_index NOT IN (...)` wrapper would filter nothing.
+ * `FTS5MetaServiceNotify` is the one meta table with an extra `talker TEXT` column
+ * (`q23/j.java:155`), and that is where the contact actually lives — hence its own branch.
+ */
+private const val SQL_SELECT_SERVICE_NOTIFY =
+    "SELECT FTS5MetaServiceNotify.docid, type, subtype, entity_id, aux_index,"
+
+/**
+ * SearchRelatedChatroomTask / SearchCommonChatroomTask (`fts.logic.i` and `fts.logic.g`, `:41` /
+ * `:39` on both trees). They select the chatroom name straight out of the ChatroomMember index, so
+ * the plain `aux_index` wrapper hides a hidden *group* from 相关的群聊 / 共同群聊.
+ */
+private const val SQL_SELECT_CHATROOM_BY_INDEX = "SELECT aux_index FROM FTS5IndexChatroomMember"
+
+/**
+ * FTS meta tables whose `aux_index` column holds the contact/chatroom id.
+ *
+ * Table names are `"FTS5Meta" + storage.getTableSuffix()` (`i23/a.java:403`). The four added here
+ * are ChatroomMember (`q23/a.java:48`), WeShop (`k15/m.java:38`), AIHistory (`wv4/h.java:40`) and
+ * AIHistoryChat (`wv4/b.java:38`); ServiceNotify needs its own branch, see
+ * [SQL_SELECT_SERVICE_NOTIFY]. AIHistoryChat only exists from 8.0.76 —
+ * listing a table that a given version never creates simply never matches, which is harmless.
+ * 朋友圈 has no FTS table at all on these versions, and `FTS5MetaSOSHistory` (搜一搜 query history,
+ * `q23/i.java`) has neither an `aux_index` nor a `talker` column, so both are out of scope.
+ */
 private val FTS_SQL_REGEX =
-    Regex("^SELECT (FTS5MetaContact|FTS5MetaTopHits|FTS5MetaKefuContact|FTS5MetaFeature|FTS5MetaWeApp|FTS5MetaFinderFollow|FTS5MetaFavorite)\\.docid, type, subtype, entity_id, aux_index,.*")
+    Regex("^SELECT (FTS5MetaContact|FTS5MetaTopHits|FTS5MetaKefuContact|FTS5MetaFeature|FTS5MetaWeApp|FTS5MetaFinderFollow|FTS5MetaFavorite|FTS5MetaChatroomMember|FTS5MetaWeShop|FTS5MetaAIHistory|FTS5MetaAIHistoryChat)\\.docid, type, subtype, entity_id, aux_index,.*")
+
+/**
+ * A query that already pins `aux_index` to one value — either a bind placeholder
+ * (`i23/a.java:197`) or an inlined literal (`q23/h.java:133`, 在当前聊天里搜索聊天记录).
+ *
+ * Such a query is already scoped to a single chat, so adding `aux_index NOT IN (...)` can only ever
+ * turn it into zero rows. That is exactly what used to happen when a hidden chat was opened (via
+ * 临时显示 off) and the user searched inside it: the in-chat search silently returned nothing.
+ */
+private val AUX_INDEX_PINNED_REGEX = Regex("aux_index\\s*=\\s*[?']", RegexOption.IGNORE_CASE)
+
+/**
+ * The `chatroom TEXT, member TEXT` mapping table (`q23/b.java:47`) behind 共同群聊 / 群聊计数 /
+ * 群成员建议. The two join shapes WeChat builds over it:
+ * - `... JOIN FTS5ChatRoomMembers ON (aux_index = chatroom) WHERE member=? ...` —
+ *   SearchChatroomByMemberTask (`k0.java:29`), SearchChatroomInMemberTask (`n0.java:36`),
+ *   SearchChatroomCountTask (`m0.java:29`);
+ * - `FROM FTS5ChatRoomMembers, FTS5MetaContact WHERE member IN (...) AND chatroom = aux_index` —
+ *   SearchCommonChatroomTask (`s0.java:42`).
+ */
+private const val CHATROOM_MEMBERS_JOIN = "FTS5ChatRoomMembers ON (aux_index = chatroom)"
+private const val CHATROOM_MEMBERS_CROSS_JOIN = "FROM FTS5ChatRoomMembers, "
 
 private fun HideContacts.installFtsHook() {
     SQLiteDatabase::class.reflekt().firstMethod {
@@ -210,15 +322,62 @@ private fun HideContacts.installFtsHook() {
         if (hidden.isEmpty()) return@hookBefore
 
         val sql = args[1] as? String ?: return@hookBefore
-        if (!FTS_SQL_REGEX.containsMatchIn(sql) &&
-            !sql.startsWith(SQL_SELECT_MESSAGE) &&
-            !sql.startsWith(SQL_SELECT_MESSAGES_BY_KEYWORD)
-        ) return@hookBefore
-
-        val body = sql.removeSuffix(";")
-        args[1] = "SELECT * FROM ($body) AS a WHERE aux_index NOT IN (${hidden.toSqlList()});"
+        args[1] = rewriteFtsSql(sql, hidden) ?: return@hookBefore
     }
 }
+
+/** Returns the rewritten FTS query, or null to leave it untouched. */
+private fun rewriteFtsSql(sql: String, hidden: Set<String>): String? {
+    // Checked first: its SQL also carries `aux_index = 'notifymessage'`, which the pinned-aux_index
+    // bail below would otherwise (wrongly) treat as a chat-scoped search.
+    if (sql.startsWith(SQL_SELECT_SERVICE_NOTIFY)) return wrapWithNotIn(sql, "talker", hidden)
+
+    rewriteChatroomMembersSql(sql, hidden)?.let { return it }
+
+    val matchesAuxIndexShape = FTS_SQL_REGEX.containsMatchIn(sql) ||
+            sql.startsWith(SQL_SELECT_MESSAGE) ||
+            sql.startsWith(SQL_SELECT_MESSAGES_BY_KEYWORD) ||
+            sql.startsWith(SQL_SELECT_CHATROOM_BY_INDEX)
+    if (!matchesAuxIndexShape) return null
+    if (AUX_INDEX_PINNED_REGEX.containsMatchIn(sql)) return null
+
+    return wrapWithNotIn(sql, "aux_index", hidden)
+}
+
+/**
+ * Filters the `FTS5ChatRoomMembers` join that feeds 共同群聊, the 群聊数量 counter and the group-member
+ * suggestions, so neither a hidden group (`chatroom`) nor a hidden contact (`member`) contributes.
+ *
+ * The predicate is pushed into the join's own `ON` clause rather than appended with
+ * [injectCondition]. SearchChatroomInMemberTask wraps the join in a derived table that only projects
+ * `docid, aux_index, timestamp`, so an appended `AND chatroom NOT IN (...)` would land in the outer
+ * WHERE where neither column is in scope — a hard SQL error that would take global search down.
+ *
+ * Any other statement touching the table (the `SELECT DISTINCT chatroom FROM FTS5ChatRoomMembers;`
+ * enumerations and the 标签 statistics query) is deliberately left alone: they end in a `;`, which
+ * [injectCondition] would append past.
+ */
+private fun rewriteChatroomMembersSql(sql: String, hidden: Set<String>): String? {
+    if (!sql.contains("FTS5ChatRoomMembers")) return null
+
+    val list = hidden.toSqlList()
+    val filter = "chatroom NOT IN ($list) AND member NOT IN ($list)"
+
+    if (sql.contains(CHATROOM_MEMBERS_JOIN)) {
+        return sql.replace(
+            CHATROOM_MEMBERS_JOIN,
+            "FTS5ChatRoomMembers ON (aux_index = chatroom AND $filter)"
+        )
+    }
+    if (sql.contains(CHATROOM_MEMBERS_CROSS_JOIN) && !sql.contains(';')) {
+        return injectCondition(sql, filter)
+    }
+    return null
+}
+
+/** Wraps a finished FTS query in a filtering outer SELECT on one of its projected columns. */
+private fun wrapWithNotIn(sql: String, column: String, hidden: Set<String>): String =
+    "SELECT * FROM (${sql.removeSuffix(";")}) AS a WHERE $column NOT IN (${hidden.toSqlList()});"
 
 // ── moments feed ─────────────────────────────────────────────────────────────────────────────
 
