@@ -369,19 +369,7 @@ object WeSettingsInjector : ApiFeature(), IResolveDex, WeChatInputBarApi.IInputB
             childClass = SettingGroupPersonalInfo::class.java
             onClick = { openSettingsDialog(it) }
         }
-//
-//        val item3 = settingsManager.createItem {
-//            key = "SettingGroup_Main_WeKitTest3"
-//            title = "测试 2 - WeKit 设置 - 详细日志"
-//            level = 1
-//            isSwitch = true
-//            pageClass = SettingGroupMain::class.java
-//            parentClass = item2
-//
-//            switchState = { Preferences.verboseLog }
-//            onSwitchChanged = { Preferences.verboseLog = it }
-//        }
-//
+
         settingsManager.install()
     }
 
