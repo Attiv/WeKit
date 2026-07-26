@@ -37,10 +37,13 @@ import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installListHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installMomentsHooks
+import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installSchedules
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installSearchHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installSqlHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installVoipHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.rewriteMomentsFeedSql
+import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.showSchedulesDialog
+import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.uninstallSchedules
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -365,10 +368,19 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         // notification hooks now live in HideContactsNotifications, which loads in main + push and
         // reads this feature's persisted state out of WePrefs.
 
+        // --- 定时显示/隐藏 ---
+        //
+        // Arms one AlarmManager alarm per enabled entry and applies whichever fire time most recently
+        // passed while the process was down. See hidecontacts/HideContactsSchedule.kt — the catch-up
+        // deliberately touches nothing but temporarilyShown, since no Activity exists at this point.
+
+        installSchedules()
+
         WeConversationApi.reloadConversations()
     }
 
     override fun onDisable() {
+        uninstallSchedules()
         unregisterScreenOffReceiver()
         ShakeDetector.stop()
         chattingUi?.clear()
@@ -391,6 +403,23 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             temporarilyShown = true
             showToast(context, "已临时显示所有隐藏的联系人")
         }
+        WeConversationApi.reloadConversations()
+    }
+
+    /**
+     * Writes the temporary-show state without any UI, for non-interactive callers — currently the
+     * 定时显示/隐藏 scheduler, whose startup catch-up runs at process attach where no Activity (and
+     * therefore no Toast) exists.
+     *
+     * Goes through the same refresh path as [toggleTemporarilyShown] and the `#show` / `#hide`
+     * commands: `WeConversationApi.reloadConversations()` is what makes the query-time SQL filter
+     * re-run, so skipping it would leave the list showing the previous state until the next full
+     * re-query. It does **not** lock the flag — a manual toggle afterwards wins until the next
+     * scheduled fire time.
+     */
+    internal fun setTemporarilyShown(shown: Boolean) {
+        if (temporarilyShown == shown) return
+        temporarilyShown = shown
         WeConversationApi.reloadConversations()
     }
 
@@ -607,6 +636,12 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                             },
                             supportingContent = { Text("关闭时仅隐藏来电, 对方会一直响到超时; 开启后立即向对方发送拒接") },
                             headlineContent = { Text("自动拒绝音视频通话") },
+                        )
+
+                        ListItem(
+                            modifier = Modifier.clickable { showSchedulesDialog(context) },
+                            supportingContent = { Text("到点自动临时显示或恢复隐藏, 不会改动隐藏列表") },
+                            headlineContent = { Text("定时显示/隐藏") },
                         )
 
                         ListItem(
