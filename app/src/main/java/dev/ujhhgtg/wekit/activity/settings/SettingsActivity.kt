@@ -214,12 +214,11 @@ private fun SettingsRoot(onFinish: () -> Unit) {
         }
     }
 
-    // System back always returns to the home tab first. Explicit in-app back buttons retain
-    // their normal stack-pop behavior.
-    BackHandler(enabled = stack.size > 1 || pagerState.currentPage != 0) {
-        if (stack.size > 1) {
-            stack.subList(1, stack.size).clear()
-        }
+    // Back unwinds one level at a time: sub-screens first (handled by the navigator's own
+    // predictive-back pop), then the home tab, then finish. Enabled only at the stack root so
+    // this handler never shadows the navigator's — it is registered later, so it would
+    // otherwise win and collapse the stack and the tab in a single press.
+    BackHandler(enabled = stack.size == 1 && pagerState.currentPage != 0) {
         scope.launch { pagerState.animateScrollToPage(0) }
     }
 }
