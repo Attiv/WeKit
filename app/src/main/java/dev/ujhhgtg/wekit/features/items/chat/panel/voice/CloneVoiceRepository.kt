@@ -72,7 +72,7 @@ object CloneVoiceRepository {
     }
 
     @Synchronized
-    fun import(name: String, displayName: String, input: InputStream, declaredSize: Long? = null): Result<CloneVoice> =
+    fun import(name: String, input: InputStream, declaredSize: Long? = null): Result<CloneVoice> =
         runCatching {
             val safeName = name.trim()
             require(safeName.isNotBlank()) { "音色名称不能为空" }
@@ -102,8 +102,8 @@ object CloneVoiceRepository {
                     ?: error("音色文件不是可识别的语音格式")
                 val fileName = "$id.${format.extension}"
                 destination = PanelPaths.cloneVoiceDir / fileName
-                moveImportedFile(temporary, requireNotNull(destination))
-                require(isReadableVoice(requireNotNull(destination))) { "音色文件不可读" }
+                moveImportedFile(temporary, destination)
+                require(isReadableVoice(destination)) { "音色文件不可读" }
                 val clone = CloneVoice(id = id, name = safeName, fileName = fileName)
                 val store = requireStore()
                 writeStore(
@@ -121,9 +121,9 @@ object CloneVoiceRepository {
         }
 
     @Synchronized
-    fun importBytes(name: String, displayName: String, bytes: ByteArray): Result<CloneVoice> {
+    fun importBytes(name: String, bytes: ByteArray): Result<CloneVoice> {
         require(bytes.size.toLong() <= MAX_IMPORT_BYTES) { "音色文件不能超过 1 MiB" }
-        return import(name, displayName, bytes.inputStream(), bytes.size.toLong())
+        return import(name, bytes.inputStream(), bytes.size.toLong())
     }
 
     @Synchronized
@@ -174,8 +174,7 @@ object CloneVoiceRepository {
                 mp3.deleteIfExists()
             }
         } else {
-            Files.readAllBytes(source) to
-                    (voice.fileName.substringBeforeLast('.', voice.fileName) + ".${format.extension}")
+            Files.readAllBytes(source) to voice.fileName.substringBeforeLast('.', voice.fileName) + ".${format.extension}"
         }
     }
 

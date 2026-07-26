@@ -49,7 +49,6 @@ import kotlin.io.path.absolutePathString
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.div
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.name
 import kotlin.io.path.writeBytes
 
 internal val EDGE_TTS_VOICES = listOf(
@@ -160,7 +159,7 @@ object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
                 val source = path.path.asPath
                 try {
                     Files.newInputStream(source).use { input ->
-                        CloneVoiceRepository.import(name, source.name, input, Files.size(source)).getOrThrow()
+                        CloneVoiceRepository.import(name, input, Files.size(source)).getOrThrow()
                     }
                 } finally {
                     if (path.temporary) source.deleteIfExists()
@@ -176,7 +175,7 @@ object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
         addExample = { example ->
             withContext(Dispatchers.IO) {
                 FunBoxCloneVoiceRepository.exampleAudio(example).mapCatching { bytes ->
-                    CloneVoiceRepository.importBytes(example.title, example.fileName, bytes).getOrThrow()
+                    CloneVoiceRepository.importBytes(example.title, bytes).getOrThrow()
                     Unit
                 }
             }
@@ -501,7 +500,7 @@ object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
                     null,
                 )?.use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
                 val result = activity.contentResolver.openInputStream(uri)?.let { input ->
-                    CloneVoiceRepository.import(name.substringBeforeLast('.'), name, input, size).map { }
+                    CloneVoiceRepository.import(name.substringBeforeLast('.'), input, size).map { }
                 } ?: Result.failure(IllegalStateException("无法读取所选音色文件"))
                 withContext(Dispatchers.Main) {
                     onComplete(result)
