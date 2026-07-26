@@ -1,19 +1,17 @@
 package dev.ujhhgtg.wekit.features.items.contacts
 
 import android.app.Activity
-import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.database.Cursor
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.view.View
 import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.collection.mutableIntSetOf
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Switch
@@ -23,11 +21,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import com.tencent.mm.plugin.voip.widget.VoipForegroundService
 import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
 import com.tencent.mm.ui.LauncherUI
 import com.tencent.mm.ui.chatting.ChattingUI
-import com.tencent.wcdb.database.SQLiteDatabase
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.isSubclassOf
 import dev.ujhhgtg.reflekt.utils.makeAccessible
@@ -41,6 +37,10 @@ import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarApi
 import dev.ujhhgtg.wekit.features.api.ui.WeMainActivityBeautifyApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
+import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installMomentsHooks
+import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installSqlHooks
+import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installVoipHooks
+import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.rewriteMomentsFeedSql
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -52,7 +52,6 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.getSystemService
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.now
-import dev.ujhhgtg.wekit.utils.reflection.BString
 import java.lang.ref.WeakReference
 import kotlin.math.sqrt
 import kotlin.time.Duration.Companion.milliseconds
@@ -70,7 +69,12 @@ import java.lang.reflect.Modifier as JavaModifier
 4. 锁屏自动关闭聊天界面
 5. 摇一摇设备关闭聊天界面
 6. 朋友圈信息流
-7. 联系人选择页面"""
+7. 联系人选择页面
+8. 音视频通话与群通话 (来电横幅、铃声、通知、通话记录)
+9. 通讯录内新的朋友 (列表、头像、红点)
+10. 桌面角标与底栏未读计数
+11. 朋友圈消息列表 (点赞与评论)
+12. 共同好友朋友圈动态下的内联点赞/评论 (非 SnsComment 表, 随动态本身下发)"""
 )
 object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputBarListener,
     WeDatabaseListenerApi.IQueryListener {
@@ -87,10 +91,15 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     var hiddenContacts
         get() = WePrefs.getStringSetOrDef(KEY_CONTACTS, emptySet())
         set(value) {
-            for (convId in value) {
+            // Muting is a server-synced oplog (OpenImOpLogLogic), so only send it for contacts that
+            // were just added — the previous version re-sent it for the entire set on every save.
+            // NB: un-hiding deliberately does NOT restore the prior mute state; doing so would
+            // overwrite a mute the user set themselves. See the design doc.
+            val newlyHidden = value - WePrefs.getStringSetOrDef(KEY_CONTACTS, emptySet())
+            WePrefs.putStringSet(KEY_CONTACTS, value)
+            for (convId in newlyHidden) {
                 WeConversationApi.setDnd(convId, true)
             }
-            WePrefs.putStringSet(KEY_CONTACTS, value)
             WeConversationApi.reloadConversations()
         }
 
@@ -107,6 +116,75 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     }
 
     private var chattingUi: WeakReference<ChattingUI>? = null
+
+    // Registered against the application context, exactly once. It used to be registered on the
+    // LauncherUI Activity inside doOnCreate — so every Activity recreation added another
+    // registration — while onDisable unregistered against the application context, a different
+    // Context, which throws and was being swallowed. Net effect: the receiver outlived the feature
+    // and kept kicking the user out of hidden chats on screen-off after it was turned off.
+    private var screenOffReceiverRegistered = false
+
+    private fun registerScreenOffReceiver() {
+        if (screenOffReceiverRegistered) return
+        // ACTION_USER_PRESENT used to be in this filter but onReceive never handled it.
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        HostInfo.application.registerReceiver(ScreenOffReceiver, filter)
+        screenOffReceiverRegistered = true
+        WeLogger.d(TAG, "registered screen off receiver")
+    }
+
+    private fun unregisterScreenOffReceiver() {
+        if (!screenOffReceiverRegistered) return
+        screenOffReceiverRegistered = false
+        runCatching { HostInfo.application.unregisterReceiver(ScreenOffReceiver) }
+            .onFailure { WeLogger.w(TAG, "failed to unregister screen off receiver", it) }
+    }
+
+    /**
+     * Wraps whatever OnClickListener WeChat had on the main-screen title rather than replacing it.
+     *
+     * The previous version called [android.view.View.setOnClickListener] unconditionally and only
+     * bailed *inside* the lambda when [tripleClickTitle] was off — silently killing WeChat's own
+     * title behaviour even with the option disabled. Delegating keeps the host's behaviour intact,
+     * and reading the preference per click (rather than at install time) means toggling the option
+     * takes effect without recreating LauncherUI.
+     */
+    private class TitleClickListener(
+        private val activity: Activity,
+        /** Not private: the installer unwraps this to avoid nesting wrappers across recreations. */
+        val original: View.OnClickListener?,
+    ) : View.OnClickListener {
+
+        private var clickCount = 0
+        private var lastClickTime = Instant.DISTANT_PAST
+
+        override fun onClick(v: View) {
+            if (!tripleClickTitle) {
+                original?.onClick(v)
+                return
+            }
+            val now = now()
+            if (now - lastClickTime > TRIPLE_TAP_WINDOW) clickCount = 1 else clickCount++
+            lastClickTime = now
+            if (clickCount >= 3) {
+                clickCount = 0
+                toggleTemporarilyShown(activity)
+                return
+            }
+            original?.onClick(v)
+        }
+    }
+
+    // Reads the View's current OnClickListener out of its ListenerInfo, mirroring
+    // SwipeConversationOperations.getAttachedTouchListener.
+    private fun getAttachedClickListener(view: View): View.OnClickListener? = runCatching {
+        val info = view.reflekt()
+            .firstFieldOrNull { name = "mListenerInfo"; superclass() }
+            ?.get() ?: return null
+        info.reflekt()
+            .firstFieldOrNull { name = "mOnClickListener" }
+            ?.get() as? View.OnClickListener
+    }.getOrNull()
 
     private object ShakeDetector : SensorEventListener {
 
@@ -178,9 +256,10 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     override fun onEnable() {
         // --- home screen conversation list ---
 
-        // Hide conversations at query time: inject `username NOT IN (...)` into WeChat's
-        // conversation-list query so hidden contacts are filtered on every full read.
-        hookConversationListQuery()
+        // Hide at query time: inject `username NOT IN (...)` into WeChat's list queries so hidden
+        // contacts are filtered on every full read. Covers the homepage conversation list, the
+        // contact selector / 群聊 / 标签 / 公众号 lists, and global search.
+        installSqlHooks()
 
         // Block the per-row live-update notification that WeChat fires (type 3) when a new
         // message arrives. Without this the native ConversationStorage dispatcher pushes the
@@ -195,28 +274,19 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             val context = thisObject!!.reflekt()
                 .firstField { type { it isSubclassOf Activity::class } }
                 .get()!! as Activity
-            val filter = IntentFilter().apply {
-                addAction(Intent.ACTION_SCREEN_OFF)
-                addAction(Intent.ACTION_USER_PRESENT)
-            }
-            context.registerReceiver(ScreenOffReceiver, filter)
-            WeLogger.d(TAG, "registered screen off receiver")
+
+            registerScreenOffReceiver()
 
             // Triple-click on the main-screen title to toggle temporary show/hide.
             val titleView = context.window?.decorView
                 ?.findViewById<TextView>(android.R.id.text1) ?: return@hookAfter
-            var clickCount = 0
-            var lastClickTime = Instant.DISTANT_PAST
-            titleView.setOnClickListener {
-                if (!tripleClickTitle) return@setOnClickListener
-                val now = now()
-                if (now - lastClickTime > TRIPLE_TAP_WINDOW) clickCount = 1 else clickCount++
-                lastClickTime = now
-                if (clickCount >= 3) {
-                    clickCount = 0
-                    toggleTemporarilyShown(context)
-                }
-            }
+            // Re-wrap rather than skip when our listener is already attached: doOnCreate can fire
+            // again for a recreated LauncherUI that reuses the decorView, and the old wrapper would
+            // still be holding the previous (destroyed) Activity. Unwrapping first also stops us
+            // from nesting wrappers on every recreation.
+            val existing = getAttachedClickListener(titleView)
+            val original = (existing as? TitleClickListener)?.original ?: existing
+            titleView.setOnClickListener(TitleClickListener(context, original))
         }
 
         // --- shake to leave ---
@@ -246,6 +316,9 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             if (temporarilyShown) return@hookBefore
 
             val contacts = args[0] as MutableList<*>
+            // MvvmList hands us an empty snapshot on the initial load and whenever a filter matches
+            // nothing; contacts[0] below would throw there, and hook bodies must not fail.
+            if (contacts.isEmpty()) return@hookBefore
 
             val contactInfoField = contacts[0]!!.reflekt()
                 .firstField { type { it.name.startsWith("${PackageNames.WECHAT}.storage") } }
@@ -265,158 +338,24 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             }
         }
 
-        methodChatroomContactAdapterInitCursor.hookAfter {
-            if (temporarilyShown) return@hookAfter
-
-            val cursor = thisObject!!.reflekt()
-                .firstMethod {
-                    parameterCount = 0
-                    returnType = Cursor::class
-                    superclass()
-                }.invoke()!! as Cursor
-
-            hiddenPositions.clear()
-
-            val hiddenContacts = hiddenContacts
-
-            if (cursor.moveToFirst()) {
-                var index = 0
-                val usernameCol: Int = cursor.getColumnIndex("username")
-                do {
-                    val wxId: String? = cursor.getString(usernameCol)
-                    WeLogger.d(TAG, wxId ?: "null")
-                    if (wxId in hiddenContacts) {
-                        hiddenPositions.add(index)
-                    }
-                    index++
-                } while (cursor.moveToNext())
-            }
-        }
-
-        methodChatroomContactAdapterInitCursor.method.declaringClass.reflekt().apply {
-            firstMethod { name = "getCount" }.hookAfter {
-                result = result as Int - hiddenPositions.size
-            }
-
-            firstMethod { name = "getView" }.hookBefore {
-                val requestedPos = args[0] as Int
-                var actualPos = requestedPos
-                hiddenPositions.forEach {
-                    if (actualPos >= it) {
-                        actualPos++
-                    }
-                }
-                args[0] = actualPos
-            }
-        }
-
-        // --- fts ---
-
-        SQLiteDatabase::class.reflekt().firstMethod {
-            name = "rawQueryWithFactory"
-            parameters(SQLiteDatabase.CursorFactory::class, BString, Array<Any>::class, BString)
-        }.hookBefore {
-            if (temporarilyShown) return@hookBefore
-
-            val sql = args[1] as String
-            if (FTS_SQL_REGEX.containsMatchIn(sql) || sql.startsWith(SQL_SELECT_MESSAGE) || sql.startsWith(SQL_SELECT_MESSAGES_BY_KEYWORD)) {
-                val hideValueText = hiddenContacts.joinToString(",") { "\"$it\"" }
-
-                val newSql = if (sql.endsWith(";")) {
-                    sql.dropLast(1)
-                } else {
-                    sql
-                }.let { "SELECT * FROM ($it) AS a WHERE aux_index NOT IN ($hideValueText);" }
-
-                args[1] = newSql
-            }
-        }
+        // NB: the 通讯录 -> 群聊 list (ChatroomContactAdapter) is NOT hooked at the adapter level.
+        // Its cursor comes from ContactStorage.y(), whose SQL carries `from rcontact` + `pyInitial`
+        // and is therefore already filtered by rewriteContactSelectorSql at the SQLite wrapper.
+        //
+        // A previous implementation additionally shifted adapter positions via a `hiddenPositions`
+        // set. That was dead code (the set was always empty), and it was wrong in three ways: it
+        // folded an ascending-only shift over an unordered MutableIntSet, it remapped getView but
+        // not getItem/getItemId (so ChatroomContactUI's click listener would open the WRONG chat),
+        // and it ignored temporarilyShown. Deleting it means a resolve failure degrades to "hidden
+        // contact stays visible" instead of "tapping a row opens someone else's chat".
 
         // --- voip ---
 
-        methodVoipLaunchIncomingCardAsync.hookBefore {
-            val wxId = String(args[5] as ByteArray)
-            if (!temporarilyShown && wxId in hiddenContacts) {
-                pendingVoipUser = wxId
-                result = null
-            }
-        }
+        installVoipHooks()
 
-        listOf(
-            methodVoipAcceptIncomingCall, methodVoipStartAcceptVoip
-        ).forEach {
-            it.hookBefore {
-                val callerWxId = args[0]!!.reflekt().firstField { type = BString }.get()!! as String
-                if (!temporarilyShown && callerWxId in hiddenContacts) {
-                    pendingVoipUser = callerWxId
-                    result = null
-                }
-            }
-        }
+        // --- moments inline likes/comments (mutual-friend posts) ---
 
-        methodVoipShowFloatingCard.hookBefore {
-            val wxId = args[5] as? String? ?: return@hookBefore
-            if (!temporarilyShown && wxId in hiddenContacts) {
-                pendingVoipUser = wxId
-                result = null
-            }
-        }
-
-        // VoipServiceEx.reject() requires status==3 and roomId!=0, both of which are written
-        // by setInviteContent. When NOT auto-rejecting we cancel setInviteContent in hookBefore
-        // so no state is established and no network packet fires. When auto-rejecting we let
-        // setInviteContent run (hookBefore does not cancel it), then call reject() in hookAfter
-        // once status==3 and roomId are in place so the rejection actually reaches the caller.
-        methodVoipServiceExSetInviteContent.hookBefore {
-            if (temporarilyShown) return@hookBefore
-            val wxId = args[0]!!.reflekt().firstField { type = BString }.get()!! as String
-            if (wxId !in hiddenContacts) return@hookBefore
-            pendingVoipUser = wxId
-            if (!autoRejectVoip) {
-                result = null  // hide only — cancel before state is set up
-            }
-            // autoRejectVoip=true: let the method run so status → 3 and roomId are written
-        }
-
-        methodVoipServiceExSetInviteContent.hookAfter {
-            if (!autoRejectVoip) return@hookAfter
-            if (temporarilyShown) return@hookAfter
-            val wxId = runCatching {
-                args[0]!!.reflekt().firstField { type = BString }.get()!! as String
-            }.getOrNull() ?: return@hookAfter
-            if (wxId !in hiddenContacts) return@hookAfter
-            WeLogger.i(TAG, "auto-rejecting call from $wxId")
-            runCatching {
-                methodVoipServiceExReject.method.invoke(thisObject)
-            }.onFailure {
-                WeLogger.w(TAG, "failed to auto-reject call from $wxId", it)
-            }
-        }
-
-        methodVoipBubbleHelperInsertMsg.hookBefore {
-            val wxId = args[0] as String
-            if (!temporarilyShown && wxId in hiddenContacts) {
-                result = null
-            }
-        }
-
-        VoipForegroundService::class.reflekt().firstMethod { name = "onStartCommand" }.hookBefore {
-            val self = thisObject as VoipForegroundService
-            val intent = args[0] as? Intent? ?: return@hookBefore
-            val wxId = intent.getStringExtra("Voip_User") ?: return@hookBefore
-            if (!temporarilyShown && wxId in hiddenContacts) {
-                pendingVoipUser = wxId
-                self.stopSelf()
-                result = Service.START_NOT_STICKY
-            }
-        }
-
-        methodVoipPlaySound.hookBefore {
-            if (pendingVoipUser != null) {
-                pendingVoipUser = null
-                result = null
-            }
-        }
+        installMomentsHooks()
 
         // --- command ---
 
@@ -439,7 +378,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     }
 
     override fun onDisable() {
-        runCatching { HostInfo.application.unregisterReceiver(ScreenOffReceiver) }
+        unregisterScreenOffReceiver()
         ShakeDetector.stop()
         chattingUi?.clear()
         chattingUi = null
@@ -490,132 +429,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         }
     }
 
-    // 在朋友圈信息流中隐藏被隐藏联系人发布的朋友圈; EnhanceQuery 会把信息流标记替换为 (1=1)
-    private const val FEED_MARKER_RAW = "(sourceType & 2 != 0 )"
-    private const val FEED_MARKER_ENHANCED = "(1=1)"
-
-    override fun onQuery(sql: String): String? {
-        if (temporarilyShown) return null
-
-        val hidden = hiddenContacts
-        if (hidden.isEmpty()) return null
-
-        // 只处理主信息流查询: 排除个人主页 (userName=) 与已注入的查询
-        if (!sql.contains("from SnsInfo", false)) return null
-        if (sql.contains("SnsInfo.userName=", false)) return null
-        if (sql.contains("SnsInfo.userName not in", true)) return null
-
-        val filter = " AND SnsInfo.userName NOT IN (" +
-                hidden.joinToString(",") { "\"${it.replace("\"", "\"\"")}\"" } + ") "
-
-        val rewritten = when {
-            sql.contains(FEED_MARKER_RAW) ->
-                sql.replaceFirst(FEED_MARKER_RAW, FEED_MARKER_RAW + filter)
-
-            // EnhanceQuery 先执行时, 信息流标记已变为 (1=1); 个人主页不会出现该精确形式
-            sql.contains(FEED_MARKER_ENHANCED) ->
-                sql.replaceFirst(FEED_MARKER_ENHANCED, FEED_MARKER_ENHANCED + filter)
-
-            else -> return null
-        }
-
-        WeLogger.i(TAG, "hid ${hidden.size} contacts from moments feed")
-        return rewritten
-    }
-
-    // The homepage conversation-list cursor and the native contact-selector list (SelectContactUI /
-    // AlphabetContactAdapter) both flow through WeChat's SQLite wrapper d95.b0.f(sql, args, int)
-    // rather than the standard SQLiteDatabase.rawQuery path that WeDatabaseListenerApi hooks.
-    // We hook that wrapper once and chain two rewriters:
-    //   • rewriteConversationListSql — appends `rconversation.username NOT IN (...)` for the
-    //     homepage list (same chokepoint as ConversationGrouping/AggregateChats)
-    //   • rewriteContactSelectorSql — appends `username NOT IN (...)` for rcontact list queries
-    //     from the contact selector (forward/group-create/etc.) so hidden contacts don't appear there
-    private fun hookConversationListQuery() {
-        if (methodSqliteWrapperRawQuery.isPlaceholder) {
-            WeLogger.w(TAG, "SQLite wrapper query method not resolved; conversation-list and contact-selector hiding disabled")
-            return
-        }
-        methodSqliteWrapperRawQuery.hookBefore {
-            val sql = args.firstOrNull() as? String ?: return@hookBefore
-            (rewriteConversationListSql(sql) ?: rewriteContactSelectorSql(sql))
-                ?.let { args[0] = it }
-        }
-    }
-
-    // Returns the rewritten SQL, or null to leave it untouched.
-    private fun rewriteConversationListSql(sql: String): String? {
-        if (temporarilyShown) return null
-
-        val hidden = hiddenContacts
-        if (hidden.isEmpty()) return null
-
-        if (!looksLikeConversationListQuery(sql)) return null
-
-        val condition = "rconversation.username NOT IN (" +
-                hidden.joinToString(",") { "'${it.replace("'", "''")}'" } + ")"
-        return injectCondition(sql, condition)
-    }
-
-    private fun looksLikeConversationListQuery(sql: String): Boolean {
-        val lower = sql.lowercase()
-        if (!lower.contains("select")) return false
-        if (!lower.contains("from rconversation")) return false
-        // Match only the homepage list query, which spells out per-conversation display columns.
-        // Folder-container / single-row lookups use `select *` (no such columns) and aggregate/count
-        // reads lack them too, so they're skipped and left untouched. NB: we deliberately do NOT bail
-        // on the substring "wekit_folder_" — when AggregateChats is enabled it appends its own
-        // `NOT LIKE 'wekit_folder_%'` clause to this very query, and bailing on it would skip hiding.
-        return lower.contains("conversationtime") &&
-                lower.contains("unreadcount") &&
-                lower.contains("digestuser")
-    }
-
-    // Rewrites contact-selector rcontact queries to exclude hidden contacts.
-    //
-    // The native contact selector (SelectContactUI / AlphabetContactAdapter) builds its list
-    // via ContactStorage.k4.B(sql, null) → d95.b0.f(sql, args, 0), the same WeChat SQLite
-    // wrapper already hooked by methodSqliteWrapperRawQuery. We only need to recognize the
-    // query shape and inject a `username NOT IN (...)` predicate.
-    private fun rewriteContactSelectorSql(sql: String): String? {
-        if (temporarilyShown) return null
-
-        val hidden = hiddenContacts
-        if (hidden.isEmpty()) return null
-
-        if (!looksLikeContactSelectorQuery(sql)) return null
-
-        // Qualify the column as rcontact.username to avoid "ambiguous column name" errors
-        // when the query is a JOIN (e.g. "from rcontact, bizinfo" in BrandServiceIndexUI's
-        // subscriber list — both tables have a username column). rewriteConversationListSql
-        // already qualifies its condition; mirror that here.
-        val condition = "rcontact.username NOT IN (" +
-                hidden.joinToString(",") { "'${it.replace("'", "''")}'" } + ")"
-        return injectCondition(sql, condition)
-    }
-
-    // Recognises full contact-list queries (contact selector, search results) by the presence of
-    // pyinitial / quanpin — columns only selected in list-building queries that need alphabetical
-    // sorting, never in single-row lookups or profile fetches. The table must be rcontact.
-    private fun looksLikeContactSelectorQuery(sql: String): Boolean {
-        val lower = sql.lowercase()
-        if (!lower.contains("select")) return false
-        if (!lower.contains("from rcontact")) return false
-        return lower.contains("pyinitial") || lower.contains("quanpin")
-    }
-
-    // Insert an extra WHERE predicate before any ORDER BY / GROUP BY / LIMIT tail, joining with the
-    // existing WHERE when present. Mirrors ConversationGrouping.injectCondition.
-    private fun injectCondition(sql: String, condition: String): String {
-        val insertionPoint = listOf(" order by ", " group by ", " limit ")
-            .map { sql.indexOf(it, ignoreCase = true) }
-            .filter { it >= 0 }
-            .minOrNull() ?: sql.length
-        val head = sql.substring(0, insertionPoint)
-        val tail = sql.substring(insertionPoint)
-        val connector = if (head.contains(" where ", ignoreCase = true)) " AND " else " WHERE "
-        return "$head$connector$condition$tail"
-    }
+    override fun onQuery(sql: String): String? = rewriteMomentsFeedSql(sql)
 
     // The parentRef marker older versions wrote via WeConversationApi.setConversationsVisibility to
     // hide a chat. WeChat's native list filter (m4.O) hides rows whose parentRef isn't null/empty.
@@ -654,18 +468,16 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
 
     private var temporarilyShown = false
 
-    private var pendingVoipUser: String? = null
+    /**
+     * The predicate every hook should use: a contact counts as hidden only while the temporary-show
+     * escape hatch (`#show` / triple-tap title) is off.
+     */
+    internal fun isHiddenNow(wxId: String): Boolean = !temporarilyShown && wxId in hiddenContacts
 
-    private const val SQL_SELECT_MESSAGE =
-        "SELECT type, subtype, entity_id, aux_index, MAX(timestamp) as maxTime, count(aux_index) as msgCount, talker FROM FTS5MetaMessage"
+    /** For SQL rewriters, which bail wholesale rather than testing individual wxids. */
+    internal val isTemporarilyShown: Boolean get() = temporarilyShown
 
-    private const val SQL_SELECT_MESSAGES_BY_KEYWORD =
-        "SELECT FTS5MetaMessage.docid, type, subtype, entity_id, aux_index, timestamp, talker FROM FTS5MetaMessage"
-
-    private val FTS_SQL_REGEX =
-        Regex("^SELECT (FTS5MetaContact|FTS5MetaTopHits|FTS5MetaKefuContact|FTS5MetaFeature|FTS5MetaWeApp|FTS5MetaFinderFollow|FTS5MetaFavorite)\\.docid, type, subtype, entity_id, aux_index,.*")
-
-    private val hiddenPositions = mutableIntSetOf()
+    internal val autoRejectVoipEnabled: Boolean get() = autoRejectVoip
 
     private var autoRejectVoip by prefOption("hide_auto_reject", false)
     private var tripleClickTitle by prefOption("hide_triple_click_title", false)
@@ -685,6 +497,20 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     // Event type 5 (global reload) is not suppressed — that is the path reloadConversations() uses to
     // trigger a full re-query (which our SQL hook then filters correctly). The empty-talker check
     // additionally guards the "" sentinel used by reloadConversations().
+    /**
+     * Re-entrancy guard for [hookNewMessageNotification].
+     *
+     * `markAsRead` mutates the conversation via `ConversationStorage.updateUnreadByTalker`, and that
+     * mutation makes the storage fire *this very notification again* for the same talker. Without a
+     * guard the hook body re-enters itself with every condition still satisfied, recursing until the
+     * thread's 4 MB stack is exhausted — which killed WeChat on startup (SIGSEGV in the guard page,
+     * surfacing inside xlog's printf because ART only inserts stack-overflow checks in Java frames,
+     * not in JNI) whenever a hidden contact had unread messages waiting to sync.
+     *
+     * Thread-local because WeChat dispatches this notification synchronously on the calling thread.
+     */
+    private val markingAsRead = ThreadLocal.withInitial { false }
+
     private fun hookNewMessageNotification() {
         val method = WeConversationApi.methodNotifyConversationChanged
         if (method.isPlaceholder) {
@@ -699,7 +525,20 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             val talker = args[2] as? String ?: return@hookBefore
             if (talker.isEmpty()) return@hookBefore
             if (talker !in hiddenContacts) return@hookBefore
-            WeConversationApi.markAsRead(talker)
+
+            // Already inside our own markAsRead: this is the storage echoing our write back at us.
+            // Still cancel the event so the row never reaches an adapter, but do not write again.
+            if (markingAsRead.get() == true) {
+                result = null
+                return@hookBefore
+            }
+
+            markingAsRead.set(true)
+            try {
+                WeConversationApi.markAsRead(talker)
+            } finally {
+                markingAsRead.set(false)
+            }
             result = null
         }
     }
@@ -742,7 +581,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                             trailingContent = {
                                 Switch(checked = autoRejectVoipInput, onCheckedChange = null)
                             },
-                            supportingContent = { Text("不保证有效") },
+                            supportingContent = { Text("关闭时仅隐藏来电, 对方会一直响到超时; 开启后立即向对方发送拒接") },
                             headlineContent = { Text("自动拒绝音视频通话") },
                         )
 
@@ -768,7 +607,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     // homepage conversation-list cursor (com.tencent.mm.storage.m4.A/B) is built through this
     // wrapper, NOT the standard SQLiteDatabase.rawQuery path WeDatabaseListenerApi hooks, so we
     // intercept it directly — the same chokepoint ConversationGrouping/AggregateChats use.
-    private val methodSqliteWrapperRawQuery by dexMethod(allowFailure = true) {
+    internal val methodSqliteWrapperRawQuery by dexMethod(allowFailure = true) {
         matcher {
             modifiers = JavaModifier.PUBLIC
             usingEqStrings("sql is null ", "DB IS CLOSED ! {%s}")
@@ -782,69 +621,181 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             usingEqStrings("snapshotList")
         }
     }
-    private val methodChatroomContactAdapterInitCursor by dexMethod {
-        searchPackages("com.tencent.mm.ui.contact")
-        matcher {
-            declaredClass {
-                usingEqStrings("MicroMsg.ChatroomContactAdapter", "get display show head return null, user[%s] pos[%d]")
-            }
 
-            invokeMethods {
-                add {
-                    declaredClass = "android.widget.BaseAdapter"
-                    name = "notifyDataSetChanged"
-                }
-            }
+    /**
+     * `fb4.z0.D0(SnsInfo, SnsObject, Context, rs, boolean, d8, String, Map, Map, List)` —
+     * `SnsUtil.snsInfoToSnsStruct`. Turns a post's raw `SnsObject` (attrBuf) into the UI-facing
+     * struct for every Moments renderer. See hidecontacts/HideContactsMoments.kt for why this is
+     * the right chokepoint for a hidden contact's inline likes/comments on someone else's post.
+     */
+    internal val methodSnsInfoToSnsStruct by dexMethod {
+        matcher {
+            usingEqStrings("snsInfoToSnsStruct", "com.tencent.mm.plugin.sns.data.SnsUtil", "mSnsInfo is null, why?")
         }
     }
 
-    //    private val methodVoipLaunchNotify by dexMethod {
-//        matcher {
-//            usingEqStrings("MicroMsg.VoIPMP.CoreV2", "launchNotify")
-//        }
-//    }
-    private val methodVoipLaunchIncomingCardAsync by dexMethod {
+    // ── VoIPMP / ILink (the stack that actually runs on 8.0.7x) ──────────────────────────────
+    // See hidecontacts/HideContactsVoip.kt for how these fit together.
+
+    /** `ZIDL_ibmKH7hbMB.ZIDL_FBV(long, int, int, long, long, byte[] username, byte[][], boolean)` */
+    internal val methodVoipMpLaunchIncomingCard by dexMethod {
         matcher {
             // 8.0.76 changed from "launchInComingCardAsync: " to "[volume report] launchInComingCardAsync: "
             usingStrings("MicroMsg.VoIPMP.CoreV2", "launchInComingCardAsync: ")
         }
     }
-    private val methodVoipAcceptIncomingCall by dexMethod {
-        searchPackages("com.tencent.mm.plugin.voip")
+
+    /**
+     * `mp5.q2.qa(Context, int, is4.r, long, long, String username, ArrayList, boolean)` — the
+     * banner/notification/ringtone dispatcher. q2 declares exactly one 8-parameter method, so the
+     * class anchor plus the parameter count is unambiguous.
+     */
+    internal val methodVoipMpLaunchBanner by dexMethod {
         matcher {
-            usingEqStrings("MicroMsg.VoipIncomingCallManager", "acceptIncomingCal, roomInfo:")
+            declaredClass {
+                usingEqStrings("MicroMsg.VoIPMP.Launcher", "closeReceiverBanner")
+            }
+            paramCount = 8
+            returnType("void")
         }
     }
-    private val methodVoipStartAcceptVoip by dexMethod {
-        searchPackages("com.tencent.mm.plugin.voip")
+
+    /** `mp5.q2.Qa()` — "rejectByShortCut", the entry WeChat's own quick-reject uses. */
+    internal val methodVoipMpReject by dexMethod(allowFailure = true) {
         matcher {
-            usingEqStrings("MicroMsg.VoipIncomingCallManager", "startAcceptVoIP, roomInfo:")
+            usingEqStrings("MicroMsg.VoIPMP.CoreV2", "rejectByShortCut")
+            paramCount = 0
+            returnType("void")
         }
     }
-    private val methodVoipPlaySound by dexMethod {
+
+    /**
+     * `nq5.e.a(String username, boolean videoCall, boolean outCall, long, boolean)` — the incoming
+     * ringtone. NB: this is NOT the old `MicroMsg.RingPlayer` / "playSound, type: ..." match, which
+     * resolved to the call-ENDED tone and therefore never silenced anything.
+     */
+    internal val methodVoipMpStartRing by dexMethod {
         matcher {
-            usingEqStrings("MicroMsg.RingPlayer", "playSound, type: %s, changeStreamType: %s, shake: %s")
+            usingEqStrings("MicroMsg.VoIPMPRingtoneController", "startRing() called with: username = ")
         }
     }
-    private val methodVoipShowFloatingCard by dexMethod {
+
+    /** `xp5.b.d(String username, boolean, boolean, boolean)` — starts the VoIP foreground service. */
+    internal val methodVoipMpStartFgs by dexMethod {
+        matcher {
+            usingEqStrings("MicroMsg.VoIPMPVoIPNotificationHelper", "startFGS isBindVoIPForegroundService ")
+        }
+    }
+
+    /** `mp5.q2.Ii(String toUser, ...)` — VoIPMP call-record insertion (未接听 / 已取消 / duration). */
+    internal val methodVoipMpInsertMsg by dexMethod {
+        matcher {
+            // The CoreV2 ZIDL stub logs the same text under a different tag; pairing with the
+            // Launcher tag picks out q2.Ii.
+            usingEqStrings("MicroMsg.VoIPMP.Launcher", "insertMsg() called with: toUser = ")
+        }
+    }
+
+    // ── multitalk (群通话), used when the VoIPMP multitalk experiment is off ───────────────────
+
+    /** `v0.G(MultiTalkGroup)` — MultiTalkManager.onInviteMultiTalk. */
+    internal val methodMultiTalkOnInvite by dexMethod {
+        matcher {
+            usingEqStrings(
+                "MicroMsg.MT.MultiTalkManager",
+                "onInviteMultiTalk All Var Value:\n isMute: %b isHandsFree: %b isCameraFace: %b multiTalkStatus: %s groupIsNull: %b"
+            )
+        }
+    }
+
+    /**
+     * `v0.g(isReject, isMissCall, isPhoneCall, isNetworkError, boolean, boolean)` —
+     * exitCurrentMultiTalk. Declared on the same `v0` (MultiTalkManager) as [methodMultiTalkOnInvite],
+     * so the invite hook's `thisObject` is the receiver to invoke this on — no separate singleton
+     * lookup needed.
+     *
+     * NB: do NOT resolve a singleton getter by referencing `methodExitMultiTalk.method` from another
+     * matcher block. With `allowFailure = true` a failed resolution leaves a placeholder, and reading
+     * `.method` on a placeholder throws — which would take down dex resolution for the whole feature
+     * on a cold cache.
+     */
+    internal val methodExitMultiTalk by dexMethod(allowFailure = true) {
+        matcher {
+            usingStrings("exitCurrentMultiTalk: isReject %b isMissCall %b isPhoneCall %b isNetworkError %b")
+        }
+    }
+
+    // ── legacy v2protocal stack (only reached when the peer downgrades) ───────────────────────
+
+    /** `nr4.y.x(...)` — the incoming float card. Shared by both stacks, so live on 8.0.76 as well. */
+    internal val methodVoipShowFloatingCard by dexMethod {
         matcher {
             usingEqStrings(".ui.voip.VoipFloatView")
             paramCount = 8
         }
     }
-    private val methodVoipServiceExSetInviteContent by dexMethod {
+
+    /**
+     * `nr4.y.z(Context, String toUser)` — AnimatedVoipBaseFloatCardManager.showFinishCard, the
+     * "已拒绝通话" banner shown *after* a rejection. Distinct from [methodVoipShowFloatingCard]
+     * (the incoming card) even though both live on `nr4.y`, so suppressing the incoming card does
+     * not cover it.
+     *
+     * The bare "showFinishCard" string constant occurs only in this method (the lambda classes
+     * carry longer `...$showFinishCard$3$2$...` constants, which `usingEqStrings` will not match).
+     */
+    internal val methodVoipShowFinishCard by dexMethod(allowFailure = true) {
+        matcher {
+            usingEqStrings("showFinishCard", "(Landroid/content/Context;Ljava/lang/String;)V")
+            paramCount = 2
+        }
+    }
+    internal val methodVoipAcceptIncomingCall by dexMethod {
+        searchPackages("com.tencent.mm.plugin.voip")
+        matcher {
+            usingEqStrings("MicroMsg.VoipIncomingCallManager", "acceptIncomingCal, roomInfo:")
+        }
+    }
+    internal val methodVoipStartAcceptVoip by dexMethod {
+        searchPackages("com.tencent.mm.plugin.voip")
+        matcher {
+            usingEqStrings("MicroMsg.VoipIncomingCallManager", "startAcceptVoIP, roomInfo:")
+        }
+    }
+    internal val methodVoipServiceExSetInviteContent by dexMethod {
         matcher {
             usingEqStrings("MicroMsg.Voip.VoipServiceEx", "Failed to setInviteContent during calling, status =")
         }
     }
-    private val methodVoipServiceExReject by dexMethod {
+    internal val methodVoipServiceExReject by dexMethod {
         matcher {
             usingEqStrings("MicroMsg.Voip.VoipServiceEx", "Failed to reject with calling, status =")
         }
     }
-    private val methodVoipBubbleHelperInsertMsg by dexMethod {
+
+    /** `j0.j(String content, a65.j4 addMsg)` — server-pushed `<voipmsg>` bubble (msg type 50). */
+    internal val methodVoipBubbleHandle by dexMethod {
         matcher {
-            usingEqStrings("MicroMsg.VoIPBubbleHelper", "insertMsg() called with: voipInfo = ")
+            usingEqStrings("MicroMsg.VoIPBubbleHelper", "handlerBubbleMsg: parse bubble info error")
+        }
+    }
+
+    /**
+     * `b2.d(String talker, String, int, int, String, boolean, k0, f16.l)` — legacy call-record
+     * insertion.
+     *
+     * NB: do NOT match on "insertMsg() called with: voipInfo = " — those strings live in the
+     * synthetic Runnable `b2$$a.run()`, which takes ZERO parameters, so the previous matcher made
+     * `args[0]` throw on every legacy call record. The callagain URL is unique to b2 itself, and
+     * `d` is the only 8-parameter method it declares.
+     */
+    internal val methodVoipLegacyInsertMsg by dexMethod(allowFailure = true) {
+        matcher {
+            declaredClass {
+                usingEqStrings("MicroMsg.VoipPluginManager", "weixin://voip/callagain/?username=")
+            }
+            paramCount = 8
+            returnType("void")
         }
     }
 

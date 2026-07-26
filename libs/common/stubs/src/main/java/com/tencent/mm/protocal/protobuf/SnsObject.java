@@ -9,6 +9,10 @@ public class SnsObject {
     public int LikeCount;
     public int LikeFlag;
 
+    public LinkedList<Object> CommentUserList = new LinkedList<>();
+    public int CommentUserListCount;
+    public int CommentCount;
+
     public byte[] toByteArray() {
         throw new RuntimeException("Stub!");
     }
