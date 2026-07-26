@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.ujhhgtg.wekit.activity.agent.AgentSettingsScreen
+import dev.ujhhgtg.wekit.agent.data.OverlayMode
 import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
 import dev.ujhhgtg.wekit.agent.data.WeAgentSettings
 import dev.ujhhgtg.wekit.agent.data.entity.ModelEntity
@@ -39,7 +40,7 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsScreen) -> Unit) {
 
     var loaded by remember { mutableStateOf(false) }
     var dynamicTools by remember { mutableStateOf(false) }
-    var overlayForegroundOnly by remember { mutableStateOf(false) }
+    var overlayMode by remember { mutableStateOf(OverlayMode.ALWAYS) }
     var sendWhileRunning by remember { mutableStateOf("QUEUE_AFTER_TURN") }
     var maxRequests by remember { mutableStateOf(WeAgentSettings.DEFAULT_MAX_MODEL_REQUESTS.toString()) }
     var smallModelId by remember { mutableStateOf<String?>(null) }
@@ -53,7 +54,7 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsScreen) -> Unit) {
 
     LaunchedEffect(Unit) {
         dynamicTools = WeAgentSettings.toolLoadingMode() == dev.ujhhgtg.wekit.agent.tool.ToolLoadingMode.DYNAMIC
-        overlayForegroundOnly = WeAgentSettings.overlayForegroundOnly()
+        overlayMode = WeAgentSettings.overlayMode()
         sendWhileRunning = WeAgentSettings.sendWhileRunningMode().name
         maxRequests = WeAgentSettings.maxModelRequests().toString()
         smallModelId = WeAgentSettings.smallModelId()
@@ -72,14 +73,16 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsScreen) -> Unit) {
         item {
             Card(Modifier.padding(bottom = 6.dp)) {
                 if (loaded) {
-                    SwitchPreference(
-                        title = "仅前台显示悬浮窗",
-                        summary = "微信切到后台时自动隐藏悬浮窗，回到前台再显示",
-                        checked = overlayForegroundOnly,
-                        onCheckedChange = {
-                            overlayForegroundOnly = it
-                            WeAgentOverlayController.setForegroundOnly(it)
-                            scope.launch { WeAgentSettings.set(WeAgentSettings.KEY_OVERLAY_FOREGROUND_ONLY, it.toString()) }
+                    WindowDropdownPreference(
+                        title = "悬浮窗模式",
+                        summary = "悬浮球何时显示（禁用后仍可从聊天工具栏唤起）",
+                        items = OverlayMode.entries.map { it.label },
+                        selectedIndex = OverlayMode.entries.indexOf(overlayMode),
+                        onSelectedIndexChange = {
+                            val mode = OverlayMode.entries[it]
+                            overlayMode = mode
+                            WeAgentOverlayController.setMode(mode)
+                            scope.launch { WeAgentSettings.set(WeAgentSettings.KEY_OVERLAY_MODE, mode.name) }
                         },
                     )
                 }

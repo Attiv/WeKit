@@ -84,6 +84,7 @@ import com.composables.icons.materialsymbols.outlined.Music_note
 import com.composables.icons.materialsymbols.outlined.Photo_library
 import com.composables.icons.materialsymbols.outlined.Redeem
 import com.composables.icons.materialsymbols.outlined.Settings
+import com.composables.icons.materialsymbols.outlined.Smart_toy
 import com.composables.icons.materialsymbols.outlined.Video_chat
 import com.composables.icons.materialsymbols.outlined.Voice_chat
 import com.tencent.mm.pluginsdk.ui.chat.AppPanel
@@ -92,10 +93,12 @@ import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.createInstance
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
+import dev.ujhhgtg.wekit.features.api.agent.WeAgentService
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
+import dev.ujhhgtg.wekit.features.items.system.agent.WeAgentOverlayController
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
@@ -157,9 +160,10 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
         "音乐" to MaterialSymbols.Outlined.Music_note
     )
 
-    // 快捷回复 is a wekit-injected item (not backed by a WeChat grid tool), so it lives
-    // outside NAME_TO_ICON_MAP. Its icon is resolved via iconFor().
+    // 快捷回复 and WeAgent are wekit-injected items (not backed by a WeChat grid tool), so they
+    // live outside NAME_TO_ICON_MAP. Their icons are resolved via iconFor().
     private const val QUICK_REPLY_NAME = "快捷回复"
+    private const val WEAGENT_NAME = "WeAgent"
 
     private val methodAppPanelInitAppGrid by dexMethod {
         matcher {
@@ -242,15 +246,20 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
         quickRepliesRaw = Json.encodeToString(quickRepliesSerializer, replies)
     }
 
-    private fun iconFor(name: String): ImageVector =
-        if (name == QUICK_REPLY_NAME) MaterialSymbols.Outlined.Chat else NAME_TO_ICON_MAP.getValue(name)
+    private fun iconFor(name: String): ImageVector = when (name) {
+        QUICK_REPLY_NAME -> MaterialSymbols.Outlined.Chat
+        WEAGENT_NAME -> MaterialSymbols.Outlined.Smart_toy
+        else -> NAME_TO_ICON_MAP.getValue(name)
+    }
 
     // Ensures every supported item is present while preserving the user's saved order. Legacy
-    // configs that predate quick replies get that item inserted first.
+    // configs that predate quick replies get that item inserted first, and ones that predate the
+    // WeAgent entry get it inserted right before 快捷回复.
     private fun normalizeOrder(order: List<String>): List<String> {
-        val supportedItems = setOf(QUICK_REPLY_NAME) + NAME_TO_ICON_MAP.keys
+        val supportedItems = setOf(QUICK_REPLY_NAME, WEAGENT_NAME) + NAME_TO_ICON_MAP.keys
         val result = order.filter { it in supportedItems }.distinct().toMutableList()
         if (QUICK_REPLY_NAME !in result) result.add(0, QUICK_REPLY_NAME)
+        if (WEAGENT_NAME !in result) result.add(result.indexOf(QUICK_REPLY_NAME), WEAGENT_NAME)
         NAME_TO_ICON_MAP.keys.forEach { if (it !in result) result.add(it) }
         return result
     }
@@ -438,6 +447,13 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
                             val firstTool = tools[0].second
                             val orderList = normalizeOrder(itemsOrder.split(",").filter { it.isNotEmpty() })
                             val list = mutableListOf<Pair<String, () -> Unit>>()
+
+                            list.add(WEAGENT_NAME to {
+                                // The panel is a system overlay window, so it works from any
+                                // Activity — and stays reachable when the ball is disabled.
+                                WeAgentService.init()
+                                WeAgentOverlayController.openPanel()
+                            })
 
                             list.add(QUICK_REPLY_NAME to {
                                 showQuickReplyPicker(activity)
