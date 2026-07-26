@@ -37,28 +37,28 @@ import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
 @Feature(
     name = "@所有人",
     categories = ["聊天"],
-    description = "在群聊输入栏长按菜单中添加「@所有人」功能，支持选择接收成员；长按此项可配置发送设置"
+    description = "在群聊输入栏长按菜单中添加「@所有人」功能, 支持选择接收成员; 长按此项可配置发送设置"
 )
 object MentionMembers : SwitchFeature() {
 
-    private var appendNicknamesToContent by WePrefs.prefOption("mention_members_append_nicknames", false)
+    private var stealthMentionAll by WePrefs.prefOption("mention_members_stealth_all", false)
 
     private fun showSettingsDialog(context: Context) {
         showComposeDialog(context) {
-            var appendNicknames by remember { mutableStateOf(appendNicknamesToContent) }
+            var stealthState by remember { mutableStateOf(stealthMentionAll) }
             AlertDialogContent(
                 title = { Text("@所有人设置") },
                 text = {
                     DefaultColumn {
                         ListItem(
                             modifier = Modifier.clickable {
-                                appendNicknames = !appendNicknames
-                                appendNicknamesToContent = appendNicknames
+                                stealthState = !stealthState
+                                stealthMentionAll = stealthState
                             },
-                            headlineContent = { Text("附带@昵称文本") },
-                            supportingContent = { Text("开启后将在消息文本开头附带如「@张三 @李四 」的前缀，关闭后仅在后台元数据中保留@提示") },
+                            headlineContent = { Text("隐蔽@所有人") },
+                            supportingContent = { Text("开启时点击直接隐蔽发送@所有人消息 (不显示成员选择弹窗且消息不附带@昵称前缀); 关闭时弹出成员选择弹窗并在消息头部附带@昵称文本") },
                             trailingContent = {
-                                Switch(checked = appendNicknames, onCheckedChange = null)
+                                Switch(checked = stealthState, onCheckedChange = null)
                             }
                         )
                     }
@@ -71,9 +71,9 @@ object MentionMembers : SwitchFeature() {
     private val provider = WeChatInputBarMenuApi.IActionItemsProvider {
         listOf(
             WeChatInputBarMenuApi.ActionItem(
-                id = "at_all_members",
+                id = "mention_members",
                 icon = MaterialSymbols.Outlined.Alternate_email,
-                label = "@所有人",
+                label = "@所有人 (长按配置)",
                 isSupported = { _, _ ->
                     WeCurrentConversationApi.value.isGroupChatWxId
                 },
@@ -81,6 +81,42 @@ object MentionMembers : SwitchFeature() {
                     val currentConv = WeCurrentConversationApi.value
                     if (!currentConv.isGroupChatWxId) {
                         showToast("只能在群组里使用!")
+                        return@ActionItem
+                    }
+
+                    if (stealthMentionAll) {
+                        val content = chatFooter.lastText
+                        val item = NewSendMsgItemProto(
+                            toUser = UserNameProto(currentConv),
+                            content = content,
+                            type = 1,
+                            msgSource = """<msgsource><atuserlist><![CDATA[notify@all]]></atuserlist><pua>1</pua><alnode><cf>5</cf><inlenlist>73</inlenlist></alnode><eggIncluded>1</eggIncluded></msgsource>"""
+                        )
+                        val reqProto = NewSendMsgReqProto(
+                            count = 1,
+                            items = listOf(item)
+                        )
+                        val reqBytes = WeProto.encodeWithDefaults(reqProto)
+
+                        WePacketHelper.sendCgi(
+                            "/cgi-bin/micromsg-bin/newsendmsg",
+                            522,
+                            0,
+                            0,
+                            reqBytes = reqBytes
+                        ) {
+                            onSuccess { _ ->
+                                showToast("已发送 (自己无法看到该消息)")
+                                val now = System.currentTimeMillis()
+                                WeMessageApi.createSimpleMsgInfoAndInsert(
+                                    10000,
+                                    currentConv,
+                                    "你隐蔽@了所有人",
+                                    now
+                                )
+                                chatFooter.lastText = ""
+                            }
+                        }
                         return@ActionItem
                     }
 
@@ -109,12 +145,13 @@ object MentionMembers : SwitchFeature() {
 
                                 val selectedContacts = allMembers.filter { it.wxId in selectedWxIds }
                                 val content = chatFooter.lastText
-                                val atNicknames = if (appendNicknamesToContent) {
-                                    selectedContacts.joinToString("") { "@${it.nickname} " }
+                                val atNicknames = selectedContacts.joinToString("") { "@${it.nickname} " }
+                                val isAllSelected = selectedContacts.size == allMembers.size
+                                val atWxIds = if (isAllSelected) {
+                                    "notify@all"
                                 } else {
-                                    ""
+                                    selectedContacts.joinToString(",") { it.wxId }
                                 }
-                                val atWxIds = selectedContacts.joinToString(",") { it.wxId }
 
                                 val item = NewSendMsgItemProto(
                                     toUser = UserNameProto(currentConv),
