@@ -23,6 +23,13 @@ import kotlin.properties.ReadOnlyProperty
 import kotlin.reflect.KProperty
 
 /**
+ * 解析失败时写入的哨兵描述符，由 [DexMethodDelegate] 与 [DexConstructorDelegate] 共用。
+ * 注意与 [DexFieldDelegate] 的字段哨兵区分：两者指向同一个类但形态不同（方法 vs 字段）。
+ */
+private const val PLACEHOLDER_DESCRIPTOR =
+    "Lcom/tencent/mm/ui/LauncherUI;->getInstance()Lcom/tencent/mm/ui/LauncherUI;"
+
+/**
  * 所有 Dex 委托的公共接口，用于统一缓存读写。
  * 每个委托负责自己的序列化/反序列化。
  */
@@ -139,7 +146,7 @@ class DexFieldDelegate internal constructor(
 
     val field: Field
         get() {
-            if (descriptorString == PLACEHOLDER_DESCRIPTOR)
+            if (descriptorString == PLACEHOLDER_FIELD_DESCRIPTOR)
                 error("Field resolution has failed: $key")
             if (cachedField == null && descriptorString != null)
                 cachedField = getFieldInstance(descriptorString!!)
@@ -158,11 +165,11 @@ class DexFieldDelegate internal constructor(
 
     fun setPlaceholderDescriptor() {
         WeLogger.w("DexFieldDelegate", "setting placeholder for $key")
-        setDescriptor(PLACEHOLDER_DESCRIPTOR)
+        setDescriptor(PLACEHOLDER_FIELD_DESCRIPTOR)
     }
 
     val isPlaceholder
-        get() = descriptorString == PLACEHOLDER_DESCRIPTOR
+        get() = descriptorString == PLACEHOLDER_FIELD_DESCRIPTOR
 
     override fun getDescriptorString(): String? = descriptorString
     override fun loadDescriptor(value: String) = setDescriptor(value)
@@ -216,7 +223,7 @@ class DexFieldDelegate internal constructor(
     }
 
     companion object {
-        private const val PLACEHOLDER_DESCRIPTOR =
+        private const val PLACEHOLDER_FIELD_DESCRIPTOR =
             "Lcom/tencent/mm/ui/LauncherUI;->INSTANCE:Lcom/tencent/mm/ui/LauncherUI;"
     }
 }
@@ -238,7 +245,7 @@ class DexMethodDelegate internal constructor(
 
     val method: Method
         get() {
-            if (descriptor != null && descriptor!!.name == "Lcom/tencent/mm/ui/LauncherUI;->()Lcom/tencent/mm/ui/LauncherUI;")
+            if (isPlaceholder)
                 error("Method resolution has failed: $key")
             if (cachedMethod == null && descriptor != null)
                 cachedMethod = descriptor!!.getMethodInstance(ClassLoaders.HOST)
@@ -257,15 +264,14 @@ class DexMethodDelegate internal constructor(
     inline fun setDescriptor(m: MethodData) = setDescriptor(DexMethodDescriptor(m.className, m.methodName, m.methodSign))
 
     val isPlaceholder
-        get() = descriptor != null &&
-                descriptor!!.name == "Lcom/tencent/mm/ui/LauncherUI;->getInstance()Lcom/tencent/mm/ui/LauncherUI;"
+        get() = descriptor?.descriptor == PLACEHOLDER_DESCRIPTOR
 
     fun setDescriptor(className: String, methodName: String, methodSign: String) =
         setDescriptor(DexMethodDescriptor(className, methodName, methodSign))
 
     fun setPlaceholderDescriptor() {
         WeLogger.w("DexMethodDelegate", "setting placeholder for $key")
-        setDescriptor(DexMethodDescriptor("Lcom/tencent/mm/ui/LauncherUI;->getInstance()Lcom/tencent/mm/ui/LauncherUI;"))
+        setDescriptor(DexMethodDescriptor(PLACEHOLDER_DESCRIPTOR))
     }
 
     override fun getDescriptorString(): String? = descriptor?.descriptor
@@ -330,10 +336,15 @@ class DexConstructorDelegate internal constructor(
 
     val constructor: Constructor<*>
         get() {
+            if (isPlaceholder)
+                error("Constructor resolution has failed: $key")
             if (cachedConstructor == null && descriptor != null)
                 cachedConstructor = descriptor!!.getConstructorInstance(ClassLoaders.HOST)
             return cachedConstructor ?: error("Constructor not found for key: $key")
         }
+
+    val isPlaceholder
+        get() = descriptor?.descriptor == PLACEHOLDER_DESCRIPTOR
 
     @Deprecated("You shouldn't call .reflekt() on a Constructor", level = DeprecationLevel.ERROR)
     fun reflekt(): Nothing = error("You shouldn't call .reflekt() on a Constructor")
@@ -346,8 +357,8 @@ class DexConstructorDelegate internal constructor(
     }
 
     fun setPlaceholderDescriptor() {
-        WeLogger.w("DexMethodDelegate", "setting placeholder for $key")
-        setDescriptor(DexMethodDescriptor("Lcom/tencent/mm/ui/LauncherUI;->getInstance()Lcom/tencent/mm/ui/LauncherUI;"))
+        WeLogger.w("DexConstructorDelegate", "setting placeholder for $key")
+        setDescriptor(DexMethodDescriptor(PLACEHOLDER_DESCRIPTOR))
     }
 
     @Suppress("unused")
