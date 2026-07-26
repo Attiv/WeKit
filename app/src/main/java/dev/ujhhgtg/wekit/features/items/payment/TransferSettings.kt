@@ -454,7 +454,6 @@ internal object TransferSettings {
             )
             if (rules.timeRange.enabled) {
                 AutomationTimeRangeControls(
-                    context = context,
                     rule = rules.timeRange,
                     editable = editable(RuleKey.TIME_RANGE),
                     onChange = { onChange(RuleKey.TIME_RANGE, rules.copy(timeRange = it)) }

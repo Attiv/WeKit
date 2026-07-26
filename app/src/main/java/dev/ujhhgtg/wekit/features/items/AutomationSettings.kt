@@ -1,7 +1,5 @@
 package dev.ujhhgtg.wekit.features.items
 
-import android.app.TimePickerDialog
-import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,7 +28,10 @@ import androidx.compose.ui.unit.dp
 import dev.ujhhgtg.wekit.features.api.core.models.IWeContact
 import dev.ujhhgtg.wekit.ui.content.BaseContactSelector
 import dev.ujhhgtg.wekit.ui.content.Button
+import dev.ujhhgtg.wekit.ui.content.MINUTES_PER_DAY
 import dev.ujhhgtg.wekit.ui.content.TextButton
+import dev.ujhhgtg.wekit.ui.content.WeTimeOfDayField
+import dev.ujhhgtg.wekit.ui.content.formatMinuteOfDay
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.serialization.KSerializer
@@ -246,7 +247,6 @@ internal fun AutomationRuleHeader(
 
 @Composable
 internal fun AutomationTimeRangeControls(
-    context: Context,
     rule: AutomationTimeRangeRule,
     editable: Boolean,
     onChange: (AutomationTimeRangeRule) -> Unit
@@ -258,22 +258,20 @@ internal fun AutomationTimeRangeControls(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        TextButton(
+        WeTimeOfDayField(
+            modifier = Modifier.weight(1f),
+            label = "开始",
+            minuteOfDay = rule.startMinute,
             enabled = editable,
-            onClick = {
-                showAutomationTimePicker(context, rule.startMinute) {
-                    onChange(rule.copy(startMinute = it))
-                }
-            }
-        ) { Text("开始 ${formatAutomationMinute(rule.startMinute)}") }
-        TextButton(
+            onMinuteChange = { onChange(rule.copy(startMinute = it)) }
+        )
+        WeTimeOfDayField(
+            modifier = Modifier.weight(1f),
+            label = "结束",
+            minuteOfDay = rule.endMinute,
             enabled = editable,
-            onClick = {
-                showAutomationTimePicker(context, rule.endMinute) {
-                    onChange(rule.copy(endMinute = it))
-                }
-            }
-        ) { Text("结束 ${formatAutomationMinute(rule.endMinute)}") }
+            onMinuteChange = { onChange(rule.copy(endMinute = it)) }
+        )
     }
 }
 
@@ -377,10 +375,7 @@ internal fun AutomationScrollableColumn(content: @Composable ColumnScope.() -> U
     )
 }
 
-internal fun formatAutomationMinute(value: Int): String {
-    val minute = value.coerceIn(0, MINUTES_PER_DAY - 1)
-    return "%02d:%02d".format(Locale.ROOT, minute / 60, minute % 60)
-}
+internal fun formatAutomationMinute(value: Int): String = formatMinuteOfDay(value)
 
 internal fun automationKeywordSummary(rule: AutomationKeywordRule, unrestrictedText: String): String {
     if (!rule.enabled) return unrestrictedText
@@ -390,15 +385,3 @@ internal fun automationKeywordSummary(rule: AutomationKeywordRule, unrestrictedT
     }
 }
 
-private fun showAutomationTimePicker(context: Context, initialMinute: Int, onSelected: (Int) -> Unit) {
-    val minute = initialMinute.coerceIn(0, MINUTES_PER_DAY - 1)
-    TimePickerDialog(
-        context,
-        { _, hour, selectedMinute -> onSelected(hour * 60 + selectedMinute) },
-        minute / 60,
-        minute % 60,
-        true
-    ).show()
-}
-
-private const val MINUTES_PER_DAY = 24 * 60
