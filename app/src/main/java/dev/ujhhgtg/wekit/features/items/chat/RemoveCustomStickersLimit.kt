@@ -14,7 +14,7 @@ import java.lang.reflect.Modifier
     categories = ["聊天"],
     description = "解除表情面板「添加的单个表情」分类的 999 个数量上限, 允许无限添加图片表情"
 )
-object UnlockCustomEmojiLimit : SwitchFeature(), IResolveDex {
+object RemoveCustomStickersLimit : SwitchFeature(), IResolveDex {
 
     private val methodGetCustomEmojiMaxSize by dexMethod {
         matcher {
@@ -46,15 +46,31 @@ object UnlockCustomEmojiLimit : SwitchFeature(), IResolveDex {
         }
     }
 
+    private val classCgiBack by dexClass {
+        matcher {
+            usingEqStrings("CgiBack{errType=")
+        }
+    }
+
+    private val methodCreateCgiBack by dexMethod {
+        matcher {
+            declaredClass(classCgiBack.clazz)
+            modifiers = Modifier.STATIC
+            paramCount(6)
+            returnType(classCgiBack.clazz)
+        }
+    }
+
     private val methodAddEmojiOnSceneEnd by dexMethod {
         matcher {
             usingEqStrings("CgiBackupEmojiOperate onResult: errType=")
         }
     }
 
-    private val classCgiBack by dexClass {
+    private val methodNetSceneBackupEmojiOperateOnGYNetEnd by dexMethod {
         matcher {
-            usingEqStrings("CgiBack{errType=")
+            usingEqStrings("MicroMsg.emoji.NetSceneBackupEmojiOperate", "errType:%d, errCode:%d")
+            name = "onGYNetEnd"
         }
     }
 
@@ -85,12 +101,42 @@ object UnlockCustomEmojiLimit : SwitchFeature(), IResolveDex {
             result = Int.MAX_VALUE
         }
 
-        methodAddEmojiOnSceneEnd.hookBefore {
-            val resp = args[0]
-            classCgiBack.reflekt<Any>().fields {
+        methodCreateCgiBack.hookBefore {
+            if (args[1] as? Int == -434) {
+                args[0] = 0
+                args[1] = 0
+                args[2] = ""
+            }
+        }
+
+        methodCreateCgiBack.hookAfter {
+            val res = result ?: return@hookAfter
+            @Suppress("UNCHECKED_CAST")
+            (classCgiBack.clazz as Class<Any>).reflekt().fields {
                 type = int
             }.forEach {
-                it.set(resp, 0)
+                if (it.get(res) == -434) {
+                    it.set(res, 0)
+                }
+            }
+        }
+
+        methodAddEmojiOnSceneEnd.hookBefore {
+            val resp = args[0] ?: return@hookBefore
+            @Suppress("UNCHECKED_CAST")
+            (classCgiBack.clazz as Class<Any>).reflekt().fields {
+                type = int
+            }.forEach {
+                if (it.get(resp) == -434) {
+                    it.set(resp, 0)
+                }
+            }
+        }
+
+        methodNetSceneBackupEmojiOperateOnGYNetEnd.hookBefore {
+            if (args[2] as? Int == -434) {
+                args[1] = 0
+                args[2] = 0
             }
         }
 
@@ -100,6 +146,9 @@ object UnlockCustomEmojiLimit : SwitchFeature(), IResolveDex {
             methodConditionallyShowDialog
         ).forEach {
             it.hookBefore {
+                putCustomFullFalseInMmkv()
+            }
+            it.hookAfter {
                 putCustomFullFalseInMmkv()
             }
         }
