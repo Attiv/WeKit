@@ -77,6 +77,8 @@ import com.composables.icons.materialsymbols.outlinedfilled.Settings
 import com.composables.icons.materialsymbols.outlinedfilled.Tune
 import dev.ujhhgtg.wekit.features.core.BaseFeature
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
+import dev.ujhhgtg.wekit.features.core.FeaturesProvider
+import dev.ujhhgtg.wekit.features.core.NewFeatures
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.FloatingBottomBar
@@ -154,6 +156,27 @@ val FEATURE_CATEGORIES = listOf(
     "首页右上角菜单" to MaterialSymbols.Outlined.Add_circle,
     "联系人详情页面" to MaterialSymbols.Outlined.Contact_page,
 )
+
+/**
+ * Pseudo-category shown above the real ones. Deliberately kept out of [FEATURE_CATEGORIES] —
+ * it isn't something a feature can declare in its `@Feature(categories = ...)`.
+ */
+const val NEW_FEATURES_CATEGORY = "新功能"
+
+/**
+ * Features whose source file entered the repo within [NewFeatures.WINDOW_DAYS] days of the build's
+ * HEAD commit (collected at compile time by `GenerateNewFeaturesTask`), newest first.
+ *
+ * Features that belong to no real category — the `API` internals — are dropped: they carry no
+ * switch a user would meaningfully flip.
+ */
+val NEW_FEATURE_ITEMS: List<BaseFeature> by lazy {
+    val visibleCategories = FEATURE_CATEGORIES.mapTo(mutableSetOf()) { it.first }
+    val byName = FeaturesProvider.ALL_HOOK_ITEMS.associateBy { it.name }
+    NewFeatures.ENTRIES
+        .mapNotNull { (name, _) -> byName[name] }
+        .filter { item -> item.categories.any { it in visibleCategories } }
+}
 
 // ---------------------------------------------------------------------------
 //  Root: three-tab pager + floating bottom bar, with category drill-down

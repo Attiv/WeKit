@@ -19,8 +19,10 @@ import androidx.compose.ui.unit.dp
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Arrow_back
 import com.composables.icons.materialsymbols.outlined.Close
+import com.composables.icons.materialsymbols.outlined.Fiber_new
 import com.composables.icons.materialsymbols.outlined.Search
 import dev.ujhhgtg.wekit.features.core.FeaturesProvider
+import dev.ujhhgtg.wekit.features.core.NewFeatures
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.features.items.easter_egg.AprilFools
 import dev.ujhhgtg.wekit.features.items.easter_egg.isAprilFools
@@ -146,6 +148,31 @@ fun FeaturesPager(onOpenCategory: (String) -> Unit) {
                 }
             }
 
+            // Its own card, so it reads as separate from the real categories below.
+            if (NEW_FEATURE_ITEMS.isNotEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .padding(top = 12.dp)
+                            .fillMaxWidth()
+                    ) {
+                        ArrowPreference(
+                            title = NEW_FEATURES_CATEGORY,
+                            summary = "最近 ${NewFeatures.WINDOW_DAYS} 天新增 ${NEW_FEATURE_ITEMS.size} 项",
+                            startAction = {
+                                Icon(
+                                    imageVector = MaterialSymbols.Outlined.Fiber_new,
+                                    contentDescription = null,
+                                    modifier = Modifier.padding(end = 6.dp),
+                                    tint = MiuixTheme.colorScheme.onBackground,
+                                )
+                            },
+                            onClick = { onOpenCategory(NEW_FEATURES_CATEGORY) },
+                        )
+                    }
+                }
+            }
+
             item {
                 Card(
                     modifier = Modifier
@@ -181,7 +208,8 @@ fun FeaturesPager(onOpenCategory: (String) -> Unit) {
 @Composable
 fun CategoryDetailScreen(categoryName: String, onBack: () -> Unit) {
     val items = remember(categoryName) {
-        FeaturesProvider.ALL_HOOK_ITEMS.filter { categoryName in it.categories }
+        if (categoryName == NEW_FEATURES_CATEGORY) NEW_FEATURE_ITEMS
+        else FeaturesProvider.ALL_HOOK_ITEMS.filter { categoryName in it.categories }
     }
     val switchStates = remember(categoryName) {
         mutableStateMapOf<String, Boolean>().apply {
