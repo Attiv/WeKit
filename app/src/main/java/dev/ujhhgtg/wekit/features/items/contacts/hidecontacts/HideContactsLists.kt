@@ -24,12 +24,18 @@ private const val TAG = "HideContacts.Lists"
  * - 收藏 has largely moved to the WCDB ORM builder (`r82.e` / `br5.f`), which emits no raw SQL;
  * - 视频号 like lists are network-driven protobuf, with no local table behind them.
  *
- * Every hook here filters the *backing collection* rather than remapping adapter indices. That is
- * deliberate: an earlier iteration of this feature shifted `getView` positions through a
- * `hiddenPositions` set without touching `getItem`, so tapping a row opened the wrong chat. Removing
- * the entry before the adapter ever counts it keeps `getCount()`, `getItem()` and every click
- * listener consistent by construction, and a resolve failure degrades to "the contact stays
- * visible" instead of "the wrong contact opens".
+ * Every hook here filters the *input* the adapter is built from rather than remapping adapter
+ * indices. That is deliberate: an earlier iteration of this feature shifted `getView` positions
+ * through a `hiddenPositions` set without touching `getItem`, so tapping a row opened the wrong
+ * chat. Cutting the entry before the adapter ever counts it keeps `getCount()`, `getItem()` and
+ * every click listener consistent by construction, and a resolve failure degrades to "the contact
+ * stays visible" instead of "the wrong contact opens".
+ *
+ * Filtering is done by **substituting a filtered copy**, never by mutating the collection WeChat
+ * handed us, unless that collection is provably a per-call/per-response object with no other
+ * consumer. 隐藏 here is a display-time decision that `#show`, the triple-tap gesture and the
+ * 定时显示 scheduler must be able to undo instantly; a destructive `removeAll` on a list the host
+ * retains would make "temporarily show" unable to bring the rows back until WeChat repopulates it.
  */
 internal fun HideContacts.installListHooks() {
     installMvvmListHooks()
@@ -46,14 +52,29 @@ internal fun HideContacts.installListHooks() {
 /**
  * `MvvmList.e(List snapshotList)` is WeChat's per-list "preprocess the snapshot before it reaches
  * the adapter" hook, and both list classes implement it identically: sort the snapshot in place,
- * walk it once to recompute the section headers, then `map` it into a list of *clones* which becomes
- * the adapter's data. Because the returned list is derived from `snapshotList`, dropping entries
- * from `snapshotList` in a `hookBefore` removes them from the section index and the adapter data in
- * one go — no index arithmetic anywhere.
+ * walk it once to recompute the section headers *from whatever it was handed*, then `map` it into a
+ * list of *clones* which becomes the adapter's data. Everything downstream — the adapter rows, the
+ * section flags and (for `AtSomeoneLiveList`) the A-Z index list it rebuilds into its `C` field — is
+ * derived from the argument alone, so replacing the argument with a filtered copy in a `hookBefore`
+ * yields a fully self-consistent result with no index arithmetic anywhere. Verified identical on
+ * 8.0.69, 8.0.74 and 8.0.76 (`ui/contact/address/AddressLiveList.e`,
+ * `ui/chatting/atsomeone/AtSomeoneLiveList.e`).
+ *
+ * The argument is **substituted, not mutated**. `MvvmList.l()` calls `e(this.f182257p)`
+ * (`plugin/mvvmlist/MvvmList.java:373` on 8.0.76, `:373` on 8.0.74, `:361` on 8.0.69), i.e. `args[0]`
+ * *is* the list's persistent snapshot field, not a per-call copy. An earlier version of this hook
+ * called `removeAll` on it, which deleted the rows out of WeChat's own backing store: `#show`, the
+ * triple-tap gesture and a scheduled SHOW could not bring the 通讯录 rows back, and neither could
+ * un-hiding a contact, until WeChat repopulated the list from its data source.
+ *
+ * A `hookAfter` on the return value would not do either: it would drop the adapter rows but leave
+ * the section headers that `e()` already computed over the unfiltered snapshot, so a section whose
+ * only member was hidden would keep its header. Filtering the input is what keeps them in sync.
  *
  * `AddressLiveList` (通讯录) and `AtSomeoneLiveList` (@成员) differ only in their entry class
  * (`ah5.g` vs `com.tencent.mm.ui.chatting.atsomeone.b` on 8.0.76), and both entry classes carry the
- * contact as their single `com.tencent.mm.storage.*` field, so one reflective shape works for both.
+ * contact as their single `com.tencent.mm.storage.*` field, so one reflective shape works for both —
+ * hence the shared [hookMvvmListPreprocess] helper, which is the only thing either surface installs.
  */
 private fun HideContacts.installMvvmListHooks() {
     hookMvvmListPreprocess(methodAddressMvvmListPreprocessList, "AddressLiveList")
@@ -69,32 +90,48 @@ private fun HideContacts.hookMvvmListPreprocess(target: DexMethodDelegate, label
     target.hookBefore {
         if (isTemporarilyShown) return@hookBefore
 
-        val contacts = args[0] as? MutableList<*> ?: return@hookBefore
+        val contacts = args[0] as? List<*> ?: return@hookBefore
         // MvvmList hands us an empty snapshot on the initial load and whenever a filter matches
-        // nothing; contacts[0] below would throw there, and hook bodies must not fail.
+        // nothing; there is no entry to read the shape off then.
         if (contacts.isEmpty()) return@hookBefore
 
         // The entry classes are obfuscated, but each holds exactly one field whose type lives in
         // com.tencent.mm.storage (the Contact — y3 on 8.0.76, a3 on 8.0.69); everything else on them
         // is an int/boolean/String or a UI helper from another package. Selecting by declared type
         // rather than by name survives the per-version field renames.
-        val contactInfoField = contacts[0]!!.reflekt()
-            .firstField { type { it.name.startsWith("${PackageNames.WECHAT}.storage") } }
-            .self.makeAccessible()
+        //
+        // Both lookups are the *OrNull* variants behind an early return, matching the 收藏 hook
+        // below: this body runs on every single 通讯录 render, so a shape change on some unverified
+        // version has to degrade to "the list stays unfiltered", never throw out of a hook.
+        val sample = contacts.firstNotNullOfOrNull { it } ?: return@hookBefore
+        val contactInfoField = sample.reflekt()
+            .firstFieldOrNull { type { it.name.startsWith("${PackageNames.WECHAT}.storage") } }
+            ?.self?.makeAccessible()
+        if (contactInfoField == null) {
+            WeLogger.w(TAG, "$label entry has no com.tencent.mm.storage field; that list stays unfiltered")
+            return@hookBefore
+        }
         val usernameField = contactInfoField.type.reflekt()
-            .firstField {
+            .firstFieldOrNull {
                 name = "field_username"
                 superclass()
-            }.self.makeAccessible()
-
-        val hiddenContacts = hiddenContacts
-
-        val removed = contacts.removeAll { contact ->
-            val contactInfo = contactInfoField.get(contact ?: return@removeAll false)
-                ?: return@removeAll false
-            (usernameField.get(contactInfo) as? String) in hiddenContacts
+            }?.self?.makeAccessible()
+        if (usernameField == null) {
+            WeLogger.w(TAG, "$label contact has no field_username; that list stays unfiltered")
+            return@hookBefore
         }
-        if (removed) WeLogger.d(TAG, "filtered hidden contacts out of $label")
+
+        val kept = contacts.filterNot { contact ->
+            val contactInfo = contact?.let { contactInfoField.get(it) } ?: return@filterNot false
+            val username = usernameField.get(contactInfo) as? String ?: return@filterNot false
+            isHiddenNow(username)
+        }
+        if (kept.size == contacts.size) return@hookBefore
+
+        WeLogger.d(TAG, "filtered ${contacts.size - kept.size} hidden contact(s) out of $label")
+        // Substitution, never `contacts.removeAll { ... }`: this list is MvvmList's own persistent
+        // `f182257p` snapshot field. See the KDoc above.
+        args[0] = ArrayList(kept)
     }
 }
 
@@ -167,9 +204,17 @@ private fun stringArrayArg(arg: Any?): List<String> =
  *
  * Mirrors `getNormalContactCount`'s predicates: a normal, non-hidden-flag contact
  * (`type & 1 != 0`, `type & 32 = 0`), not a 公众号 (`verifyFlag & 8 = 0`), optionally excluding the
- * blacklist (`type & 8 = 0`), and a plain wxid — `username not like '%@%'` is exactly what
+ * blacklist (`type & 8 = 0`), and a plain wxid — `username not like '%@%'` is what
  * `e01.e2.b(username, "@micromsg.qq.com", …)` emits, and it is what keeps 群聊 (`@chatroom`) and
  * 企业微信 (`@openim`) out of the total.
+ *
+ * Accepted limitation: `username not like '%@%'` is hardcoded here, but `e2.b` forks on the
+ * `usernameFlag` experiment (`com.tencent.mm.contact.d.f93632g.a()`, `e01/e2.java:434` on 8.0.76) and
+ * emits `and ( usernameFlag in ( 0 ) )` instead when it is on. The two are semantically the same
+ * classification — `usernameFlag` is the denormalised form of "is this a plain wxid" — so the mirror
+ * stays correct in practice. If that column ever lags behind `username` for some row, WeChat's total
+ * and this mirror would disagree about that row and the footer could be over-subtracted by one. Not
+ * worth a second query path: the failure mode is a slightly wrong count, never a wrong row.
  *
  * [excluded] mirrors the two vararg groups WeChat turns into `and rcontact.username != '<each>'`
  * terms. Skipping them would over-subtract: `ContactCountView` passes `e01.e2.f269714p` plus
@@ -220,9 +265,12 @@ private fun countHiddenNormalContacts(
  * - 查看全部群成员 (`SeeRoomMemberUI`): its adapter is fed by `cc.d(List usernames)`, which clears
  *   its item list and rebuilds it from the argument. Filtering the argument in a `hookBefore` means
  *   the adapter's list, `getCount()` and `getItem()` are all built from the same filtered input.
- * - @全体成员 / 删除成员 / 邀请 (`SelectMemberUI` and its subclasses): the adapter's loader Runnable
- *   reads `SelectMemberUI.V6()` (`j7()` on 8.0.69) once and builds its `bd` items from it, so a
- *   `hookAfter` returning a filtered copy is equivalent.
+ * - `SelectMemberUI` and the subclasses that inherit its `V6()` (`j7()` on 8.0.69): the adapter's
+ *   loader Runnable reads it once and builds its `bd` items from it, so a `hookAfter` returning a
+ *   filtered copy is equivalent. Identical on 8.0.69/8.0.74/8.0.76, the inheriting UIs are
+ *   `SelectDelMemberUI` (删除成员), `SelectAddRoomManagerUI` (添加管理员),
+ *   `TransferRoomOwnerUI` (转让群主) and `SeeMemberRecordUI` (群成员记录) — there is **no** invite UI
+ *   among them, despite what an earlier version of this comment and the `@Feature` blurb claimed.
  *
  * `V6()` returns `ChatroomInfo.z0()`, which **caches** the parsed member list in a field and hands
  * back the same instance every time — so this must never filter in place. A fresh `ArrayList` is
@@ -357,6 +405,12 @@ private const val LIKE_ENTRY_WX_USERNAME = 5
  * field is the like list; it is a per-response object with no other consumer, so it is filtered in
  * place. The load-more callback receives the list directly, and gets a filtered copy instead —
  * cheaper than proving the network layer does not retain it.
+ *
+ * Accepted limitation (paging): the presenter decides whether more pages exist partly from how many
+ * rows a page yielded, so a page whose entries are *all* hidden can look empty and stop the paging
+ * loop early. The consequence is only "fewer rows than the server would have shown" — never a wrong
+ * or misattributed row — and it self-corrects the next time the list is refreshed or the next page
+ * is requested, since the server-side cursor is untouched. Not worth faking a row count for.
  */
 private fun HideContacts.installFinderLikeHooks() {
     if (methodFinderLikeDrawerRefresh.isPlaceholder) {

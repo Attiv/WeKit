@@ -82,14 +82,18 @@ import java.lang.reflect.Modifier as JavaModifier
 13. 发现页「N 位朋友的新动态」头像与红点
 14. 新消息通知 (含微信在 push 进程内直接弹出的轻量推送通知)
 15. 群聊内 @成员选择器
-16. 群成员列表 (查看全部群成员、删除成员、邀请成员)
+16. 群成员列表 (查看全部群成员、删除成员、添加管理员、转让群主、群成员记录)
 17. 收藏列表
 18. 视频号点赞列表 (朋友❤过)
 19. 全局搜索 (联系人、聊天记录、群成员、共同群聊、服务通知、小商店、AI 对话)
 20. 通讯录底部「N 位联系人」与「N 个群聊」计数
 21. 拍一拍消息
 22. 微信运动排行榜
-注: 临时显示 (#show / 三击标题) 只恢复界面上的显示, 不恢复通知"""
+另可配置「定时显示/隐藏」: 按每周重复或单次的时间自动切换临时显示状态, 只改显示, 不改动隐藏列表
+注 1: 临时显示 (#show / 三击标题 / 定时任务) 只恢复界面上的显示, 不恢复通知
+注 2: 除拍一拍外, 以上均为「不显示」而非「删除」, 取消隐藏后内容会原样回来
+注 3: 拍一拍是唯一的破坏性隐藏 — 消息在写入数据库前就被取消, 取消隐藏也无法找回;
+      是否被抑制取决于消息到达那一刻的临时显示状态"""
 )
 object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputBarListener,
     WeDatabaseListenerApi.IQueryListener {
@@ -580,6 +584,13 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
      * Only `fromUser` is tested. `talker` is the conversation the pat lands in, and a hidden
      * *conversation* is already handled by the query-time filter; `pattedUser` is frequently the
      * local user, whom we must never treat as hidden.
+     *
+     * NB this is the **only destructive** surface in 隐藏联系人: everywhere else a hidden contact's
+     * content is merely not displayed and comes back verbatim once it is un-hidden, but here the row
+     * is never written in the first place, so neither 临时显示 nor removing the contact from the
+     * hidden list can recover it. It also means whether a given pat survives depends on the
+     * [temporarilyShown] state *at the instant the message arrived*, not at the instant it is read.
+     * Documented in the `@Feature` blurb; changing it would require buffering the pats instead.
      */
     private fun hookPatMessage() {
         if (methodPatMsgInsert.isPlaceholder) {

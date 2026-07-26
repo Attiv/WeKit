@@ -86,6 +86,16 @@ internal fun HideContacts.uninstallSchedules() = HideContactsSchedule.uninstall(
  * A schedule only ever *writes* `temporarilyShown` at its fire instant. It does not lock it: `#show`,
  * `#hide` and the triple-tap gesture stay live and their result survives until the next fire time or
  * the next manual change. The catch-up runs once per process, at attach time.
+ *
+ * ## Accepted limitation: time-zone and clock changes
+ *
+ * No `ACTION_TIMEZONE_CHANGED` / `ACTION_TIME_CHANGED` receiver is registered. Alarms are armed as
+ * absolute `RTC_WAKEUP` instants computed from the local zone at arm time, so a TZ change or a DST
+ * transition between arming and firing makes exactly *one* fire land at the wrong local time (off by
+ * the offset delta). It self-corrects immediately: [onFired] recomputes the next occurrence from the
+ * clock as it is *then*, and [resync] recomputes everything on the next install. One mistimed
+ * 显示/隐藏 flip after a flight or a DST switch was judged not worth a broadcast receiver whose only
+ * job is to call [resync].
  */
 internal object HideContactsSchedule {
 
@@ -393,6 +403,14 @@ internal object HideContactsSchedule {
      *
      * Runs at process attach: no Toast, no Activity, no UI — only the in-memory flag plus the
      * conversation-list refresh.
+     *
+     * Accepted limitation: when two enabled entries share the *same* most-recent past instant,
+     * `maxByOrNull` keeps the first maximum — i.e. the tie is broken by list order, which is
+     * insertion order, which the user never sees. `HideContactsScheduleUi.collidesWith` now refuses
+     * to create such a pair, so this is unreachable for anything authored after that gate; entries
+     * written to storage before it (or by hand) can still hit it. The outcome is deterministic per
+     * stored list, just arbitrary — and one 显示/隐藏 flip either way, correctable by deleting one of
+     * the two rows.
      */
     private fun catchUp() {
         val now = System.currentTimeMillis()

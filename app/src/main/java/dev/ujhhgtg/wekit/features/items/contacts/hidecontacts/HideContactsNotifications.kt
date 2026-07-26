@@ -104,10 +104,12 @@ object HideContactsNotifications : ApiFeature(), IResolveDex {
      * talker further down (`"... talker: %s, tipsFlag: %s "`).
      *
      * The anchor occurs exactly once per tree, and in both cases the target method is the last
-     * declaration before it, so the string is inside the method DexKit will return. `allowFailure`
-     * nevertheless: only 8.0.76 and 8.0.69 could be inspected, and on an unverified 8.0.6x build a
-     * hard failure would mark this feature broken and pop the dex-repair dialog on every launch —
-     * worse than losing the LightPush bypass while [methodDealNotify] keeps working.
+     * declaration before it, so the string is inside the method DexKit will return — which is what
+     * makes this matcher safe, not `allowFailure`. `allowFailure` covers **only the 0-hit case**:
+     * `DexMethodDelegate.find` (`dexkit/dsl/DexDelegates.kt`) `error()`s on a multi-hit regardless of
+     * it. It is set here purely for the 0-hit case: only 8.0.76 and 8.0.69 could be inspected, and on
+     * an unverified 8.0.6x build a 0-hit would mark this feature broken and pop the dex-repair dialog
+     * on every launch — worse than losing the LightPush bypass while [methodDealNotify] keeps working.
      */
     private val methodNotifyForLightPush by dexMethod(allowFailure = true) {
         searchPackages("com.tencent.mm.booter.notification")
@@ -141,6 +143,15 @@ object HideContactsNotifications : ApiFeature(), IResolveDex {
     override fun onEnable() {
         // Both bodies only cancel the call; they mutate no WeChat state and so cannot re-trigger the
         // method they are hooked onto.
+        //
+        // Accepted design: as an ApiFeature this is always enabled, so both hooks are installed even
+        // when 隐藏联系人 itself is off — the on/off decision is made *per invocation*, inside the
+        // bodies, by isSuppressed(). That is what buys restart-free toggling of the 隐藏联系人 switch
+        // in both processes (and in :push, where none of HideContacts' runtime state exists). The
+        // price is two permanently installed hooks that do nothing but an MMKV read and an early
+        // return while the feature is off. Deliberate; do not "fix" it by gating installation on the
+        // switch, which would make turning 隐藏联系人 on require a WeChat restart to suppress
+        // notifications.
 
         methodDealNotify.hookBefore(100) {
             val talker = args[1] as? String ?: return@hookBefore

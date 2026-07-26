@@ -45,7 +45,11 @@ import dev.ujhhgtg.wekit.ui.content.formatDateTime
 import dev.ujhhgtg.wekit.ui.content.formatMinuteOfDay
 import dev.ujhhgtg.wekit.ui.content.parseDateTime
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
+import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.utils.android.showToast
 import java.util.Calendar
+
+private const val TAG = "HideContacts.ScheduleUi"
 
 /**
  * Week days in the order a Chinese-locale user reads them (Monday first, Sunday last), paired with
@@ -155,7 +159,10 @@ private fun newSchedule(): HideSchedule = HideSchedule(
  * alarm would be armed for it (its instant has passed), so it would sit there until the next process
  * start, where the startup catch-up would re-apply its action and only then delete it: a spurious
  * 显示/隐藏 flip. Hence rows the scheduler no longer knows about are dropped, except those added
- * during this dialog session, which by construction cannot be in the list `mutate` passes in.
+ * during this dialog session, which by construction cannot be in the list `mutate` passes in. The
+ * drop is not silent: 确定 compares the draft against the list `mutate` committed and, if anything
+ * was dropped, logs it and shows a Toast — otherwise a user who had just edited that row would find
+ * it simply gone.
  *
  * An elapsed [HideScheduleKind.ONCE] entry that *hasn't* been consumed is still listed as-is rather
  * than pruned here: expiry belongs to the scheduler (it consumes such entries on fire and on startup
@@ -270,11 +277,24 @@ internal fun HideContacts.showSchedulesDialog(context: Context) {
                     val draft = schedules.toList()
                     val added = addedIds.toSet()
                     // The sole write path: persists and re-arms every alarm in one guarded step.
-                    HideContactsSchedule.mutate { stored ->
+                    val committed = HideContactsSchedule.mutate { stored ->
                         // Reconcile against what the scheduler holds *now*, not what it held when the
                         // dialog opened: an entry it dropped meanwhile (a fired 单次) stays dropped.
                         val storedIds = stored.mapTo(mutableSetOf()) { it.id }
                         draft.filter { it.id in storedIds || it.id in added }
+                    }
+                    // Dropping is correct (see the KDoc), but doing it silently is not: the user
+                    // edited a row, tapped 确定, and would otherwise just find it gone. Say so, the
+                    // same way every other 隐藏联系人 notice is surfaced — a Toast — and log it.
+                    val committedIds = committed.mapTo(mutableSetOf()) { it.id }
+                    val dropped = draft.filter { it.id !in committedIds }
+                    if (dropped.isNotEmpty()) {
+                        WeLogger.i(
+                            TAG,
+                            "dropped ${dropped.size} schedule(s) that the scheduler consumed while the " +
+                                    "dialog was open: ${dropped.map { it.id }}"
+                        )
+                        showToast(context, "${dropped.size} 个单次定时在编辑期间已触发并自动删除, 对它们的修改未保存")
                     }
                     onDismiss()
                 }) {
