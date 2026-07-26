@@ -11,6 +11,68 @@ import java.util.LinkedList
 
 private const val TAG = "HideContacts.Moments"
 
+/** Every Moments-side surface a hidden contact can leak through. */
+internal fun HideContacts.installMomentsHooks() {
+    installMomentsRedDotHook()
+    installMomentsInlineEntryHook()
+}
+
+/**
+ * Keeps a hidden contact out of the 发现 tab's "N 位朋友的新动态" avatar + red dot.
+ *
+ * On 8.0.76 that entry is a *single* avatar, not an avatar strip, and the avatar it draws is driven
+ * by one user-info KV pair: 68377 holds the wxid. "68377 is non-empty" is only *one of two* terms of
+ * the dot predicate, though — `FindMoreFriendsUI.java:916-918` computes it as
+ * `!(t8.K0(this.f226904x) && this.f226907y == 0)`, i.e. "68377 non-empty **OR** there are unread
+ * likes/comments" (`f226907y` is `SnsCommentStorage.O0()`, `FindMoreFriendsUI.java:904`). The
+ * bottom-tab dot in `com/tencent/mm/ui/ie.java:494` gates on 68377 alone. So suppressing 68377
+ * removes the avatar and the 68377-attributable dot, but a hidden contact who likes or comments on a
+ * post *you* can see still counts towards the unread-comment term — that surface is the inline
+ * like/comment hook below, not this one.
+ *
+ * There is exactly one writer of that KV in the sync path — `NetSceneSnsSync.updateSyncDataCache`,
+ * inlined by the decompiler into the synthetic accessor `static c3.H(c3, SnsObject)` at
+ * `com/tencent/mm/plugin/sns/model/c3.java:103` (`c3.I` on 8.0.69), whose `:134` does
+ * `j1.u().c().w(68377, snsObject.Username)`.
+ *
+ * So the fix is to cancel that whole cache write when the post's author is hidden, rather than to
+ * patch the avatar view: it kills the avatar and the red dot in one place, and every other consumer
+ * of KV 68377 inherits the fix for free — the chat-list banner
+ * (`com/tencent/mm/ui/conversation/banner/z.java:44`) and the `+` menu's 朋友圈 entry
+ * (`com/tencent/mm/ui/rg.java:371`) both read 68377 purely to decide whether to open Moments in
+ * "there is something new" mode.
+ *
+ * Cancelling — as opposed to rewriting `Username` to `""` — is deliberate. `H` writes 68377 (author)
+ * together with 68422/68418 (feed id), 68400 (create time) and 68421 (WeiShang feed type), and
+ * `w2`'s `isNeedToUpdateRedDot` compares the *next* incoming post against all of them. Skipping the
+ * method leaves those five fields internally consistent, still describing the last non-hidden post
+ * that legitimately earned the red dot — which is exactly the state the user should keep seeing.
+ * Blanking only the username would leave the other four fields pointing at a post nobody can see.
+ *
+ * One caveat to "consistent": `H` also *resets* the 68419/68420 counters, and cancelling it skips
+ * those resets. 68420 is the "held the old red dot N times in a row" counter that
+ * `isNeedToUpdateRedDot` increments on the branch where it does *not* call `H`
+ * (`w2.java:191`), then compares against `clicfg_sns_red_dot_compare_times` (default 10). With `H`
+ * permanently cancelled for hidden authors that counter only ever grows, so after ~10 suppressed
+ * syncs WeChat starts biasing towards showing a dot for the next non-hidden post. That is benign —
+ * it can only cause an *extra* dot for a post the user is allowed to see, never a leak — so it is
+ * accepted rather than worked around.
+ *
+ * The method returns `void`, so cancellation is `result = null`, and it neither reads nor writes any
+ * state we touch — there is no way for this hook to re-trigger itself.
+ */
+private fun HideContacts.installMomentsRedDotHook() {
+    methodSnsSyncUpdateRedDotCache.hookBefore {
+        // Static two-arg method: args[0] is the NetSceneSnsSync instance the synthetic accessor was
+        // handed, args[1] is the SnsObject. `Username` is a real (unobfuscated) protobuf field.
+        val snsObject = args.getOrNull(1) as? SnsObject ?: return@hookBefore
+        val username = snsObject.Username ?: return@hookBefore
+        if (!isHiddenNow(username)) return@hookBefore
+        WeLogger.i(TAG, "suppressing moments red-dot cache update for $username")
+        result = null
+    }
+}
+
 /**
  * Hides a hidden contact's likes/comments that surface inline under a *mutual friend's* Moments
  * post.
@@ -26,7 +88,7 @@ private const val TAG = "HideContacts.Moments"
  * `.../ui/improve/component/f2.java:765`). Filtering there means every renderer downstream already
  * gets a clean object.
  */
-internal fun HideContacts.installMomentsHooks() {
+private fun HideContacts.installMomentsInlineEntryHook() {
     // `a65.ha6`'s own field names are obfuscated and drift across versions, and the class name
     // itself isn't guaranteed either — so it is never referenced directly. Instead we borrow the
     // same trick FakeMomentsLikes already uses: ha6 is also the return type of

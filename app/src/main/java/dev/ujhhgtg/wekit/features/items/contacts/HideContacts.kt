@@ -74,7 +74,8 @@ import java.lang.reflect.Modifier as JavaModifier
 9. 通讯录内新的朋友 (列表、头像、红点)
 10. 桌面角标与底栏未读计数
 11. 朋友圈消息列表 (点赞与评论)
-12. 共同好友朋友圈动态下的内联点赞/评论 (非 SnsComment 表, 随动态本身下发)"""
+12. 共同好友朋友圈动态下的内联点赞/评论 (非 SnsComment 表, 随动态本身下发)
+13. 发现页「N 位朋友的新动态」头像与红点"""
 )
 object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputBarListener,
     WeDatabaseListenerApi.IQueryListener {
@@ -631,6 +632,31 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     internal val methodSnsInfoToSnsStruct by dexMethod {
         matcher {
             usingEqStrings("snsInfoToSnsStruct", "com.tencent.mm.plugin.sns.data.SnsUtil", "mSnsInfo is null, why?")
+        }
+    }
+
+    /**
+     * `static void c3.H(c3 netSceneSnsSync, SnsObject snsObject)` (8.0.76; the same method is
+     * `c3.I` on 8.0.69) — `NetSceneSnsSync`'s inlined `updateSyncDataCache`, the single writer of
+     * the 发现 tab's "N 位朋友的新动态" state. See hidecontacts/HideContactsMoments.kt.
+     *
+     * Matched on the `SnsMethodCalculate.markStartTimeMs/markEndTimeMs` pair alone, deliberately.
+     * The obvious extra anchors ("preRdUsername" / "isCoverPreRd" /
+     * "updateSyncDataCache build previousRedDotInfo error") belong to a `previousRedDotInfo`
+     * telemetry block that only exists from 8.0.76 onwards — including them would make this
+     * delegate resolve to 0 hits on 8.0.65–8.0.75, and since it has no `allowFailure` that failure
+     * marks the *whole* HideContacts feature as Failed, so `FeaturesLoader` would skip `startup()`
+     * and every other hidden-contact surface would silently stop working.
+     *
+     * The narrower pair is still unambiguous: `"updateSyncDataCache"` occurs nowhere in the app
+     * except inside this one method (8.0.76 `c3.java:106`/`:141`, 8.0.69 `c3.java:103`/`:111`), and
+     * every user of it necessarily also carries the class-name constant from the same call. The
+     * method shape — `static void (c3, SnsObject)` — is identical on both trees, so the hook body
+     * needs no per-version branching.
+     */
+    internal val methodSnsSyncUpdateRedDotCache by dexMethod {
+        matcher {
+            usingEqStrings("updateSyncDataCache", "com.tencent.mm.plugin.sns.model.NetSceneSnsSync")
         }
     }
 
