@@ -10,9 +10,14 @@
 ```
 
 - JDK 21
-- Rust native lib auto-compiles during build (targets: `app/src/main/rust/wekit-native`). Requires:
-  Rust toolchain + Android NDK targets + NDK. `configureCargo` task auto-generates `.cargo/config.toml`
-  from NDK.
+- **Gradle does NOT build the Rust native lib.** `./gradlew assemble*` only packages whatever
+  prebuilt `libwekit_native.so` already sits in `app/src/main/jniLibs/<abi>/`. Compiling
+  `app/src/main/rust/wekit-native` and refreshing those `.so` files is xtask's job
+  (`task_build_native`), so **always go through `./x`** — running Gradle directly will silently ship
+  a stale native lib. Requires a Rust toolchain + the Android NDK and its Rust targets;
+  `./x configure` regenerates `wekit-native/.cargo/config.toml` from the local NDK and is invoked
+  automatically by the build tasks.
+- `./x build --native-only` rebuilds just the native lib into `jniLibs/`
 - AGP 9, Gradle version catalog in `gradle/libs.versions.toml`
 
 ## Project Structure
@@ -23,7 +28,9 @@
 - `libs/common/bsh/` — submodule: forked BeanShell interpreter with snapshot serialization (`BshSnapshot`, `BshSnapshotHelper`); snapshots are encrypted AST byte representations used by the WAuxiliary Xposed module; `app/src/main/java/dev/ujhhgtg/wekit/utils/BshSnapshotDecompiler.kt` — decompiles encrypted BeanShell snapshot files back into Java-like source code; the AES key was recovered from WAuxiliary's decompiled source
 - `libs/common/reflekt/` — submodule: reflection utility library (`dev.ujhhgtg.reflekt`)
 - `libs/common/stubs/` — compileOnly stubs for WeChat and Android hidden classes
-- `buildSrc/` — custom Gradle tasks: `GenerateMethodHashesTask` (`IResolveDex` `resolveDex` method MD5 cache), `ConfigureCargoTask` (Rust NDK linker config)
+- `buildSrc/` — custom Gradle tasks: `GenerateMethodHashesTask` (`IResolveDex` `resolveDex` method MD5 cache), `GenerateNewFeaturesTask` (features whose source file was added within 30 days of the HEAD commit → `NewFeatures.ENTRIES`, backing the 新功能 pseudo-category)
+- `xtask/` — build orchestration behind `./x`: native-lib compilation + NDK linker config, APK
+  assembly via Gradle, and Zygisk module packaging/flashing
 
 ## Entry Points & Architecture
 
@@ -42,7 +49,7 @@
 
 - Package namespace: `dev.ujhhgtg.wekit`
 - Min SDK 28, target SDK 37, compile SDK 37
-- Target: WeChat `com.tencent.mm`, versions 8.0.65–8.0.76. Version info in `HostInfo`
+- Target: WeChat `com.tencent.mm`, versions 8.0.65–8.0.76. Current host info in `HostInfo`
 - Process targeting via `TargetProcesses`: override `startup()` to check
   `TargetProcesses.isInMain` / `TargetProcesses.currentType`. Default: main process only.
 - No unit tests — manual testing on real WeChat only
@@ -50,6 +57,10 @@
   the same directory in sync — it's the TypeScript type declaration for the JS scripting API
 - NEVER wrap `hookBefore` and `hookAfter` in a `try-catch`/`runCatching` block. They should NOT fail. If they fail, then it's the module developer's problem.
 - Use `WePrefs.Companion.prefOption` delegates to declare & use preference items easily.
+- Teardown/revert on `onDisable` is **best-effort by design**, not a requirement. Many features
+  irreversibly modify the host view tree; fully reverting them would need complex state management
+  and syncing for little gain, so having the user restart WeChat is the accepted approach. Do NOT
+  report "feature does not undo its changes in `onDisable`" as a bug.
 
 ## Naming Conventions
 
@@ -58,10 +69,10 @@
 
 ## Context you need
 
-- WeChat decompiled sources: ~/coding/wechat_8074
+- WeChat decompiled sources: ~/coding/wechat_80{69,74,76}
 - Decrypted WeChat main database: ./decrypted_wechat.db
 
 ## CI
 
-- GitHub Actions: builds on push/PR to `master` (skips non-code changes)
+- GitHub Actions: builds on push/PR to `master`/`dev` (skips non-code changes)
 - Artifacts automatically published to a release named "CI" + Telegram channel
