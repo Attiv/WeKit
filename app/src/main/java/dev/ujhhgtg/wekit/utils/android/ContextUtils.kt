@@ -24,8 +24,8 @@ inline fun <reified T : Any> Context.getSystemService(): T =
 inline val Context.baseActivity get() = _baseActivity(this)
 
 @Suppress("FunctionName")
-tailrec fun _baseActivity(baseContext: Context): Activity? = when (baseContext) {
+tailrec fun _baseActivity(baseContext: Context?): Activity? = when (baseContext) {
     is Activity -> baseContext
-    is ContextWrapper -> _baseActivity(baseContext)
+    is ContextWrapper -> _baseActivity(baseContext.baseContext)
     else -> null
 }
