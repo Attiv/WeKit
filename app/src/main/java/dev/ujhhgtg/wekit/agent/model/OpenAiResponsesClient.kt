@@ -128,8 +128,10 @@ class OpenAiResponsesClient(
         }
         // Responses names the output-token cap `max_output_tokens` (official field).
         request.maxTokens?.let { put("max_output_tokens", it) }
-        // Responses uses a flat `input` array of typed items.
-        putJsonArray("input") { request.messages.forEach { add(encodeItem(it)) } }
+        // Responses uses a flat `input` array of typed items. One neutral message can expand to
+        // several items (an assistant turn with N tool calls → 1 message + N function_call items),
+        // so the encoder returns a list that is spliced in here.
+        putJsonArray("input") { request.messages.forEach { msg -> encodeItems(msg).forEach { add(it) } } }
         if (request.tools.isNotEmpty()) {
             putJsonArray("tools") {
                 request.tools.forEach { spec ->
@@ -145,55 +147,70 @@ class OpenAiResponsesClient(
         }
     }
 
-    private fun encodeItem(msg: LlmMessage): JsonObject = when (msg.role) {
-        LlmRole.TOOL -> buildJsonObject {
-            put("type", "function_call_output")
-            put("call_id", msg.toolCallId ?: "")
-            put("output", msg.content ?: "")
+    /**
+     * Encodes one provider-neutral message into the Responses `input` items it maps to.
+     *
+     * An assistant turn is NOT a single item in this wire format: its narration is a `message` item
+     * and each tool call is its own `function_call` item. Emitting only the first call (as this used
+     * to) broke every multi-tool-call turn — the engine appends one `function_call_output` per call,
+     * and the next request died with "No tool call found for function call output". The items are
+     * ordered message → function_calls, so each call precedes the outputs that follow it in history.
+     */
+    private fun encodeItems(msg: LlmMessage): List<JsonObject> = when (msg.role) {
+        LlmRole.TOOL -> listOf(
+            buildJsonObject {
+                put("type", "function_call_output")
+                put("call_id", msg.toolCallId ?: "")
+                put("output", msg.content ?: "")
+            }
+        )
+
+        LlmRole.ASSISTANT -> buildList {
+            // Keep the model's narration even when the turn also carries tool calls.
+            if (!msg.content.isNullOrEmpty() || msg.toolCalls.isEmpty()) {
+                add(buildJsonObject {
+                    put("type", "message")
+                    put("role", "assistant")
+                    putJsonArray("content") {
+                        addJsonObject {
+                            put("type", "output_text")
+                            put("text", msg.content ?: "")
+                        }
+                    }
+                })
+            }
+            msg.toolCalls.forEach { tc ->
+                add(buildJsonObject {
+                    put("type", "function_call")
+                    put("call_id", tc.id)
+                    put("name", tc.name)
+                    put("arguments", tc.argumentsJson)
+                })
+            }
         }
 
-        LlmRole.ASSISTANT -> buildJsonObject {
-            // Assistant turns with tool calls are represented as function_call items; text as message.
-            if (msg.toolCalls.isNotEmpty()) {
-                // Emit the first function_call; multiple calls in one item aren't representable,
-                // so callers should keep one tool call per assistant item when replaying history.
-                val tc = msg.toolCalls.first()
-                put("type", "function_call")
-                put("call_id", tc.id)
-                put("name", tc.name)
-                put("arguments", tc.argumentsJson)
-            } else {
+        else -> listOf(
+            buildJsonObject {
                 put("type", "message")
-                put("role", "assistant")
+                put("role", if (msg.role == LlmRole.SYSTEM) "system" else "user")
                 putJsonArray("content") {
-                    addJsonObject {
-                        put("type", "output_text")
-                        put("text", msg.content ?: "")
+                    // Only emit a text part when there's text, or when there are no images to carry it.
+                    if (!msg.content.isNullOrEmpty() || msg.images.isEmpty()) {
+                        addJsonObject {
+                            put("type", "input_text")
+                            put("text", msg.content ?: "")
+                        }
+                    }
+                    // Responses images are `input_image` items with the data URI in `image_url`.
+                    msg.images.forEach { img ->
+                        addJsonObject {
+                            put("type", "input_image")
+                            put("image_url", img.dataUri)
+                        }
                     }
                 }
             }
-        }
-
-        else -> buildJsonObject {
-            put("type", "message")
-            put("role", if (msg.role == LlmRole.SYSTEM) "system" else "user")
-            putJsonArray("content") {
-                // Only emit a text part when there's text, or when there are no images to carry it.
-                if (!msg.content.isNullOrEmpty() || msg.images.isEmpty()) {
-                    addJsonObject {
-                        put("type", "input_text")
-                        put("text", msg.content ?: "")
-                    }
-                }
-                // Responses images are `input_image` items with the data URI in `image_url`.
-                msg.images.forEach { img ->
-                    addJsonObject {
-                        put("type", "input_image")
-                        put("image_url", img.dataUri)
-                    }
-                }
-            }
-        }
+        )
     }
 
     private suspend fun readBodyText(resp: HttpResponse): String =
