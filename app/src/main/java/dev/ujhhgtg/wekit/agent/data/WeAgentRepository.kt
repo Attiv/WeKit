@@ -135,15 +135,25 @@ object WeAgentRepository : ToolPermissionSource {
     fun observeModels(): Flow<List<ModelEntity>> = db.modelDao().observeAll()
     fun observeToolPermissions(): Flow<List<ToolPermissionEntity>> = db.toolPermissionDao().observeAll()
 
-    /** Stores a model provider, encrypting its API key before persistence. */
+    /**
+     * Stores a model provider. Its API key is persisted **as-is** (unencrypted), matching
+     * [ExternalServiceEntity].
+     *
+     * There is deliberately no encryption layer: running WeKit at all requires root, and any key
+     * WeKit could decrypt on its own it would also have to keep unlockable on-device, so a root
+     * holder could recover it from the module's own storage, the request headers, memory, or a
+     * dozen other surfaces. Encrypting here would only obscure the key from its owner.
+     */
     suspend fun upsertModelProvider(provider: ModelProviderEntity) {
-        db.modelProviderDao().upsert(provider.copy(apiKey = provider.apiKey))
+        db.modelProviderDao().upsert(provider)
     }
 
-    /** Reads a model provider with its API key decrypted for use. */
-    suspend fun getDecryptedModelProvider(id: String): ModelProviderEntity? {
-        return db.modelProviderDao().getById(id)?.let { it.copy(apiKey = it.apiKey) }
-    }
+    /**
+     * Reads a model provider, API key included. The key comes straight out of the DB — nothing is
+     * decrypted, because nothing is encrypted (see [upsertModelProvider]).
+     */
+    suspend fun getModelProvider(id: String): ModelProviderEntity? =
+        db.modelProviderDao().getById(id)
 
     // ---------------------------------------------------------------------------
     // Sessions & messages (Phase 7)

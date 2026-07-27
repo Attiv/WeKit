@@ -15,6 +15,10 @@ enum class ModelProviderType {
     GEMINI_INTERACTIONS
 }
 
+/**
+ * A configured LLM endpoint. [apiKey] is stored as-is (unencrypted) — see
+ * [dev.ujhhgtg.wekit.agent.data.WeAgentRepository.upsertModelProvider] for why.
+ */
 @Entity(tableName = "model_providers")
 data class ModelProviderEntity(
     @PrimaryKey val id: String,

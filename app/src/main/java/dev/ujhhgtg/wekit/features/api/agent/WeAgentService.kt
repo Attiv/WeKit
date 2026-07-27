@@ -834,7 +834,7 @@ object WeAgentService : dev.ujhhgtg.wekit.agent.trigger.TriggerManager.TriggerHo
         if (sessionId == currentSessionId.value) {
             withContext(Dispatchers.Main) { currentContextWindow.value = model.contextWindow }
         }
-        val provider = WeAgentRepository.getDecryptedModelProvider(model.providerId) ?: return null
+        val provider = WeAgentRepository.getModelProvider(model.providerId) ?: return null
         val client = runCatching { ModelProviderManager.clientFor(provider) }.getOrNull() ?: return null
         // systemPromptId semantics: null = "默认" (follow settings default), "" = "无" (explicitly none),
         // any other value = that specific prompt.
@@ -875,7 +875,7 @@ object WeAgentService : dev.ujhhgtg.wekit.agent.trigger.TriggerManager.TriggerHo
             ?: firstAvailableModelId()
             ?: return null
         val model = WeAgentRepository.getModel(modelId) ?: return null
-        val provider = WeAgentRepository.getDecryptedModelProvider(model.providerId) ?: return null
+        val provider = WeAgentRepository.getModelProvider(model.providerId) ?: return null
         val client = runCatching { ModelProviderManager.clientFor(provider) }.getOrNull() ?: return null
         return SmallModelRef(client, model.modelIdRemote, model.reasoningEffort, model.maxTokens)
     }

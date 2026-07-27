@@ -50,12 +50,13 @@ fun ModelProviderDetailScreen(providerId: String, onBack: () -> Unit) {
     var provider by remember { mutableStateOf<ModelProviderEntity?>(null) }
 
     // Connection fields are hoisted to screen scope so both "保存" and "自动导入模型" read the live,
-    // possibly-unsaved values (no API-key encryption exists, so no round-trip is needed).
+    // possibly-unsaved values. The API key field holds the key exactly as stored — there is no
+    // encryption anywhere in the pipeline, so nothing has to be encoded/decoded around it.
     var name by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
     LaunchedEffect(providerId) {
-        val fresh = WeAgentRepository.getDecryptedModelProvider(providerId)
+        val fresh = WeAgentRepository.getModelProvider(providerId)
         provider = fresh
         if (fresh != null) {
             name = fresh.name; baseUrl = fresh.baseUrl; apiKey = fresh.apiKey
