@@ -69,7 +69,7 @@
 
 ## Context you need
 
-- WeChat decompiled sources: ~/coding/wechat_80{69,74,76}
+- WeChat decompiled sources: ~/coding/wechat_80{65,67,69,74,76}
 - Decrypted WeChat main database: ./decrypted_wechat.db
 
 ## CI
