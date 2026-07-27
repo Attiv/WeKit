@@ -9,7 +9,6 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.view.View
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.clickable
@@ -35,6 +34,13 @@ import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarApi
 import dev.ujhhgtg.wekit.features.api.ui.WeMainActivityBeautifyApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
+import dev.ujhhgtg.wekit.features.items.contacts.HideContacts.hookNewMessageNotification
+import dev.ujhhgtg.wekit.features.items.contacts.HideContacts.methodAddressMvvmListPreprocessList
+import dev.ujhhgtg.wekit.features.items.contacts.HideContacts.methodFtsSearchChatroomMemberTask
+import dev.ujhhgtg.wekit.features.items.contacts.HideContacts.methodMultiTalkOnInvite
+import dev.ujhhgtg.wekit.features.items.contacts.HideContacts.methodVoipShowFloatingCard
+import dev.ujhhgtg.wekit.features.items.contacts.HideContacts.temporarilyShown
+import dev.ujhhgtg.wekit.features.items.contacts.HideContacts.toggleTemporarilyShown
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installListHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installMomentsHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installSchedules
@@ -55,45 +61,46 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.getSystemService
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.now
+import org.luckypray.dexkit.query.enums.MatchType
 import java.lang.ref.WeakReference
 import kotlin.math.sqrt
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
-import org.luckypray.dexkit.query.enums.MatchType
 import java.lang.reflect.Modifier as JavaModifier
 
 
 @Feature(
     name = "隐藏联系人", categories = ["联系人与群组"], description =
-        """隐藏指定的联系人
-隐藏位置:
-1. 首页对话列表
-2. 通讯录内联系人&群聊列表
-3. 首页搜索界面
-4. 锁屏自动关闭聊天界面
-5. 摇一摇设备关闭聊天界面
-6. 朋友圈信息流
-7. 联系人选择页面
-8. 音视频通话与群通话 (来电横幅、铃声、通知、通话记录)
-9. 通讯录内新的朋友 (列表、头像、红点)
-10. 桌面角标与底栏未读计数
-11. 朋友圈消息列表 (点赞与评论)
-12. 共同好友朋友圈动态下的内联点赞/评论 (非 SnsComment 表, 随动态本身下发)
-13. 发现页「N 位朋友的新动态」头像与红点
-14. 新消息通知 (含微信在 push 进程内直接弹出的轻量推送通知)
-15. 群聊内 @成员选择器
-16. 群成员列表 (查看全部群成员、删除成员、添加管理员、转让群主、群成员记录)
-17. 收藏列表
-18. 视频号点赞列表 (朋友❤过)
-19. 全局搜索 (联系人、聊天记录、群成员、共同群聊、服务通知、小商店、AI 对话)
-20. 通讯录底部「N 位联系人」与「N 个群聊」计数
-21. 拍一拍消息
-22. 微信运动排行榜
-另可配置「定时显示/隐藏」: 按每周重复或单次的时间自动切换临时显示状态, 只改显示, 不改动隐藏列表
-注 1: 临时显示 (#show / 三击标题 / 定时任务) 只恢复界面上的显示, 不恢复通知
-注 2: 除拍一拍外, 以上均为「不显示」而非「删除」, 取消隐藏后内容会原样回来
-注 3: 拍一拍是唯一的破坏性隐藏 — 消息在写入数据库前就被取消, 取消隐藏也无法找回;
-      是否被抑制取决于消息到达那一刻的临时显示状态"""
+//        """隐藏指定的联系人
+//隐藏位置:
+//1. 首页对话列表
+//2. 通讯录内联系人&群聊列表
+//3. 首页搜索界面
+//4. 锁屏自动关闭聊天界面
+//5. 摇一摇设备关闭聊天界面
+//6. 朋友圈信息流
+//7. 联系人选择页面
+//8. 音视频通话与群通话 (来电横幅、铃声、通知、通话记录)
+//9. 通讯录内新的朋友 (列表、头像、红点)
+//10. 桌面角标与底栏未读计数
+//11. 朋友圈消息列表 (点赞与评论)
+//12. 共同好友朋友圈动态下的内联点赞/评论 (非 SnsComment 表, 随动态本身下发)
+//13. 发现页「N 位朋友的新动态」头像与红点
+//14. 新消息通知 (含微信在 push 进程内直接弹出的轻量推送通知)
+//15. 群聊内 @成员选择器
+//16. 群成员列表 (查看全部群成员、删除成员、添加管理员、转让群主、群成员记录)
+//17. 收藏列表
+//18. 视频号点赞列表 (朋友❤过)
+//19. 全局搜索 (联系人、聊天记录、群成员、共同群聊、服务通知、小商店、AI 对话)
+//20. 通讯录底部「N 位联系人」与「N 个群聊」计数
+//21. 拍一拍消息
+//22. 微信运动排行榜
+//另可配置「定时显示/隐藏」: 按每周重复或单次的时间自动切换临时显示状态, 只改显示, 不改动隐藏列表
+//注 1: 临时显示 (#show / 三击标题 / 定时任务) 只恢复界面上的显示, 不恢复通知
+//注 2: 除拍一拍外, 以上均为「不显示」而非「删除」, 取消隐藏后内容会原样回来
+//注 3: 拍一拍是唯一的破坏性隐藏 — 消息在写入数据库前就被取消, 取消隐藏也无法找回;
+//      是否被抑制取决于消息到达那一刻的临时显示状态"""
+"隐藏指定的联系人"
 )
 object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputBarListener,
     WeDatabaseListenerApi.IQueryListener {
@@ -158,52 +165,6 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         runCatching { HostInfo.application.unregisterReceiver(ScreenOffReceiver) }
             .onFailure { WeLogger.w(TAG, "failed to unregister screen off receiver", it) }
     }
-
-    /**
-     * Wraps whatever OnClickListener WeChat had on the main-screen title rather than replacing it.
-     *
-     * The previous version called [android.view.View.setOnClickListener] unconditionally and only
-     * bailed *inside* the lambda when [tripleClickTitle] was off — silently killing WeChat's own
-     * title behaviour even with the option disabled. Delegating keeps the host's behaviour intact,
-     * and reading the preference per click (rather than at install time) means toggling the option
-     * takes effect without recreating LauncherUI.
-     */
-    private class TitleClickListener(
-        private val activity: Activity,
-        /** Not private: the installer unwraps this to avoid nesting wrappers across recreations. */
-        val original: View.OnClickListener?,
-    ) : View.OnClickListener {
-
-        private var clickCount = 0
-        private var lastClickTime = Instant.DISTANT_PAST
-
-        override fun onClick(v: View) {
-            if (!tripleClickTitle) {
-                original?.onClick(v)
-                return
-            }
-            val now = now()
-            if (now - lastClickTime > TRIPLE_TAP_WINDOW) clickCount = 1 else clickCount++
-            lastClickTime = now
-            if (clickCount >= 3) {
-                clickCount = 0
-                toggleTemporarilyShown(activity)
-                return
-            }
-            original?.onClick(v)
-        }
-    }
-
-    // Reads the View's current OnClickListener out of its ListenerInfo, mirroring
-    // SwipeConversationOperations.getAttachedTouchListener.
-    private fun getAttachedClickListener(view: View): View.OnClickListener? = runCatching {
-        val info = view.reflekt()
-            .firstFieldOrNull { name = "mListenerInfo"; superclass() }
-            ?.get() ?: return null
-        info.reflekt()
-            .firstFieldOrNull { name = "mOnClickListener" }
-            ?.get() as? View.OnClickListener
-    }.getOrNull()
 
     private object ShakeDetector : SensorEventListener {
 
@@ -294,13 +255,18 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             // Triple-click on the main-screen title to toggle temporary show/hide.
             val titleView = context.window?.decorView
                 ?.findViewById<TextView>(android.R.id.text1) ?: return@hookAfter
-            // Re-wrap rather than skip when our listener is already attached: doOnCreate can fire
-            // again for a recreated LauncherUI that reuses the decorView, and the old wrapper would
-            // still be holding the previous (destroyed) Activity. Unwrapping first also stops us
-            // from nesting wrappers on every recreation.
-            val existing = getAttachedClickListener(titleView)
-            val original = (existing as? TitleClickListener)?.original ?: existing
-            titleView.setOnClickListener(TitleClickListener(context, original))
+            var clickCount = 0
+            var lastClickTime = Instant.DISTANT_PAST
+            titleView.setOnClickListener {
+                if (!tripleClickTitle) return@setOnClickListener
+                val now = now()
+                if (now - lastClickTime > TRIPLE_TAP_WINDOW) clickCount = 1 else clickCount++
+                lastClickTime = now
+                if (clickCount >= 3) {
+                    clickCount = 0
+                    toggleTemporarilyShown(context)
+                }
+            }
         }
 
         // --- shake to leave ---

@@ -36,7 +36,7 @@ object JavaCrashHandler : Thread.UncaughtExceptionHandler {
     }
 
     override fun uncaughtException(thread: Thread, throwable: Throwable) {
-        if (isHandlingOnThisThread.get()) {
+        if (isHandlingOnThisThread.get()!!) {
             WeLogger.e(
                 TAG,
                 "recursive crash detected, delegating to default handler"

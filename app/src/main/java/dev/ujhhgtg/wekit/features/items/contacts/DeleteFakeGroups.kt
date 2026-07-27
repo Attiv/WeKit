@@ -78,10 +78,10 @@ object DeleteFakeGroups : ClickableFeature() {
                     Button(onClick = {
                         onDismiss()
                         thread(name = "DeleteFakeGroupsThread") {
-                            selectedIds.forEach { id ->
-                                val name = fakeGroups.firstOrNull { it.wxId == id }?.nickname ?: id
-                                deleteFakeGroup(id, name)
-                            }
+                            deleteFakeGroups(
+                                selectedIds,
+                                fakeGroups.associate { it.wxId to it.nickname },
+                            )
                             runOnUiThread {
                                 showToast("已清除 ${selectedIds.size} 个假群组")
                             }
@@ -90,6 +90,21 @@ object DeleteFakeGroups : ClickableFeature() {
                 }
             )
         }
+    }
+
+    /**
+     * Hard-delete the fake groups identified by [fakeGroupIds], then refresh the conversation list
+     * once after the whole batch. Callers that generated exact IDs can reuse this without scanning
+     * every fake group currently present in the database.
+     */
+    internal fun deleteFakeGroups(
+        fakeGroupIds: Collection<String>,
+        displayNames: Map<String, String> = emptyMap(),
+    ) {
+        fakeGroupIds.distinct().forEach { id ->
+            deleteFakeGroup(id, displayNames[id].orEmpty().ifEmpty { id })
+        }
+        if (fakeGroupIds.isNotEmpty()) WeConversationApi.reloadConversations()
     }
 
     /**
@@ -148,9 +163,6 @@ object DeleteFakeGroups : ClickableFeature() {
         }
 
         WeLogger.i(TAG, "fake group deletion complete: $fakeGroupId (anyError=$anyError)")
-
-        // Refresh the conversation list so the entry disappears immediately
-        WeConversationApi.reloadConversations()
     }
 
     /**

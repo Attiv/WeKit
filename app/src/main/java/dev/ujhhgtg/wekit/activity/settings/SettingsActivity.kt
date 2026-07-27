@@ -172,10 +172,16 @@ const val NEW_FEATURES_CATEGORY = "新功能"
  */
 val NEW_FEATURE_ITEMS: List<BaseFeature> by lazy {
     val visibleCategories = FEATURE_CATEGORIES.mapTo(mutableSetOf()) { it.first }
-    val byName = FeaturesProvider.ALL_HOOK_ITEMS.associateBy { it.name }
-    NewFeatures.ENTRIES
-        .mapNotNull { (name, _) -> byName[name] }
-        .filter { item -> item.categories.any { it in visibleCategories } }
+    FeaturesProvider.ALL_HOOK_ITEMS.associateBy { it.name }.values
+        .mapNotNull { item ->
+            NewFeatures.ADDED_AT_BY_NAME[item.name]?.let { addedAt -> item to addedAt }
+        }
+        .filter { (item, _) -> item.categories.any { it in visibleCategories } }
+        .sortedWith(
+            compareByDescending<Pair<BaseFeature, Long>> { it.second }
+                .thenBy { it.first.name },
+        )
+        .map { (item, _) -> item }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +479,6 @@ fun FeatureRow(
         )
     }
 }
-
 
 
 
