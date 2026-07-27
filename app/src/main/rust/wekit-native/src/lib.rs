@@ -23,6 +23,10 @@ use libc::c_void;
 use crate::utils::with_jstring;
 
 fn native_error_string(env: *mut RawJNIEnv, result: Result<(), String>) -> jstring {
+    if env.is_null() {
+        return std::ptr::null_mut();
+    }
+
     match result {
         Ok(()) => std::ptr::null_mut(),
         Err(message) => unsafe {
@@ -56,6 +60,11 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_crash_NativeCrashHandler_installN
                 JNI_FALSE
             }
         })
+    })
+    .flatten()
+    .unwrap_or_else(|| {
+        loge!("install_crash_handler: missing or unreadable path argument");
+        JNI_FALSE
     })
 }
 
@@ -96,12 +105,13 @@ pub unsafe extern "C" fn Java_dev_ujhhgtg_wekit_features_items_chat_MarkdownRend
     });
 
     match result {
-        Ok(html) => unsafe {
+        Some(Ok(html)) => unsafe {
             let fns = *env;
             let c_str = CString::new(html).unwrap_or_default();
             ((*fns).v1_6.NewStringUTF)(env, c_str.as_ptr())
         },
-        Err(_) => std::ptr::null_mut(),
+        // A null return makes the Kotlin side fall back to WeChat's own renderer.
+        Some(Err(_)) | None => std::ptr::null_mut(),
     }
 }
 
@@ -128,6 +138,11 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_AudioUtils_anyToSilk(
             }
         })
     })
+    .flatten()
+    .unwrap_or_else(|| {
+        loge!("any_to_silk: missing or unreadable path argument");
+        JNI_FALSE
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -153,6 +168,11 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_AudioUtils_silkToPcm(
             }
         })
     })
+    .flatten()
+    .unwrap_or_else(|| {
+        loge!("silk_to_pcm: missing or unreadable path argument");
+        JNI_FALSE
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -175,6 +195,11 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_AudioUtils_pcmToMp3(
             }
         })
     })
+    .flatten()
+    .unwrap_or_else(|| {
+        loge!("pcm_to_mp3: missing or unreadable path argument");
+        JNI_FALSE
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -194,6 +219,10 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_AudioUtils_getDurationMs(
             0
         }
     })
+    .unwrap_or_else(|| {
+        loge!("get_audio_duration_ms: missing or unreadable path argument");
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -208,7 +237,9 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_TelegramStickerConverter_tgsToGif
         with_jstring(env, output_path, |output| {
             telegram_sticker::tgs_to_gif(input, output, frame_rate as f32)
         })
-    });
+    })
+    .flatten()
+    .unwrap_or_else(|| Err("missing or unreadable path argument".to_string()));
     native_error_string(env, result)
 }
 
@@ -224,7 +255,9 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_TelegramStickerConverter_webmToGi
         with_jstring(env, output_path, |output| {
             telegram_sticker::webm_to_gif(input, output, remove_rounded_canvas_mask != JNI_FALSE)
         })
-    });
+    })
+    .flatten()
+    .unwrap_or_else(|| Err("missing or unreadable path argument".to_string()));
     native_error_string(env, result)
 }
 
