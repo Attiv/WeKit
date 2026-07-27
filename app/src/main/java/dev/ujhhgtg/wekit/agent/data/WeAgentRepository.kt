@@ -102,12 +102,22 @@ object WeAgentRepository : ToolPermissionSource {
         permissionCache[key(providerId, toolName)] = mode
     }
 
-    /** Registers factory defaults for an MCP provider's tools (defaults to ENABLED per spec §3.2). */
+    /**
+     * Registers factory defaults for an MCP provider's tools.
+     *
+     * Remote tools seed as [ToolMode.MANUAL_APPROVAL], not ENABLED: the server decides what its
+     * tools do *and* what they are called and described, and those descriptions go verbatim into the
+     * model's context — so with a MESSAGE trigger a third party's chat message could otherwise steer
+     * a destructive remote tool with no approval card ever shown. Built-in side-effecting tools are
+     * gated the same way. The user can promote individual tools in the MCP server detail screen.
+     *
+     * Only tools with no row yet are seeded, so a mode the user already picked is never rewritten.
+     */
     suspend fun seedMcpTools(providerId: String, toolNames: List<String>) {
         val permDao = db.toolPermissionDao()
         val existing = permDao.getForProvider(providerId).associateBy { it.toolName }
         val toInsert = toolNames.filter { it !in existing }
-            .map { ToolPermissionEntity(providerId, it, ToolMode.ENABLED) }
+            .map { ToolPermissionEntity(providerId, it, ToolMode.MANUAL_APPROVAL) }
         if (toInsert.isNotEmpty()) {
             permDao.upsertAll(toInsert)
             toInsert.forEach { permissionCache[key(it.providerId, it.toolName)] = it.mode }

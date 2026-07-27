@@ -119,8 +119,13 @@ class McpToolProvider(
                 name = tool.name,
                 description = tool.description ?: "",
                 jsonSchema = buildSchema(tool.inputSchema.properties, tool.inputSchema.required),
-                // MCP tools default to ENABLED — the user already trusted the server by adding it (§3.2).
-                factoryDefaultMode = ToolMode.ENABLED,
+                // Remote tools default to MANUAL_APPROVAL, like side-effecting built-ins. Adding a
+                // server trusts it to be reachable, not to be handed unattended execution: the
+                // server alone decides what each tool does, and its name/description go verbatim
+                // into the model's context, so with a MESSAGE trigger someone else's chat message
+                // could otherwise drive a destructive tool with no approval card. Promote per tool
+                // in 设置 → MCP 服务器.
+                factoryDefaultMode = ToolMode.MANUAL_APPROVAL,
             )
         }
 
