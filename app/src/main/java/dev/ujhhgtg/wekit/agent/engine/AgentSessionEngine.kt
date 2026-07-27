@@ -116,6 +116,15 @@ class AgentSessionEngine(
             while (true) {
                 currentCoroutineContext().ensureActive()
 
+                // The request cap is checked BEFORE the steer-hook fires: the hook consumes the
+                // queued message atomically (and the UI has already cleared the input bar), so
+                // fetching it above the cap check silently swallowed the user's text — never sent,
+                // never persisted.
+                if (requestIndex >= config.maxModelRequests) {
+                    send(AgentEvent.MaxRequestsReached(config.maxModelRequests))
+                    return@channelFlow
+                }
+
                 // Steer-hook: inject a transient user message from the queued-mechanism before the
                 // next API request (not persisted — purely ephemeral steering input).
                 val steerText = config.onFetchSteerMessage?.invoke()?.takeIf { it.isNotBlank() }
@@ -125,10 +134,6 @@ class AgentSessionEngine(
                     // utterance), but the model will respond to it.
                 }
 
-                if (requestIndex >= config.maxModelRequests) {
-                    send(AgentEvent.MaxRequestsReached(config.maxModelRequests))
-                    return@channelFlow
-                }
                 requestIndex++
                 send(AgentEvent.RequestStarted(requestIndex))
 
