@@ -134,6 +134,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
 
     private var useFloating by prefOption("nav_bar_use_floating", false)
     private var useBackdrop by prefOption("nav_bar_use_backdrop", false)
+    private var animatePageChange by prefOption("nav_bar_animate_page_change", false)
     private var showFinderBadge by prefOption("nav_bar_show_finder_badge", true)
     private var hideLabels by prefOption("nav_bar_hide_labels", false)
     private var blurRadius by prefOption("nav_bar_blur_radius", 8)
@@ -247,6 +248,8 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
             }
         }
 
+        val animatePageChange = animatePageChange
+
         "com.tencent.mm.ui.mogic.WxViewPager".toClass().reflekt().apply {
             listOf("setCurrentItem", "setCurrentItemNotify").forEach { methodName ->
                 firstMethod {
@@ -258,6 +261,17 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                     val pagerIndex = visibleWechatIndices.indexOf(logicalIndex)
                     if (pagerIndex >= 0) args[0] = pagerIndex
                     allowLogicalTabCount.set(false)
+                    // The second parameter is the pager's `smoothScroll` flag. WeChat always
+                    // passes false (MainTabUI.TabsAdapter.onTabClick calls
+                    // `setCurrentItem(index, false)`), which is why the content snaps to the new
+                    // tab instantly. Flipping it to true makes WxViewPager animate the same
+                    // horizontal slide a finger swipe produces. Doing this inside the
+                    // `remapProgrammaticTab` guard keeps it scoped to actual tab changes — the
+                    // state-restore and first-layout paths never reach here. Non-adjacent jumps
+                    // sweep past the pages in between, but MainTabUI sets an offscreen page
+                    // limit of 4, so every one of them is alive and renders real content. The
+                    // pager caps the scroll duration at 600ms on its own.
+                    if (animatePageChange) args[1] = true
                 }
             }
         }
@@ -762,6 +776,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
         showComposeDialog(context) {
             var useFloatingInput by remember { mutableStateOf(useFloating) }
             var useBackdropInput by remember { mutableStateOf(useBackdrop) }
+            var animatePageChangeInput by remember { mutableStateOf(animatePageChange) }
             var showFinderBadgeInput by remember { mutableStateOf(showFinderBadge) }
             var hideLabelsInput by remember { mutableStateOf(hideLabels) }
             var blurRadiusInput by remember { mutableFloatStateOf(blurRadius.toFloat()) }
@@ -785,6 +800,15 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                             },
                             headlineContent = { Text("页面管理") },
                             supportingContent = { Text("开关页面及调整顺序，下次启动微信生效") },
+                        )
+                        ListItem(
+                            trailingContent = {
+                                Switch(
+                                    animatePageChangeInput,
+                                    { animatePageChangeInput = it })
+                            },
+                            supportingContent = { Text("点击标签时滑动切换页面，而非直接跳转") },
+                            headlineContent = { Text("启用页面切换动画") },
                         )
                         ListItem(
                             trailingContent = {
@@ -857,6 +881,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                     Button(onClick = {
                         useFloating = useFloatingInput
                         useBackdrop = useBackdropInput
+                        animatePageChange = animatePageChangeInput
                         hideLabels = hideLabelsInput
                         showFinderBadge = showFinderBadgeInput
                         blurRadius = blurRadiusInput.roundToInt()
