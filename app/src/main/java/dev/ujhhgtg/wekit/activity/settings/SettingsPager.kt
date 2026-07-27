@@ -182,6 +182,7 @@ fun SettingsPager(onOpenLicense: () -> Unit) {
                     title = "清理消息内容微信 ID 前缀时允许非标准 ID",
                     summary = "允许处理不带 'wxid_' 前缀的微信 ID, 可能导致误伤消息原始内容 (实验性)",
                     icon = MaterialSymbols.Outlined.Rule_settings,
+                    default = true,
                 )
             }
         }
@@ -553,8 +554,11 @@ private fun PrefSwitch(
     title: String,
     summary: String,
     icon: ImageVector,
+    default: Boolean = false,
 ) {
-    var checked by remember { mutableStateOf(WePrefs.getBoolOrFalse(key)) }
+    // Must match the default declared on the matching `prefOption`, otherwise the switch shows
+    // "off" for a preference that is actually on until the user toggles it once.
+    var checked by remember(key, default) { mutableStateOf(WePrefs.getBoolOrDef(key, default)) }
     SwitchPreference(
         title = title,
         summary = summary,
