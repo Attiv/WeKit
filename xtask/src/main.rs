@@ -1254,7 +1254,9 @@ fn package_zygisk_module(
     normalize_crlf(&module_dir)?;
 
     let version_code = git_output(root, &["rev-list", "--count", "HEAD"])?;
-    let commit_hash = git_output(root, &["rev-parse", "--short", "HEAD"])?;
+    // Fixed width: bare `--short` widens as history grows and varies across git versions, and the
+    // hash ends up in versionName, module.prop and the ZIP filename.
+    let commit_hash = git_output(root, &["rev-parse", "--short=8", "HEAD"])?;
     let version_name = zygisk_version_name(&commit_hash, profile);
     expand_template(
         &module_dir.join("module.prop"),

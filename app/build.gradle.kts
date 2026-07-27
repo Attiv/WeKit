@@ -18,8 +18,10 @@ fun getCommitCount(): Int {
 }
 
 fun getGitHash(): String {
+    // fixed width: bare --short widens as history grows and varies across git versions, which would
+    // make versionName disagree with the hash xtask bakes into module.prop and the Zygisk zip name
     return providers.exec {
-        commandLine("git", "rev-parse", "--short", "HEAD")
+        commandLine("git", "rev-parse", "--short=8", "HEAD")
     }.standardOutput.asText.get().trim()
 }
 

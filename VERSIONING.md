@@ -11,7 +11,7 @@ Both values are computed at build time in `app/build.gradle.kts`.
 | Field         | Source                                                                      | Example       |
 |---------------|-----------------------------------------------------------------------------|---------------|
 | `versionCode` | `git rev-list --count HEAD` — total number of commits in the current branch | `592`         |
-| `versionName` | `"git+"` + `git rev-parse --short HEAD` — short commit hash                 | `git+8920253` |
+| `versionName` | `"git+"` + `git rev-parse --short=8 HEAD` — short commit hash               | `git+89202531` |
 
 - `versionCode` monotonically increases with every commit.
 - `versionName` uniquely identifies the exact build commit.
