@@ -459,28 +459,24 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
                                 showQuickReplyPicker(activity)
                             })
 
-                            list.add("相册" to {
-                                // item views are inflated by the snapshot and only held weakly, so
-                                // they can be collected before the chip is ever tapped
-                                val gridView = firstTool.gridView.get()
-                                val itemView = firstTool.itemView.get()
-                                if (gridView != null && itemView != null) {
-                                    firstTool.onClickListener.onItemClick(gridView, itemView, 0, 0)
-                                }
-                            })
+                            // 系统拍摄 is not a grid entry of its own: it is what long-pressing the
+                            // first item (相册, grid position 0) does. WeChat's long-click listener
+                            // only looks at the position, so the view arguments may stay null.
                             list.add("系统拍摄" to {
                                 firstTool.onLongClickListener.onItemLongClick(null, null, 0, 0)
                             })
 
                             tools.forEach { (name, menuItem) ->
-                                if (name in NAME_TO_ICON_MAP && name != "相册" && name != "系统拍摄") {
+                                if (name in NAME_TO_ICON_MAP && name != "系统拍摄") {
+                                    // item views are inflated by the snapshot and only held weakly,
+                                    // so they can be collected before the chip is ever tapped
                                     val gridView = menuItem.gridView.get() ?: return@forEach
                                     val itemView = menuItem.itemView.get() ?: return@forEach
                                     list.add(name to {
                                         menuItem.onClickListener.onItemClick(
                                             gridView,
                                             itemView,
-                                            menuItem.indexInGrid + 1,
+                                            menuItem.indexInGrid,
                                             0
                                         )
                                     })
