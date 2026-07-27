@@ -104,7 +104,9 @@ fun TriggersScreen(onBack: () -> Unit) {
         show = showEditor,
         existing = editing,
         sessions = sessions,
-        onDismiss = { showEditor = false },
+        // Clear [editing] too: the editor's field state is keyed on it, so leaving it set would keep
+        // the abandoned edits alive and re-show them the next time the same trigger is opened.
+        onDismiss = { showEditor = false; editing = null },
         onSave = { built ->
             scope.launch {
                 WeAgentRepository.upsertTrigger(built)
@@ -194,9 +196,12 @@ private fun TriggerEditorDialog(
         mutableStateOf(scopeOptions.indexOf(existing?.scope ?: TriggerScope.GLOBAL).coerceAtLeast(0))
     }
     val selectedScope = scopeOptions[scopeIndex]
-    // Ordered session list for the picker; preselect the trigger's bound session if any.
+    // Ordered session list for the picker; preselect the trigger's bound session if any. The index is
+    // keyed on the session *ids*, not on [sessionList]: any background turn touching the sessions
+    // table re-emits the flow with a fresh list instance, which would otherwise silently reset the
+    // user's pick. Only sessions appearing/disappearing should invalidate it.
     val sessionList = remember(sessions) { sessions.values.toList() }
-    var boundSessionIndex by remember(existing, sessionList) {
+    var boundSessionIndex by remember(existing, sessions.keys) {
         mutableStateOf(sessionList.indexOfFirst { it.id == existing?.sessionId }.coerceAtLeast(0))
     }
 

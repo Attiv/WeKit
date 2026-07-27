@@ -127,8 +127,12 @@ fun ModelProviderDetailScreen(providerId: String, onBack: () -> Unit) {
                             text = "保存",
                             onClick = {
                                 scope.launch {
-                                    WeAgentRepository.upsertModelProvider(p.copy(name = name, baseUrl = baseUrl, apiKey = apiKey))
+                                    val updated = p.copy(name = name, baseUrl = baseUrl, apiKey = apiKey)
+                                    WeAgentRepository.upsertModelProvider(updated)
                                     ModelProviderManager.invalidate(p.id)
+                                    // Keep the local copy in sync so the scaffold title reflects a rename
+                                    // (LaunchedEffect(providerId) only runs once, on first composition).
+                                    provider = updated
                                 }
                             },
                             colors = ButtonDefaults.textButtonColorsPrimary(),
@@ -248,8 +252,12 @@ private fun ImportModelsDialog(
     onDismiss: () -> Unit,
     onImport: (List<String>) -> Unit,
 ) {
-    // Pre-select every not-yet-added id.
-    val selected = remember { mutableStateListOf<String>().apply { addAll(candidates.filter { it !in existingRemoteIds }) } }
+    // Pre-select every not-yet-added id. Keyed on [candidates] because the dialog is composed
+    // unconditionally: on first composition nothing has been fetched yet, so an unkeyed remember
+    // would freeze an empty selection (and carry the previous run's ticks into the next import).
+    val selected = remember(candidates) {
+        mutableStateListOf<String>().apply { addAll(candidates.filter { it !in existingRemoteIds }) }
+    }
 
     WindowDialog(show = show, title = "导入模型（${candidates.size}）", onDismissRequest = onDismiss) {
         Column {
@@ -302,13 +310,16 @@ private fun ModelDialog(
     onDelete: (() -> Unit)?,
     onSave: (remoteId: String, display: String, effort: String?, customJson: String?, contextWindow: Int?, maxTokens: Int?, supportsVision: Boolean) -> Unit,
 ) {
-    var remoteId by remember { mutableStateOf(existing.modelIdRemote) }
-    var display by remember { mutableStateOf(existing.displayName) }
-    var customJson by remember { mutableStateOf(existing.customJsonOverride.orEmpty()) }
-    var contextWindow by remember { mutableStateOf(existing.contextWindow?.toString().orEmpty()) }
-    var maxTokens by remember { mutableStateOf(existing.maxTokens?.toString().orEmpty()) }
-    var supportsVision by remember { mutableStateOf(existing.supportsVision) }
-    var effortIndex by remember { mutableIntStateOf(EFFORT_GEARS.indexOf(existing.reasoningEffort ?: "off").coerceAtLeast(0)) }
+    // Every field is keyed on [existing] (and [show]): the dialog is composed unconditionally, with a
+    // blank placeholder entity while nothing is being edited, so unkeyed state would capture those
+    // blanks and 保存 would then overwrite the stored model's whole config with them.
+    var remoteId by remember(existing, show) { mutableStateOf(existing.modelIdRemote) }
+    var display by remember(existing, show) { mutableStateOf(existing.displayName) }
+    var customJson by remember(existing, show) { mutableStateOf(existing.customJsonOverride.orEmpty()) }
+    var contextWindow by remember(existing, show) { mutableStateOf(existing.contextWindow?.toString().orEmpty()) }
+    var maxTokens by remember(existing, show) { mutableStateOf(existing.maxTokens?.toString().orEmpty()) }
+    var supportsVision by remember(existing, show) { mutableStateOf(existing.supportsVision) }
+    var effortIndex by remember(existing, show) { mutableIntStateOf(EFFORT_GEARS.indexOf(existing.reasoningEffort ?: "off").coerceAtLeast(0)) }
 
     WindowDialog(show = show, title = if (existing.id.isEmpty()) "添加模型" else "编辑模型", onDismissRequest = onDismiss) {
         Column {
