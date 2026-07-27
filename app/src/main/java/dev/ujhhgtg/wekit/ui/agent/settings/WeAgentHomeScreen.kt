@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -18,8 +19,6 @@ import dev.ujhhgtg.wekit.agent.data.OverlayMode
 import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
 import dev.ujhhgtg.wekit.agent.data.WeAgentSettings
 import dev.ujhhgtg.wekit.agent.data.entity.ModelEntity
-import dev.ujhhgtg.wekit.agent.data.entity.SystemPromptEntity
-import dev.ujhhgtg.wekit.agent.data.entity.WorkspaceEntity
 import dev.ujhhgtg.wekit.features.api.agent.WeAgentService
 import dev.ujhhgtg.wekit.features.items.system.agent.WeAgentOverlayController
 import dev.ujhhgtg.wekit.ui.content.MiuixSmallTitle
@@ -48,9 +47,13 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsScreen) -> Unit) {
     var defaultSystemPromptId by remember { mutableStateOf<String?>(null) }
     var defaultWorkspaceId by remember { mutableStateOf<String?>(null) }
 
-    var models by remember { mutableStateOf<List<ModelEntity>>(emptyList()) }
-    var systemPrompts by remember { mutableStateOf<List<SystemPromptEntity>>(emptyList()) }
-    var workspaces by remember { mutableStateOf<List<WorkspaceEntity>>(emptyList()) }
+    // These must come from the live DB flows, not a one-shot read: MiuixStackNavigator keeps the whole
+    // stack composed, so this screen never leaves composition and a LaunchedEffect(Unit) would never
+    // re-run. A model/prompt/workspace added on a child screen has to show up in these dropdowns as
+    // soon as the user comes back.
+    val models by remember { WeAgentRepository.observeModels() }.collectAsState(initial = emptyList())
+    val systemPrompts by remember { WeAgentRepository.observeSystemPrompts() }.collectAsState(initial = emptyList())
+    val workspaces by remember { WeAgentRepository.observeWorkspaces() }.collectAsState(initial = emptyList())
 
     LaunchedEffect(Unit) {
         dynamicTools = WeAgentSettings.toolLoadingMode() == dev.ujhhgtg.wekit.agent.tool.ToolLoadingMode.DYNAMIC
@@ -61,9 +64,6 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsScreen) -> Unit) {
         defaultModelId = WeAgentSettings.defaultModelId()
         defaultSystemPromptId = WeAgentSettings.defaultSystemPromptId()
         defaultWorkspaceId = WeAgentSettings.defaultWorkspaceId()
-        models = WeAgentRepository.getAllModelsOnce()
-        systemPrompts = WeAgentRepository.getAllSystemPromptsOnce()
-        workspaces = WeAgentRepository.observeWorkspacesOnce()
         loaded = true
     }
 
@@ -245,9 +245,13 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsScreen) -> Unit) {
     // setting never appears to persist across screen opens.
     LaunchedEffect(maxRequests, loaded) {
         if (!loaded) return@LaunchedEffect
-        maxRequests.toIntOrNull()?.let {
-            WeAgentSettings.set(WeAgentSettings.KEY_MAX_MODEL_REQUESTS, it.coerceIn(1, 100).toString())
-        }
+        // Blank means "still typing" — don't store anything yet.
+        val typed = maxRequests.toIntOrNull() ?: return@LaunchedEffect
+        val clamped = typed.coerceIn(1, 100)
+        // Write the clamp back into the field as well, otherwise the UI would keep showing the raw
+        // input (e.g. "500" or "0") while a different value is actually stored.
+        if (clamped != typed) maxRequests = clamped.toString()
+        WeAgentSettings.set(WeAgentSettings.KEY_MAX_MODEL_REQUESTS, clamped.toString())
     }
 }
 
