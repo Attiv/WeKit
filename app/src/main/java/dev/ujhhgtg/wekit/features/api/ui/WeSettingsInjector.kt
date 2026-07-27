@@ -380,6 +380,9 @@ object WeSettingsInjector : ApiFeature(), IResolveDex, WeChatInputBarApi.IInputB
                     val activity = thisObject as Activity
                     val intent = activity.intent ?: return@hookBefore
                     intent.getStringExtra(BuildConfig.TAG) ?: return@hookBefore
+                    // 消费掉标记，否则 getIntent() 会一直带着它，
+                    // 之后每次 onNewIntent 都会重新弹出设置界面
+                    intent.removeExtra(BuildConfig.TAG)
                     // wait for resources & theme to init
                     Handler(Looper.getMainLooper()).postDelayed({
                         openSettingsDialog(activity)
@@ -389,8 +392,11 @@ object WeSettingsInjector : ApiFeature(), IResolveDex, WeChatInputBarApi.IInputB
             firstMethod { name = "onNewIntent" }
                 .hookBefore {
                     val activity = thisObject as Activity
-                    val intent = activity.intent ?: return@hookBefore
+                    // LauncherUI 是 singleTop，新的 Intent 在 args[0] 里；
+                    // 此时 getIntent() 还是旧的那一个
+                    val intent = args.getOrNull(0) as? Intent ?: return@hookBefore
                     intent.getStringExtra(BuildConfig.TAG) ?: return@hookBefore
+                    intent.removeExtra(BuildConfig.TAG)
                     openSettingsDialog(activity)
                 }
         }
