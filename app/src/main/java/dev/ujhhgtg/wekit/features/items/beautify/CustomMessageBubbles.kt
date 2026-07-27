@@ -9,6 +9,7 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.NinePatchDrawable
 import android.graphics.drawable.StateListDrawable
 import android.view.View
@@ -18,6 +19,7 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,14 +28,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -78,6 +83,7 @@ import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
 import kotlin.io.path.getLastModifiedTime
+import kotlin.math.roundToInt
 
 @Feature(name = "自定义消息气泡", categories = ["界面美化", "聊天"], description = "自定义聊天中的消息气泡图片和颜色")
 object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateViewListener {
@@ -151,6 +157,9 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
     private var bgThatDark by prefOption("custom_bubbles_bg_that_dark", "#00000000")
     private var bgThisLight by prefOption("custom_bubbles_bg_this_light", "#00000000")
     private var bgThisDark by prefOption("custom_bubbles_bg_this_dark", "#00000000")
+
+    private var themeId by prefOption(BubbleTheme.PREF_KEY, BubbleTheme.NONE.id)
+    private var cornerRadiusDp by prefOption("custom_bubbles_corner_radius", 18f)
 
     // A nine-patch source must keep at least one interior pixel once the marker border is stripped.
     private const val MIN_BUBBLE_SIZE_PX = 3
@@ -283,6 +292,12 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
         }
         val color = parseColor(context, rawColor, label = "背景色", fallback = 0)
 
+        val theme = BubbleTheme.fromId(themeId)
+        if (theme != BubbleTheme.NONE) {
+            applyThemeBubble(bubbleView, theme, isSelfSender, color)
+            return
+        }
+
         val fileName = if (isSelfSender) RIGHT_BUBBLE_FILE else LEFT_BUBBLE_FILE
         val resources = bubbleView.resources
         val constantState = bubbleConstantState(fileName, resources)
@@ -293,11 +308,6 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
             }
             return
         }
-
-        val paddingLeft = bubbleView.paddingLeft
-        val paddingTop = bubbleView.paddingTop
-        val paddingRight = bubbleView.paddingRight
-        val paddingBottom = bubbleView.paddingBottom
 
         // The cached state is untinted; each bind gets its own mutated copies so the per-message
         // background color (and the light/dark variant) never leaks into the shared state.
@@ -312,11 +322,56 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
             setTint(Color.HSVToColor(fArr))
         }
 
-        val stateListDrawable = StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_pressed), pressedDrawable)
-            addState(intArrayOf(android.R.attr.state_focused), pressedDrawable)
-            addState(intArrayOf(), normalDrawable)
+        installBubbleBackground(bubbleView, normalDrawable, pressedDrawable)
+    }
+
+    /**
+     * Built-in themes draw the bubble as a rounded rectangle programmatically, so no nine-patch
+     * asset is involved and the corner radius is user-adjustable. Any imported bubble image is
+     * ignored while a theme is active. A user-entered background color (non-transparent) still
+     * overrides the theme's default.
+     */
+    private fun applyThemeBubble(bubbleView: View, theme: BubbleTheme, isSelfSender: Boolean, colorOverride: Int) {
+        val darkMode = bubbleView.context.isDarkMode
+        val color = if (colorOverride != 0) {
+            colorOverride
+        } else {
+            runCatching { theme.colorsFor(isSelfSender).background(darkMode).toColorInt() }.getOrDefault(0)
         }
+        if (color == 0) return
+
+        val radiusPx = cornerRadiusDp * bubbleView.resources.displayMetrics.density
+        val normalDrawable = GradientDrawable().apply {
+            cornerRadius = radiusPx
+            setColor(color)
+        }
+        val pressedDrawable = GradientDrawable().apply {
+            cornerRadius = radiusPx
+            setColor(pressedColorOf(color))
+        }
+
+        installBubbleBackground(bubbleView, normalDrawable, pressedDrawable)
+    }
+
+    /** Darkened variant of [color] for the pressed/focused state, keeping its alpha. */
+    private fun pressedColorOf(color: Int): Int {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(color, hsv)
+        hsv[2] *= 0.8f
+        return Color.HSVToColor(Color.alpha(color), hsv)
+    }
+
+    private fun installBubbleBackground(bubbleView: View, normal: Drawable, pressed: Drawable) {
+        val stateListDrawable = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), pressed)
+            addState(intArrayOf(android.R.attr.state_focused), pressed)
+            addState(intArrayOf(), normal)
+        }
+
+        val paddingLeft = bubbleView.paddingLeft
+        val paddingTop = bubbleView.paddingTop
+        val paddingRight = bubbleView.paddingRight
+        val paddingBottom = bubbleView.paddingBottom
 
         bubbleView.apply {
             background = stateListDrawable
@@ -416,32 +471,48 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
         }
     }
 
-    private fun getForegroundColor(context: Context, isSelfSender: Boolean): Int {
+    /**
+     * The effective text color, or null for "leave WeChat's default". A blank field means no
+     * override; with a built-in theme active it falls back to the theme's text color instead
+     * (nullable return rather than a -1 sentinel, since -1 is pure white and thus a valid color).
+     */
+    private fun getForegroundColor(context: Context, isSelfSender: Boolean): Int? {
         val rawColor = if (isSelfSender) {
             if (context.isDarkMode) thisDark else thisLight
         } else {
             if (context.isDarkMode) thatDark else thatLight
         }
-        return parseColor(context, rawColor, label = "前景色", fallback = -1)
+
+        if (rawColor.isNotBlank()) {
+            val parsed = runCatching { rawColor.toColorInt() }.getOrNull()
+            if (parsed != null) return parsed
+            if (!colorParseErrorToasted) {
+                colorParseErrorToasted = true
+                showToast(context, "有气泡前景色解析失败! 请检查格式")
+            }
+        }
+
+        val theme = BubbleTheme.fromId(themeId)
+        if (theme == BubbleTheme.NONE) return null
+        return runCatching {
+            theme.colorsFor(isSelfSender).foreground(context.isDarkMode).toColorInt()
+        }.getOrNull()
     }
 
     private fun applyForegroundColor(view: MMNeat7extView, isSelfSender: Boolean) {
-        val color = getForegroundColor(view.context, isSelfSender)
-        if (color == -1) return
+        val color = getForegroundColor(view.context, isSelfSender) ?: return
 
         view.setTextColor(color)
     }
 
     private fun applyForegroundColor(view: TextView, isSelfSender: Boolean) {
-        val color = getForegroundColor(view.context, isSelfSender)
-        if (color == -1) return
+        val color = getForegroundColor(view.context, isSelfSender) ?: return
 
         view.setTextColor(color)
     }
 
     private fun applyForegroundColorByBackgroundColorFilter(view: View, isSelfSender: Boolean) {
-        val color = getForegroundColor(view.context, isSelfSender)
-        if (color == -1) return
+        val color = getForegroundColor(view.context, isSelfSender) ?: return
 
         view.background?.mutate()?.colorFilter = PorterDuffColorFilter(
             color,
@@ -632,6 +703,8 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
         showComposeDialog(context) {
             var selectedSide by remember { mutableStateOf(BubbleSide.OTHER) }
             var pendingDeletion by remember { mutableStateOf<BubbleSide?>(null) }
+            var selectedTheme by remember { mutableStateOf(BubbleTheme.fromId(themeId)) }
+            var cornerRadiusInput by remember { mutableFloatStateOf(cornerRadiusDp) }
             var otherForm by remember {
                 mutableStateOf(
                     BubbleForm(
@@ -697,6 +770,59 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
                     title = { Text("自定义消息气泡") },
                     text = {
                         DefaultColumn(Modifier.verticalScroll(rememberScrollState())) {
+                            Text(
+                                text = "内置主题",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                BubbleTheme.entries.forEach { theme ->
+                                    FilterChip(
+                                        selected = selectedTheme == theme,
+                                        onClick = {
+                                            selectedTheme = theme
+                                            if (theme != BubbleTheme.NONE) {
+                                                cornerRadiusInput = theme.cornerRadiusDp
+                                                otherForm = otherForm.copy(
+                                                    foregroundLight = theme.other.foregroundLight,
+                                                    foregroundDark = theme.other.foregroundDark,
+                                                    backgroundLight = theme.other.backgroundLight,
+                                                    backgroundDark = theme.other.backgroundDark,
+                                                )
+                                                selfForm = selfForm.copy(
+                                                    foregroundLight = theme.self.foregroundLight,
+                                                    foregroundDark = theme.self.foregroundDark,
+                                                    backgroundLight = theme.self.backgroundLight,
+                                                    backgroundDark = theme.self.backgroundDark,
+                                                )
+                                            }
+                                        },
+                                        label = { Text(theme.title) },
+                                    )
+                                }
+                            }
+                            if (selectedTheme != BubbleTheme.NONE) {
+                                Text(
+                                    text = "气泡圆角: ${cornerRadiusInput.roundToInt()}dp",
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Slider(
+                                    value = cornerRadiusInput,
+                                    onValueChange = { cornerRadiusInput = it },
+                                    valueRange = 0f..28f,
+                                )
+                                Text(
+                                    text = "内置主题使用可调圆角的纯色气泡, 已导入的气泡图片将被忽略; " +
+                                            "下方颜色已按主题填充, 可继续微调。确定后将自动应用主题对应的聊天背景, " +
+                                            "可在「应用全局背景」中关闭或替换为自选图片。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+
                             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                                 BubbleSide.entries.forEachIndexed { index, side ->
                                     SegmentedButton(
@@ -740,6 +866,17 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
                                 bgThatDark = otherForm.backgroundDark
                                 bgThisLight = selfForm.backgroundLight
                                 bgThisDark = selfForm.backgroundDark
+
+                                themeId = selectedTheme.id
+                                cornerRadiusDp = cornerRadiusInput
+
+                                // A theme comes with a matching chat background rendered by
+                                // ApplyGlobalBackground; switch that feature on so the background
+                                // shows up without a manual extra step.
+                                if (selectedTheme != BubbleTheme.NONE && !ApplyGlobalBackground.isEnabled) {
+                                    ApplyGlobalBackground.applyToggle(true)
+                                    showToast(context, "已自动启用「应用全局背景」以显示主题聊天背景")
+                                }
                                 onDismiss()
                             },
                         ) {

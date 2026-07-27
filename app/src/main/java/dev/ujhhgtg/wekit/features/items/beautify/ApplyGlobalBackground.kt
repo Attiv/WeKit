@@ -49,6 +49,7 @@ import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.utils.android.isDarkMode
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.nul
 import java.util.WeakHashMap
@@ -79,9 +80,15 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
     private var transparentStatusBar by prefOption("global_bg_transparent_status_bar", false)
     private var opacity by prefOption("global_bg_opacity", 0.10f)
 
+    // Whether the built-in bubble theme's matching background is shown when the user has not
+    // picked their own image. On by default so selecting a theme "just works"; the user can turn
+    // it off here or override it by picking an image (which always wins).
+    private var useThemeBackground by prefOption("global_bg_use_theme_bg", true)
+
     private const val OVERLAY_TAG = "wekit_global_bg_overlay"
     private const val APPLIED_URI_TAG_KEY = 0x55020001
     private const val APPLY_STATUS_BAR_DELAY_MS = 80L
+    private const val THEME_BG_TOKEN_PREFIX = "wekit_theme_bg:"
 
     /**
      * Activities that must never receive the background overlay — full-screen media viewers,
@@ -208,6 +215,8 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
             var hasImage by remember { mutableStateOf(backgroundUri != null) }
             var opacityInput by remember { mutableFloatStateOf(opacity) }
             var transparentStatusBarInput by remember { mutableStateOf(transparentStatusBar) }
+            var useThemeBgInput by remember { mutableStateOf(useThemeBackground) }
+            val currentTheme = BubbleTheme.current
 
             AlertDialogContent(
                 title = { Text("应用全局背景") },
@@ -228,6 +237,7 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
                             Button(onClick = {
                                 opacity = opacityInput.miniMaxed()
                                 transparentStatusBar = transparentStatusBarInput
+                                useThemeBackground = useThemeBgInput
                                 onDismiss()
                                 selectBackgroundImage(context)
                             }) {
@@ -266,6 +276,32 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
                             supportingContent = { Text("设置状态栏背景为透明") },
                             headlineContent = { Text("状态栏背景透明") },
                         )
+                        ListItem(
+                            modifier = Modifier.clickable {
+                                useThemeBgInput = !useThemeBgInput
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = useThemeBgInput,
+                                    onCheckedChange = null
+                                )
+                            },
+                            supportingContent = {
+                                Text(
+                                    when {
+                                        currentTheme == BubbleTheme.NONE ->
+                                            "未选择内置气泡主题, 可在「自定义消息气泡」中选择"
+
+                                        hasImage ->
+                                            "当前主题: ${currentTheme.title}; 已设置的自定义图片优先"
+
+                                        else ->
+                                            "未设置自定义图片时, 显示「${currentTheme.title}」主题对应的聊天背景"
+                                    }
+                                )
+                            },
+                            headlineContent = { Text("使用内置主题背景") },
+                        )
                     }
                 },
                 dismissButton = {
@@ -275,6 +311,7 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
                     Button(onClick = {
                         opacity = opacityInput.miniMaxed()
                         transparentStatusBar = transparentStatusBarInput
+                        useThemeBackground = useThemeBgInput
                         showToast("已保存, 重启微信生效")
                         onDismiss()
                     }) {
@@ -345,10 +382,19 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
     }
 
     private fun applyBackground(activity: Activity) {
-        if (backgroundUri == null) return
         if (activity.javaClass.name in blacklistedActivities) return
 
-        val uri = backgroundUri ?: return
+        // A user-picked image always wins; the built-in bubble theme's background is the fallback.
+        val uri = backgroundUri
+        val darkMode = activity.isDarkMode
+        val theme = BubbleTheme.current
+        val themeDrawable = if (uri == null && useThemeBackground) {
+            theme.backgroundDrawable(darkMode)
+        } else {
+            null
+        }
+        if (uri == null && themeDrawable == null) return
+
         val decor = activity.window?.decorView as? ViewGroup ?: return
         val overlay = findOverlay(decor) ?: createOverlay(activity, decor)
 
@@ -356,10 +402,17 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
         overlay.alpha = opacity
         overlay.bringToFront()
 
-        if (overlay.getTag(APPLIED_URI_TAG_KEY) != uri) {
-            overlay.setTag(APPLIED_URI_TAG_KEY, uri)
-            overlay.load(uri) {
-                crossfade(true)
+        // The tag records what's currently displayed; the theme token includes the light/dark
+        // variant so a system theme switch swaps the gradient on the next resume.
+        val token = uri ?: "$THEME_BG_TOKEN_PREFIX${theme.id}:${if (darkMode) "dark" else "light"}"
+        if (overlay.getTag(APPLIED_URI_TAG_KEY) != token) {
+            overlay.setTag(APPLIED_URI_TAG_KEY, token)
+            if (uri != null) {
+                overlay.load(uri) {
+                    crossfade(true)
+                }
+            } else {
+                overlay.setImageDrawable(themeDrawable)
             }
         }
     }
