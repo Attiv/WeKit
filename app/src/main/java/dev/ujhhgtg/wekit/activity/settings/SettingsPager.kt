@@ -2,6 +2,7 @@ package dev.ujhhgtg.wekit.activity.settings
 
 
 import android.content.Context
+import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -94,6 +95,7 @@ import dev.ujhhgtg.wekit.utils.android.showToastSuspend
 import dev.ujhhgtg.wekit.utils.formatEpoch
 import dev.ujhhgtg.wekit.utils.openInSystem
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -748,7 +750,7 @@ private fun ClearConfigDialog(show: Boolean, onDismiss: () -> Unit) {
 private fun UpdateAvailableDialog(
     info: UpdateResult.UpdateAvailable?,
     onDismiss: () -> Unit,
-    context: Context,
+    context: ComponentActivity,
 ) {
     MiuixConfirmDialog(
         show = info != null,
@@ -761,8 +763,17 @@ private fun UpdateAvailableDialog(
         onConfirm = {
             val target = info ?: return@MiuixConfirmDialog
             onDismiss()
-            CoroutineScope(Dispatchers.Default).launch {
-                AppUpdater.downloadAndInstall(context, target.info)
+            // The activity's scope, so closing settings mid-download cancels the download wait
+            // (and with it the BroadcastReceiver it keeps registered on this activity).
+            // This UI is proxied into WeChat's process: an escaping exception here would take
+            // WeChat down with it, so nothing may leave this coroutine.
+            context.lifecycleScope.launch(Dispatchers.Default) {
+                runCatching { AppUpdater.downloadAndInstall(context, target.info) }
+                    .onFailure { e ->
+                        if (e is CancellationException) throw e
+                        WeLogger.e("AppUpdater", "failed to download update", e)
+                        showToastSuspend(context, "下载更新失败: ${e.message ?: "未知错误"}")
+                    }
             }
         },
     )
