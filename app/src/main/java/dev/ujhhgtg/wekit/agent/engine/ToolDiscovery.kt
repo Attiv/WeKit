@@ -36,8 +36,15 @@ object ToolDiscovery {
             }
 
             "search_tools" -> {
-                val kw = keyword?.lowercase().orEmpty()
-                val tools = registry.resolveVisibleTools().filter {
+                // A blank keyword would make `contains("")` match everything, dumping the whole
+                // catalog (every JSON schema) into context — exactly what DYNAMIC loading exists to
+                // avoid. Require a real keyword and point the model at list_tools if it wants all.
+                val kw = keyword?.trim()?.lowercase()
+                if (kw.isNullOrEmpty()) {
+                    return "Error: 'keyword' is required for search_tools and must not be blank. " +
+                            "Use action=list_tools (optionally with a 'provider') if you really want the full catalog."
+                }
+                val tools = registry.resolveVisibleTools(visibility).filter {
                     it.exposedName.lowercase().contains(kw) || it.description.lowercase().contains(kw)
                 }
                 tools.forEach { discovered += it.exposedName }
