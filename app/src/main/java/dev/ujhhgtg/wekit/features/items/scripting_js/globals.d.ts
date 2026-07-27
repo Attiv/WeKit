@@ -108,7 +108,7 @@ declare namespace http {
      * @example
      * const path = http.download("https://example.com/image.jpg");
      * if (path) {
-     *   replyImage(path);
+     *   wechat.replyImage(path);
      * }
      */
     function download(url: string, filename?: string): string | null;
@@ -253,9 +253,9 @@ declare namespace wechat {
      * @param to 接收者的 wxid 或群 ID
      * @param path 图片文件的绝对路径
      * @example
-     * const result = http.download("https://example.com/image.jpg");
-     * if (result.ok) {
-     *   wechat.sendImage("wxid_abc123", result.path);
+     * const path = http.download("https://example.com/image.jpg");
+     * if (path) {
+     *   wechat.sendImage("wxid_abc123", path);
      * }
      */
     function sendImage(to: string, path: string): void;
@@ -289,10 +289,17 @@ declare namespace wechat {
      */
     function sendAppMsg(to: string, content: string): void;
 
-    // --- 消息回复 API (自动回复至发送者) ---
+    // --- 消息回复 API (自动回复至当前会话) ---
+
+    /*
+     * ⚠️ reply* 系列只能在 onMessage 内部（且在其所在线程上）调用：
+     * 回复目标取自“当前正在处理的这条消息”的 talker。
+     * 在 onLoad / onRequest / onResponse / task.run() 等其他位置调用时无目标可用，
+     * 将被忽略并输出一条警告日志。若需在这些位置发消息，请使用 wechat.sendText() 等接口。
+     */
 
     /**
-     * 回复文本消息给当前发送者
+     * 回复文本消息给当前会话
      * @param text 消息文本内容
      * @example
      * function onMessage(talker, content, type, isSend) {
@@ -304,27 +311,27 @@ declare namespace wechat {
     function replyText(text: string): void;
 
     /**
-     * 回复图片消息给当前发送者
+     * 回复图片消息给当前会话
      * @param path 图片文件的绝对路径
      */
     function replyImage(path: string): void;
 
     /**
-     * 回复文件消息给当前发送者
+     * 回复文件消息给当前会话
      * @param path 文件的绝对路径
-     * @param title 文件显示名称（可选）
+     * @param title 文件显示名称（可选，默认取路径中的文件名）
      */
     function replyFile(path: string, title?: string): void;
 
     /**
-     * 回复语音消息给当前发送者
+     * 回复语音消息给当前会话
      * @param path 语音文件的绝对路径（需为 AMR 格式）
      * @param durationMs 语音时长（毫秒）
      */
     function replyVoice(path: string, durationMs: number): void;
 
     /**
-     * 回复卡片消息给当前发送者
+     * 回复卡片消息给当前会话
      * @param content 消息内容
      * @example
      * wechat.replyAppMsg("<msg>...</msg>");
@@ -404,6 +411,11 @@ declare namespace hostinfo {
      * 宿主版本名 (versionName)
      */
     const versionName: string;
+
+    /**
+     * 宿主是否为 Google Play 版本
+     */
+    const isHostGooglePlay: boolean;
 }
 
 // --- Xposed Hook API ---
@@ -747,7 +759,7 @@ declare namespace reflect {
     /**
      * 获取 Java 类的封装对象
      * @param className 目标类的全限定名
-     * @returns JavaClass 对象，失败返回 null
+     * @returns JavaClass 对象，失败返回 undefined
      * @example
      * // 创建无参实例
      * const clazz = reflect.toClass("com.example.User");
@@ -769,14 +781,14 @@ declare namespace reflect {
      * const m = reflect.findFirstMethod("com.example.Config", (n) => n === "setup");
      * if (m) m.invoke(cfg, []);
      */
-    function toClass(className: string): JavaClass | null;
+    function toClass(className: string): JavaClass | undefined;
 
     /**
      * 查找类中第一个符合条件的字段
      * @param className 目标类的全限定名
      * @param superclass 是否搜索继承的 public 字段（true 时使用 Class.getFields()，会包含父类的 public 字段）
      * @param condition 过滤条件，接收 (name, type, modifiers)
-     * @returns 匹配的 JavaField，未找到返回 null
+     * @returns 匹配的 JavaField，未找到返回 undefined
      * @example
      * const countField = reflect.findFirstField("com.example.Config", false,
      *   (n, t, m) => n === "debug" && t.name === "boolean"
@@ -785,13 +797,13 @@ declare namespace reflect {
      *   log.i("debug =", countField.get());
      * }
      */
-    function findFirstField(className: string, superclass: boolean, condition: (name: string, type: JavaClass, modifiers: string[]) => boolean): JavaField | null;
+    function findFirstField(className: string, superclass: boolean, condition: (name: string, type: JavaClass, modifiers: string[]) => boolean): JavaField | undefined;
 
     /**
      * 查找类中第一个符合条件的方法
      * @param className 目标类的全限定名
      * @param condition 过滤条件，接收 (name, paramTypes, returnType, modifiers)
-     * @returns 匹配的 JavaMethod，未找到返回 null
+     * @returns 匹配的 JavaMethod，未找到返回 undefined
      * @example
      * const m = reflect.findFirstMethod("com.example.Service",
      *   (name, pt) => name === "handle" && pt.length === 2
@@ -802,7 +814,7 @@ declare namespace reflect {
      *   });
      * }
      */
-    function findFirstMethod(className: string, condition: (name: string, paramTypes: JavaClass[], returnType: JavaClass, modifiers: string[]) => boolean): JavaMethod | null;
+    function findFirstMethod(className: string, condition: (name: string, paramTypes: JavaClass[], returnType: JavaClass, modifiers: string[]) => boolean): JavaMethod | undefined;
 
     /**
      * 查找类中所有符合条件的构造器
@@ -825,7 +837,7 @@ declare namespace reflect {
      * @param className 目标类的全限定名
      * @param superclass 是否仅搜索 public 构造器（true 时使用 Class.getConstructors()，仅返回 public 构造器）
      * @param condition 过滤条件，接收 (name, paramTypes, returnType, modifiers)
-     * @returns 匹配的 JavaConstructor，未找到返回 null
+     * @returns 匹配的 JavaConstructor，未找到返回 undefined
      * @example
      * const ctor = reflect.findFirstConstructor("java.lang.StringBuilder", false,
      *   (name, pt) => pt.length === 1 && pt[0].name === "java.lang.String"
@@ -834,7 +846,7 @@ declare namespace reflect {
      *   const sb = ctor.invoke(["Hello"]);
      * }
      */
-    function findFirstConstructor(className: string, superclass: boolean, condition: (name: string, paramTypes: JavaClass[], returnType: JavaClass, modifiers: string[]) => boolean): JavaConstructor | null;
+    function findFirstConstructor(className: string, superclass: boolean, condition: (name: string, paramTypes: JavaClass[], returnType: JavaClass, modifiers: string[]) => boolean): JavaConstructor | undefined;
 }
 
 // --- DexKit API (基于字节码的搜索) ---
@@ -873,15 +885,15 @@ interface ClassSearcher {
 interface MethodResult {
     /** 匹配到的方法数组 */
     methods: JavaMethod[];
-    /** 如果仅匹配到一个方法则返回之，否则返回 null */
-    single(): JavaMethod | null;
+    /** 如果仅匹配到一个方法则返回之，否则返回 undefined */
+    single(): JavaMethod | undefined;
 }
 
 interface ClassResult {
     /** 匹配到的 JavaClass 对象数组 */
     classes: JavaClass[];
-    /** 如果仅匹配到一个类则返回其 JavaClass 对象，否则返回 null */
-    single(): JavaClass | null;
+    /** 如果仅匹配到一个类则返回其 JavaClass 对象，否则返回 undefined */
+    single(): JavaClass | undefined;
 }
 
 declare namespace dexkit {
@@ -999,21 +1011,43 @@ declare namespace dexkit {
 
 // --- 入口点函数定义 ---
 
+/*
+ * 脚本状态说明
+ *
+ * 每个脚本文件只会被编译并执行一次（在功能启用时），其顶层作用域会一直保留。
+ * 因此顶层声明的变量在各个钩子之间是共享且持久的：
+ *
+ *   var seen = {};                              // 仅在脚本加载时初始化一次
+ *   function onMessage(talker, content, type, isSend) {
+ *     seen[talker] = (seen[talker] || 0) + 1;   // 跨消息累加
+ *     return null;
+ *   }
+ *
+ * onLoad() 对全局变量所做的修改，对 onMessage / onRequest / onResponse 同样可见。
+ * 只有在脚本文件内容发生变化、或功能被关闭后重新启用时，作用域才会重建（此时顶层状态会丢失）。
+ *
+ * 这些钩子运行在微信的数据库线程与网络线程上：同一个脚本不会并发执行，
+ * 但不同脚本之间可能并发，请勿假设脚本之间的执行顺序。
+ */
+
 /**
  * onMessage 钩子可以返回的消息对象结构
+ *
+ * 消息会被发送至“触发本次 onMessage 的会话”（即 talker），等价于对应的 wechat.reply* 调用。
+ * 若必填字段缺失或 type 不被识别，则不会发送任何消息，仅输出一条警告日志。
  */
 interface MessageResponse {
     /** 消息类型
      * @default "text"
      */
-    type?: "text" | "image" | "file" | "voice";
-    /** 文本消息的内容 (仅当 type 为 "text" 时有效) */
+    type?: "text" | "image" | "file" | "voice" | "appmsg";
+    /** 消息内容：文本内容 (type 为 "text") 或卡片 XML (type 为 "appmsg") */
     content?: string;
     /** 文件、图片或语音的绝对路径 (仅当 type 为 "image"/"file"/"voice" 时有效) */
     path?: string;
-    /** 文件标题/显示名称 (可选，仅用于 "file") */
+    /** 文件标题/显示名称 (可选，仅用于 "file"；默认取路径中的文件名) */
     title?: string;
-    /** 语音时长（毫秒，仅用于 "voice"） */
+    /** 语音时长（毫秒，仅用于 "voice"，默认 0） */
     duration?: number;
 }
 
@@ -1034,11 +1068,13 @@ declare function onLoad(): void;
  *   - 49: 分享/链接消息
  *   - 10000: 系统消息
  * @param isSend 是否为自己发出的消息 (0=接收, 1=发送)
- * @returns 可以返回以下任意类型：
- *   - string: 直接发送文本消息
- *   - MessageResponse: 发送复杂消息（图片、文件、语音）
+ * @returns 可以返回以下任意类型（发送目标均为本次消息的 talker）：
+ *   - string: 直接发送文本消息（空字符串不发送）
+ *   - MessageResponse: 发送复杂消息（图片、文件、语音、卡片）
  *   - null/undefined: 不回复
- * 
+ *
+ *   发送失败只会记录日志，不会向微信抛出异常。
+ *
  * @example
  * // 简单文本回复
  * function onMessage(talker, content, type, isSend) {
@@ -1086,8 +1122,10 @@ declare function onMessage(
  * @param uri 请求的目标 URI
  * @param cgiId 请求的 CGI ID
  * @param json 请求数据体对象。可以直接修改它的属性
- * @returns 必须返回修改后的对象，否则修改不会生效
- * 
+ * @returns 必须返回修改后的对象，否则修改不会生效；不返回（或返回 null）表示放弃修改
+ *
+ * @remarks 只有当返回的对象与原始数据体不同时，微信发出的包才会被替换；
+ *   若内容未发生变化（包括所有脚本都未定义 onRequest 的情况），原始数据包将被原样放行
  * @warning 此函数会阻塞请求发送，避免进行耗时操作
  * @warning API 可能在后续版本中改变以支持修改 uri 和 cgiId
  * 
@@ -1102,7 +1140,7 @@ declare function onMessage(
  *   return json;
  * }
  */
-declare function onRequest(uri: string, cgiId: number, json: Record<string, unknown>): Record<string, unknown>;
+declare function onRequest(uri: string, cgiId: number, json: Record<string, unknown>): Record<string, unknown> | null | void;
 
 /**
  * 响应钩子 - 拦截并修改微信收到的网络响应
@@ -1110,8 +1148,10 @@ declare function onRequest(uri: string, cgiId: number, json: Record<string, unkn
  * @param uri 请求的目标 URI
  * @param cgiId 请求的 CGI ID
  * @param json 响应数据体对象。可以直接修改它的属性
- * @returns 必须返回修改后的对象，否则修改不会生效
- * 
+ * @returns 必须返回修改后的对象，否则修改不会生效；不返回（或返回 null）表示放弃修改
+ *
+ * @remarks 只有当返回的对象与原始数据体不同时，微信收到的包才会被替换；
+ *   若内容未发生变化（包括所有脚本都未定义 onResponse 的情况），原始数据包将被原样放行
  * @warning 此函数会阻塞响应处理，避免进行耗时操作
  * @warning API 可能在后续版本中改变以支持修改 uri 和 cgiId
  * 
@@ -1131,7 +1171,7 @@ declare function onRequest(uri: string, cgiId: number, json: Record<string, unkn
  *   return json;
  * }
  */
-declare function onResponse(uri: string, cgiId: number, json: Record<string, unknown>): Record<string, unknown>;
+declare function onResponse(uri: string, cgiId: number, json: Record<string, unknown>): Record<string, unknown> | null | void;
 
 // --- 常用辅助函数（建议在脚本中定义） ---
 
