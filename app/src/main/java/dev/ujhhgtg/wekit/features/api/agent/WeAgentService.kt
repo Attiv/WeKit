@@ -677,6 +677,7 @@ object WeAgentService : dev.ujhhgtg.wekit.agent.trigger.TriggerManager.TriggerHo
                             conditionalPrompts = config.conditionalPrompts,
                             toolLoadingMode = config.toolLoadingMode,
                             maxModelRequests = config.maxModelRequests,
+                            toolVisibility = config.toolVisibility,
                             onFetchSteerMessage = onFetchSteer,
                         ), priorHistory, userText
                     )
@@ -847,8 +848,15 @@ object WeAgentService : dev.ujhhgtg.wekit.agent.trigger.TriggerManager.TriggerHo
         val perTurn = WeAgentRepository.getEnabledPerTurnPrompts().map { it.content }
         val conditionals = WeAgentRepository.getEnabledConditionalPrompts()
         val req = ModelProviderManager.buildRequest(model, emptyList(), emptyList())
-        // Gate ui-screenshot based on whether the session model declares vision support.
-        BuiltinToolProvider.visionToolsVisible = model.supportsVision
+        // Conditional tool gating is snapshotted onto the TurnConfig, never written to a shared flag:
+        // several sessions run concurrently (foreground chat + trigger-fired background turns) and the
+        // tool list is rebuilt on every request, so a global would let whichever session resolved last
+        // decide the vision gate for all of them — stripping ui-screenshot mid-turn from a vision
+        // session, or advertising it to a non-vision model whose provider then 400s on the images.
+        val toolVisibility = dev.ujhhgtg.wekit.agent.tool.ToolVisibility(
+            visionTools = model.supportsVision,
+            fsTools = WeAgentSettings.workspaceEnabled() || WeAgentSettings.memoryEnabled(),
+        )
         return TurnConfig(
             client = client,
             modelIdRemote = model.modelIdRemote,
@@ -860,6 +868,7 @@ object WeAgentService : dev.ujhhgtg.wekit.agent.trigger.TriggerManager.TriggerHo
             conditionalPrompts = conditionals,
             toolLoadingMode = WeAgentSettings.toolLoadingMode(),
             maxModelRequests = WeAgentSettings.maxModelRequests(),
+            toolVisibility = toolVisibility,
         )
     }
 

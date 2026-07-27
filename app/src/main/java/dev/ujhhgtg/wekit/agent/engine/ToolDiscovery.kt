@@ -1,6 +1,7 @@
 package dev.ujhhgtg.wekit.agent.engine
 
 import dev.ujhhgtg.wekit.agent.tool.ToolRegistry
+import dev.ujhhgtg.wekit.agent.tool.ToolVisibility
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -11,7 +12,12 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 object ToolDiscovery {
 
-    fun handle(registry: ToolRegistry, args: JsonObject, discovered: MutableSet<String>): String {
+    fun handle(
+        registry: ToolRegistry,
+        args: JsonObject,
+        discovered: MutableSet<String>,
+        visibility: ToolVisibility,
+    ): String {
         val action = args["action"]?.jsonPrimitive?.content ?: return "Error: missing 'action'"
         val providerFilter = args["provider"]?.jsonPrimitive?.content
         val keyword = args["keyword"]?.jsonPrimitive?.content
@@ -23,7 +29,7 @@ object ToolDiscovery {
                 .ifEmpty { "No providers." }
 
             "list_tools" -> {
-                val tools = registry.resolveVisibleTools()
+                val tools = registry.resolveVisibleTools(visibility)
                     .filter { providerFilter == null || it.provider.id == providerFilter || it.provider.name == providerFilter }
                 tools.forEach { discovered += it.exposedName }
                 renderTools(tools)

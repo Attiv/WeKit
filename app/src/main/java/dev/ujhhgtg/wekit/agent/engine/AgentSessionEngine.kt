@@ -41,6 +41,14 @@ class TurnConfig(
     /** Per-model max output tokens, or null to omit the field (provider default). */
     val maxTokens: Int? = null,
     /**
+     * Which conditionally-advertised builtin tools this turn may see (vision / fs). Snapshotted per
+     * turn — never read from a process-global flag — so a background trigger-fired turn on a
+     * non-vision model can't strip `ui-screenshot` out from under a concurrently-running vision turn
+     * (or hand it to a model whose provider then rejects the injected images).
+     */
+    val toolVisibility: dev.ujhhgtg.wekit.agent.tool.ToolVisibility =
+        dev.ujhhgtg.wekit.agent.tool.ToolVisibility.fromGlobals(),
+    /**
      * Queue-after-turn steer-hook: called by the engine at the top of every while-loop iteration. If
      * non-null and returning a non-blank string, the engine injects it as a transient USER message
      * before the next model request (not persisted). The callback should consume the message
@@ -124,7 +132,7 @@ class AgentSessionEngine(
                 requestIndex++
                 send(AgentEvent.RequestStarted(requestIndex))
 
-                val wireTools = registry.requestTools(config.toolLoadingMode, discovered)
+                val wireTools = registry.requestTools(config.toolLoadingMode, discovered, config.toolVisibility)
                 val request = dev.ujhhgtg.wekit.agent.model.LlmRequest(
                     modelIdRemote = config.modelIdRemote,
                     messages = messages.toList(),
@@ -187,7 +195,7 @@ class AgentSessionEngine(
                 for (call in assistant.toolCalls) {
                     currentCoroutineContext().ensureActive()
                     send(AgentEvent.ToolCallStarted(call.id, call.name, call.argumentsJson))
-                    val (text, status, providerId) = executeToolCall(call, assistant.content, discovered) { toolName ->
+                    val (text, status, providerId) = executeToolCall(call, assistant.content, discovered, config.toolVisibility) { toolName ->
                         send(AgentEvent.ToolAwaitingApproval(call.id, toolName))
                     }
                     messages += LlmMessage(role = LlmRole.TOOL, content = text, toolCallId = call.id)
@@ -224,17 +232,18 @@ class AgentSessionEngine(
         call: LlmToolCall,
         modelExplanation: String?,
         discovered: MutableSet<String>,
+        visibility: dev.ujhhgtg.wekit.agent.tool.ToolVisibility,
         onAwaitingApproval: suspend (String) -> Unit,
     ): Triple<String, ApprovalStatus, String> {
         val args = parseArgs(call.argumentsJson)
 
         // discover_tools meta-tool (§3.3): handled by the engine, always allowed.
         if (call.name == ToolRegistry.DISCOVER_TOOLS_NAME) {
-            val text = ToolDiscovery.handle(registry, args, discovered)
+            val text = ToolDiscovery.handle(registry, args, discovered, visibility)
             return Triple(text, ApprovalStatus.AUTO_ALLOWED, "builtin")
         }
 
-        val tool = registry.findByExposedName(call.name)
+        val tool = registry.findByExposedName(call.name, visibility)
             ?: return Triple("Unknown tool: ${call.name}", ApprovalStatus.AUTO_ALLOWED, "")
 
         if (tool.mode == dev.ujhhgtg.wekit.agent.tool.ToolMode.MANUAL_APPROVAL) onAwaitingApproval(call.name)
