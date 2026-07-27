@@ -26,8 +26,10 @@ class MessageInfo(val instance: Any) {
     val serverId by lazy { getFieldByName<Long>(instance, "field_msgSvrId") }
     val isSend by lazy { getFieldByName<Int>(instance, "field_isSend") }
     val createTime by lazy { getFieldByName<Long>(instance, "field_createTime") }
-    val talker by lazy { getFieldByName<String>(instance, "field_talker") }
-    val content by lazy { getFieldByName<String>(instance, "field_content") }
+    // field_talker / field_content 均由 `cursor.getString()` 或 `contentValues.getAsString()` 填充,
+    // 微信在缺失时会留 null, 故此处降级为空串而非抛 NPE
+    val talker by lazy { getFieldByName<String?>(instance, "field_talker").orEmpty() }
+    val content by lazy { getFieldByName<String?>(instance, "field_content").orEmpty() }
 
     val actualContent: String
         get() {
@@ -63,12 +65,13 @@ class MessageInfo(val instance: Any) {
         }
 
     val imagePath by lazy { getFieldByName<String?>(instance, "field_imgPath") }
-    val lvBuffer by lazy { getFieldByName<ByteArray>(instance, "field_lvbuffer") }
+    /** 微信在没有该列 (或 ContentValues 中无 `lvbuffer` 键) 时会留 null, 因此必须可空 */
+    val lvBuffer by lazy { getFieldByName<ByteArray?>(instance, "field_lvbuffer") }
     val talkerId by lazy { getFieldByName<Int>(instance, "field_talkerId") }
     val seq by lazy { getFieldByName<Long>(instance, "field_msgSeq") }
 
     val msgSource: String by lazy {
-        val buffer = lvBuffer
+        val buffer = lvBuffer ?: return@lazy ""
         if (buffer.isEmpty()) return@lazy ""
         if (buffer[0] != '{'.code.toByte() || buffer.last() != '}'.code.toByte()) return@lazy ""
 
