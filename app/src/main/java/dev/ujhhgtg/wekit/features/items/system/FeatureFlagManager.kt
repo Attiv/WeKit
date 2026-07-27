@@ -55,7 +55,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.luckypray.dexkit.query.matchers.ClassMatcher
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -178,17 +177,26 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
 
     @Volatile
     private var overridesCache: Map<String, FeatureFlagOverride>? = null
-    private val cacheDirty = AtomicBoolean(true)
+    private val cacheLock = Any()
 
+    /**
+     * Returns the override map, loading it on first use after a [markCacheDirty].
+     *
+     * The load itself must happen under [cacheLock]: this is called from the central flag getter
+     * hook, which WeChat invokes concurrently from many threads during startup. If the load throws,
+     * nothing is cached, so the next caller simply retries instead of latching a broken state.
+     */
     private fun getOverrides(): Map<String, FeatureFlagOverride> {
-        if (cacheDirty.compareAndSet(true, false)) {
-            overridesCache = loadOverrides()
+        overridesCache?.let { return it }
+        return synchronized(cacheLock) {
+            overridesCache ?: loadOverrides().also { overridesCache = it }
         }
-        return overridesCache!!
     }
 
     private fun markCacheDirty() {
-        cacheDirty.set(true)
+        synchronized(cacheLock) {
+            overridesCache = null
+        }
     }
 
     // ---------------------------------------------------------------------------
