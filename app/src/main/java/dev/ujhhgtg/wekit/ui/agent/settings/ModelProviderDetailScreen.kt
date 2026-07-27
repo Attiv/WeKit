@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -22,7 +23,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.outlined.Visibility
+import com.composables.icons.materialsymbols.outlined.Visibility_off
 import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
 import dev.ujhhgtg.wekit.agent.data.entity.ModelEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ModelProviderEntity
@@ -33,6 +40,8 @@ import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
@@ -69,6 +78,8 @@ fun ModelProviderDetailScreen(providerId: String, onBack: () -> Unit) {
     // Auto-import state: fetched ids to pick from, plus loading/error.
     var importCandidates by remember { mutableStateOf<List<String>?>(null) }
     var importing by remember { mutableStateOf(false) }
+    // API keys are stored in the clear, so at least don't render them in the clear.
+    var showApiKey by remember { mutableStateOf(false) }
 
     val p = provider
 
@@ -86,7 +97,24 @@ fun ModelProviderDetailScreen(providerId: String, onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     TextField(value = baseUrl, onValueChange = { baseUrl = it }, label = "Base URL", useLabelAsPlaceholder = true, singleLine = true)
                     Spacer(Modifier.height(8.dp))
-                    TextField(value = apiKey, onValueChange = { apiKey = it }, label = "API Key", useLabelAsPlaceholder = true, singleLine = true)
+                    TextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it },
+                        label = "API Key",
+                        useLabelAsPlaceholder = true,
+                        singleLine = true,
+                        visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        trailingIcon = {
+                            IconButton(onClick = { showApiKey = !showApiKey }) {
+                                Icon(
+                                    imageVector = if (showApiKey) MaterialSymbols.Outlined.Visibility_off
+                                    else MaterialSymbols.Outlined.Visibility,
+                                    contentDescription = if (showApiKey) "隐藏" else "显示",
+                                )
+                            }
+                        },
+                    )
                     Spacer(Modifier.height(12.dp))
                     Row(Modifier.fillMaxWidth()) {
                         TextButton(
