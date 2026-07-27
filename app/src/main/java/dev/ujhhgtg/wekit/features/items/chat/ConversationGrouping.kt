@@ -827,7 +827,10 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
                 selectFields = selectFields,
                 whereClause = whereClause
             )
-            getGroupMembers(temp).size
+            // Resolve directly instead of going through getGroupMembers: that cache is keyed by
+            // group id, and this preview group reuses the id of the group being edited, so the
+            // cached (stale) member list would freeze the count at the first result.
+            resolveGroupMembers(temp).size
         }
 
         AlertDialogContent(

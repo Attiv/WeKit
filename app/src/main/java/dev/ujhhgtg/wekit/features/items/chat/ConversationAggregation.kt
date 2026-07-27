@@ -1383,9 +1383,15 @@ object ConversationAggregation : ClickableFeature(),
             }
         }.onFailure {
             WeLogger.w(TAG, "skip folders sync, failed to inspect WeChat database schema", it)
-        }.getOrDefault(false)
-        folderSchemaReady = result
-        return result
+        }.getOrNull()
+        // Only latch the outcome when the check actually completed. A transient failure (the
+        // database being briefly locked or closing right after WeDatabaseApi.isReady flips)
+        // must not permanently disable folder sync for the rest of the process — leave the
+        // cached value unset so the next call retries.
+        if (result != null) {
+            folderSchemaReady = result
+        }
+        return result == true
     }
 
     private fun tableColumns(table: String): Set<String> {
@@ -1577,7 +1583,10 @@ object ConversationAggregation : ClickableFeature(),
                 selectFields = selectFields,
                 whereClause = whereClause
             )
-            getFolderMembers(tempFolder).size
+            // Resolve directly instead of going through getFolderMembers: that cache is keyed
+            // by folder id, and this preview folder reuses the id of the folder being edited,
+            // so the cached (stale) member list would freeze the count at the first result.
+            resolveFolderMembers(tempFolder).size
         }
 
         var hasAvatar by remember(folderId) {
