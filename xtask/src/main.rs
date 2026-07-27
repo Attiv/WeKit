@@ -28,8 +28,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 /// Matches `minSdk` in libs.versions.toml.
 const MIN_SDK: u32 = 28;
 
-/// Minimum NDK major version accepted by `configure`.  Mirrors the check in
-/// ConfigureCargoTask.kt (`minNdk = 29`).
+/// Minimum NDK major version accepted by `configure`; the pinned NDK must be at least this new.
 const MIN_NDK_MAJOR: u32 = 29;
 
 // ── ABI table ─────────────────────────────────────────────────────────────────
@@ -471,46 +470,26 @@ fn find_android_home(workspace_root: &Path) -> Result<String> {
     bail!("ANDROID_HOME env var not set and sdk.dir not found in local.properties");
 }
 
-/// Return the `bin/` path inside the highest qualifying NDK's prebuilt llvm dir.
+/// Return the `bin/` path inside the *pinned* NDK's prebuilt llvm dir.
 ///
-/// Mirrors `findNdkClang` in `buildSrc/src/main/kotlin/ConfigureCargoTask.kt`.
-fn find_ndk_bin_dir(android_home: &str) -> Result<String> {
-    let ndk_root = PathBuf::from(android_home).join("ndk");
-    if !ndk_root.exists() {
-        bail!("NDK directory not found: {}", ndk_root.display());
-    }
-
-    // Collect NDK dirs whose major version >= MIN_NDK_MAJOR.
-    let mut candidates: Vec<(Vec<u32>, PathBuf)> = fs::read_dir(&ndk_root)
-        .with_context(|| format!("could not list {}", ndk_root.display()))?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| {
-            let name = e.file_name();
-            let parts: Vec<u32> = name
-                .to_string_lossy()
-                .split('.')
-                .filter_map(|p| p.parse::<u32>().ok())
-                .collect();
-            if parts.first().copied().unwrap_or(0) >= MIN_NDK_MAJOR {
-                Some((parts, e.path()))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if candidates.is_empty() {
+/// The version comes from `[versions].ndk` in `gradle/libs.versions.toml` — the same value AGP
+/// consumes as `ndkVersion` and the Zygisk strip step uses. Picking the highest installed NDK
+/// instead would silently compile and link the native lib with a toolchain nothing else uses.
+fn find_ndk_bin_dir(root: &Path) -> Result<String> {
+    let ndk_version = pinned_ndk_version(root)?;
+    let major = ndk_version
+        .split('.')
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .unwrap_or(0);
+    if major < MIN_NDK_MAJOR {
         bail!(
-            "no NDK >= {MIN_NDK_MAJOR} found under {}",
-            ndk_root.display()
+            "pinned NDK {ndk_version} is below the required major version {MIN_NDK_MAJOR}; \
+             bump [versions].ndk in gradle/libs.versions.toml"
         );
     }
 
-    // Pick the highest version (lexicographic on version part tuples).
-    candidates.sort_by(|a, b| a.0.cmp(&b.0));
-    let (_, ndk_dir) = candidates.pop().unwrap();
-
+    let ndk_dir = pinned_ndk_dir(root, None)?;
     let host = host_prebuilt_tag()?;
     let bin_dir = ndk_dir
         .join("toolchains/llvm/prebuilt")
@@ -540,8 +519,7 @@ fn host_prebuilt_tag() -> Result<&'static str> {
 
 fn task_configure() -> Result<()> {
     let root = workspace_root();
-    let android_home = find_android_home(&root)?;
-    let ndk_bin_dir = find_ndk_bin_dir(&android_home)?;
+    let ndk_bin_dir = find_ndk_bin_dir(&root)?;
 
     // On Windows the NDK ships `.cmd` wrappers for the clang binaries.
     let ext = if cfg!(target_os = "windows") {
@@ -736,7 +714,7 @@ fn task_zygisk(args: ZygiskArgs) -> Result<()> {
     Ok(())
 }
 
-fn parse_zygisk_ndk_version(text: &str, path: &Path) -> Result<String> {
+fn parse_pinned_ndk_version(text: &str, path: &Path) -> Result<String> {
     let catalog: GradleVersionCatalog =
         toml::from_str(text).with_context(|| format!("could not parse {}", path.display()))?;
     let ndk_version = catalog.versions.ndk.trim();
@@ -746,23 +724,27 @@ fn parse_zygisk_ndk_version(text: &str, path: &Path) -> Result<String> {
     Ok(ndk_version.to_owned())
 }
 
-fn zygisk_ndk_version(root: &Path) -> Result<String> {
+fn pinned_ndk_version(root: &Path) -> Result<String> {
     let path = root.join("gradle/libs.versions.toml");
     let text =
         fs::read_to_string(&path).with_context(|| format!("could not read {}", path.display()))?;
-    parse_zygisk_ndk_version(&text, &path)
+    parse_pinned_ndk_version(&text, &path)
 }
 
-fn zygisk_ndk_dir(root: &Path, requested_version: Option<&str>) -> Result<PathBuf> {
-    let configured_version = zygisk_ndk_version(root)?;
+/// Resolve an NDK install dir, defaulting to the version pinned in `gradle/libs.versions.toml`.
+fn pinned_ndk_dir(root: &Path, requested_version: Option<&str>) -> Result<PathBuf> {
+    let configured_version = pinned_ndk_version(root)?;
     let ndk_version = requested_version.unwrap_or(&configured_version);
     if ndk_version.is_empty() {
-        bail!("Zygisk NDK version must not be empty");
+        bail!("NDK version must not be empty");
     }
     let android_home = find_android_home(root)?;
     let ndk_dir = PathBuf::from(android_home).join("ndk").join(ndk_version);
     if !ndk_dir.is_dir() {
-        bail!("Zygisk NDK {ndk_version} not found: {}", ndk_dir.display());
+        bail!(
+            "NDK {ndk_version} (pinned in gradle/libs.versions.toml) not found: {}",
+            ndk_dir.display()
+        );
     }
     Ok(ndk_dir)
 }
@@ -795,7 +777,7 @@ fn build_zygisk_native(
     save_symbols: bool,
 ) -> Result<()> {
     let abis = resolve_zygisk_abis(abi_names)?;
-    let ndk_dir = zygisk_ndk_dir(root, requested_ndk)?;
+    let ndk_dir = pinned_ndk_dir(root, requested_ndk)?;
     task_configure()?;
 
     for abi in abis {
@@ -1641,7 +1623,7 @@ mod tests {
 
     #[test]
     fn parses_zygisk_ndk_from_gradle_version_catalog() {
-        let ndk_version = parse_zygisk_ndk_version(
+        let ndk_version = parse_pinned_ndk_version(
             "[versions]\nndk = \"30.0.14904198\"\nminSdk = \"28\"\n",
             Path::new(VERSION_CATALOG_PATH),
         )
@@ -1651,14 +1633,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_zygisk_ndk_version() {
+    fn rejects_missing_pinned_ndk_version() {
         let catalog = "[versions]\nminSdk = \"28\"\n";
-        assert!(parse_zygisk_ndk_version(catalog, Path::new(VERSION_CATALOG_PATH)).is_err());
+        assert!(parse_pinned_ndk_version(catalog, Path::new(VERSION_CATALOG_PATH)).is_err());
     }
 
     #[test]
     fn rejects_empty_ndk_version() {
-        let error = parse_zygisk_ndk_version(
+        let error = parse_pinned_ndk_version(
             "[versions]\nndk = \"  \"\nminSdk = \"28\"\n",
             Path::new(VERSION_CATALOG_PATH),
         )
