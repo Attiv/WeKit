@@ -4,6 +4,7 @@ import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
+import dev.ujhhgtg.wekit.utils.TargetProcesses
 import dev.ujhhgtg.wekit.utils.enumValueOfClass
 import org.luckypray.dexkit.query.enums.StringMatchType
 import org.luckypray.dexkit.query.matchers.base.AccessFlagsMatcher
@@ -13,6 +14,9 @@ import java.lang.reflect.Modifier
 object RemoveMenuLimits : SwitchFeature(), IResolveDex {
 
     private lateinit var showAndClickableEnumValue: Any
+
+    // com.tencent.mm.plugin.appbrand.menu.* only runs in the appbrand process.
+    override val shouldLoadInCurrentProcess get() = TargetProcesses.isInMain || TargetProcesses.currentType == TargetProcesses.PROC_APPBRAND
 
     override fun onEnable() {
         listOf(

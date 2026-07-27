@@ -6,6 +6,7 @@ import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
+import dev.ujhhgtg.wekit.utils.TargetProcesses
 
 @Feature(name = "移除开屏广告", categories = ["小程序"], description = "跳过小程序开屏广告")
 object RemoveSplashAds : SwitchFeature(), IResolveDex {
@@ -29,6 +30,9 @@ object RemoveSplashAds : SwitchFeature(), IResolveDex {
             usingEqStrings("MicroMsg.AppBrandAdUtils[AppBrandSplashAd]", "checkCanShowAd, show ad (splash ad debug mode open)")
         }
     }
+
+    // Everything hooked here (AppBrandAdUI included) lives in the appbrand process.
+    override val shouldLoadInCurrentProcess get() = TargetProcesses.isInMain || TargetProcesses.currentType == TargetProcesses.PROC_APPBRAND
 
     override fun onEnable() {
         methodIsAdContact.hookBefore {
