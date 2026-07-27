@@ -1170,7 +1170,43 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String> {
         .context("git output was not UTF-8")
 }
 
+/// Zip `source` into `destination`, atomically.
+///
+/// The archive is streamed into a sibling `.partial` file and renamed onto `destination` only
+/// once the write fully succeeded. Writing straight to the final name would leave a truncated
+/// `.zip` behind on any mid-write failure, and `latest_zygisk_zip` picks by newest mtime — so the
+/// next `./x zygisk flash --skip-build` would happily flash the corrupt archive.
 fn write_zip_from_directory(source: &Path, destination: &Path, write_hashes: bool) -> Result<()> {
+    let file_name = destination.file_name().with_context(|| {
+        format!(
+            "archive destination has no file name: {}",
+            destination.display()
+        )
+    })?;
+    let mut temp_name = file_name.to_owned();
+    temp_name.push(".partial");
+    let temp_path = destination.with_file_name(temp_name);
+
+    if let Err(error) = stream_zip_from_directory(source, &temp_path, write_hashes) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+
+    if let Err(error) = fs::rename(&temp_path, destination) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error).with_context(|| {
+            format!(
+                "could not move {} onto {}",
+                temp_path.display(),
+                destination.display()
+            )
+        });
+    }
+
+    Ok(())
+}
+
+fn stream_zip_from_directory(source: &Path, destination: &Path, write_hashes: bool) -> Result<()> {
     let output = fs::File::create(destination)
         .with_context(|| format!("could not create {}", destination.display()))?;
     let mut zip = ZipWriter::new(BufWriter::new(output));
