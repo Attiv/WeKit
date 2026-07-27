@@ -3,7 +3,7 @@ package dev.ujhhgtg.wekit.agent.model
 import dev.ujhhgtg.wekit.utils.WeLogger
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
-import io.ktor.client.request.post
+import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
@@ -42,76 +42,80 @@ class OpenAiResponsesClient(
 
     override fun stream(request: LlmRequest): Flow<LlmStreamEvent> = flow {
         val body = LlmJson.shallowMerge(buildBody(request), request.customJsonOverride)
-        val resp = http.post(endpoint) {
+        // The response is scoped to `execute { … }`: every early exit below (HTTP error, stream
+        // error, break on [DONE]) previously abandoned an open SSE body channel, leaking the
+        // connection until GC. `execute` releases it on every path, including exceptions.
+        http.preparePost(endpoint) {
             header(HttpHeaders.Authorization, "Bearer $apiKey")
             contentType(ContentType.Application.Json)
             setBody(LlmJson.json.encodeToString(JsonObject.serializer(), body))
-        }
-        if (!resp.status.isSuccess()) {
-            emit(LlmStreamEvent.Failed(LlmException("HTTP ${resp.status.value}: ${readBodyText(resp)}")))
-            return@flow
-        }
+        }.execute { resp ->
+            if (!resp.status.isSuccess()) {
+                emit(LlmStreamEvent.Failed(LlmException("HTTP ${resp.status.value}: ${readBodyText(resp)}")))
+                return@execute
+            }
 
-        val textBuf = StringBuilder()
-        val reasoningBuf = StringBuilder()
-        val toolCalls = mutableListOf<LlmToolCall>()
-        var finishReason: String? = null
-        var usage: LlmUsage? = null
+            val textBuf = StringBuilder()
+            val reasoningBuf = StringBuilder()
+            val toolCalls = mutableListOf<LlmToolCall>()
+            var finishReason: String? = null
+            var usage: LlmUsage? = null
 
-        val channel = resp.bodyAsChannel()
-        while (true) {
-            @Suppress("DEPRECATION")
-            val line = channel.readUTF8Line() ?: break
-            val data = SseParser.dataOrNull(line) ?: continue
-            if (data == "[DONE]") break
-            val event = runCatching { LlmJson.json.parseToJsonElement(data).jsonObject }.getOrNull() ?: continue
+            val channel = resp.bodyAsChannel()
+            while (true) {
+                @Suppress("DEPRECATION")
+                val line = channel.readUTF8Line() ?: break
+                val data = SseParser.dataOrNull(line) ?: continue
+                if (data == "[DONE]") break
+                val event = runCatching { LlmJson.json.parseToJsonElement(data).jsonObject }.getOrNull() ?: continue
 
-            when (event["type"]?.jsonPrimitive?.contentOrNullSafe()) {
-                "response.output_text.delta" ->
-                    event["delta"]?.jsonPrimitive?.contentOrNullSafe()?.let {
-                        textBuf.append(it); emit(LlmStreamEvent.TextDelta(it))
+                when (event["type"]?.jsonPrimitive?.contentOrNullSafe()) {
+                    "response.output_text.delta" ->
+                        event["delta"]?.jsonPrimitive?.contentOrNullSafe()?.let {
+                            textBuf.append(it); emit(LlmStreamEvent.TextDelta(it))
+                        }
+
+                    "response.reasoning_summary_text.delta", "response.reasoning_text.delta" ->
+                        event["delta"]?.jsonPrimitive?.contentOrNullSafe()?.let {
+                            reasoningBuf.append(it); emit(LlmStreamEvent.ReasoningDelta(it))
+                        }
+
+                    "response.output_item.done" -> {
+                        val item = event["item"]?.jsonObject
+                        if (item?.get("type")?.jsonPrimitive?.contentOrNullSafe() == "function_call") {
+                            val id = item["call_id"]?.jsonPrimitive?.contentOrNullSafe()
+                                ?: item["id"]?.jsonPrimitive?.contentOrNullSafe() ?: "call_${toolCalls.size}"
+                            val name = item["name"]?.jsonPrimitive?.contentOrNullSafe() ?: continue
+                            val args = item["arguments"]?.jsonPrimitive?.contentOrNullSafe() ?: "{}"
+                            toolCalls.add(LlmToolCall(id, name, args))
+                        }
                     }
 
-                "response.reasoning_summary_text.delta", "response.reasoning_text.delta" ->
-                    event["delta"]?.jsonPrimitive?.contentOrNullSafe()?.let {
-                        reasoningBuf.append(it); emit(LlmStreamEvent.ReasoningDelta(it))
+                    "response.completed" -> {
+                        finishReason = "stop"
+                        usage = parseUsage(event["response"]?.jsonObject?.get("usage")?.jsonObject) ?: usage
                     }
 
-                "response.output_item.done" -> {
-                    val item = event["item"]?.jsonObject
-                    if (item?.get("type")?.jsonPrimitive?.contentOrNullSafe() == "function_call") {
-                        val id = item["call_id"]?.jsonPrimitive?.contentOrNullSafe()
-                            ?: item["id"]?.jsonPrimitive?.contentOrNullSafe() ?: "call_${toolCalls.size}"
-                        val name = item["name"]?.jsonPrimitive?.contentOrNullSafe() ?: continue
-                        val args = item["arguments"]?.jsonPrimitive?.contentOrNullSafe() ?: "{}"
-                        toolCalls.add(LlmToolCall(id, name, args))
+                    "response.failed", "error" -> {
+                        emit(LlmStreamEvent.Failed(LlmException("Responses stream error: $data")))
+                        return@execute
                     }
-                }
-
-                "response.completed" -> {
-                    finishReason = "stop"
-                    usage = parseUsage(event["response"]?.jsonObject?.get("usage")?.jsonObject) ?: usage
-                }
-
-                "response.failed", "error" -> {
-                    emit(LlmStreamEvent.Failed(LlmException("Responses stream error: $data")))
-                    return@flow
                 }
             }
-        }
 
-        emit(
-            LlmStreamEvent.Completed(
-                LlmMessage(
-                    role = LlmRole.ASSISTANT,
-                    content = textBuf.toString().ifEmpty { null },
-                    reasoning = reasoningBuf.toString().ifEmpty { null },
-                    toolCalls = toolCalls,
-                ),
-                finishReason ?: if (toolCalls.isNotEmpty()) "tool_calls" else null,
-                usage,
+            emit(
+                LlmStreamEvent.Completed(
+                    LlmMessage(
+                        role = LlmRole.ASSISTANT,
+                        content = textBuf.toString().ifEmpty { null },
+                        reasoning = reasoningBuf.toString().ifEmpty { null },
+                        toolCalls = toolCalls,
+                    ),
+                    finishReason ?: if (toolCalls.isNotEmpty()) "tool_calls" else null,
+                    usage,
+                )
             )
-        )
+        }
     }
 
     // -- request body ---------------------------------------------------------
