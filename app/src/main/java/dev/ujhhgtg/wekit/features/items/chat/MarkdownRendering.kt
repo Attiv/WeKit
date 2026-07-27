@@ -48,6 +48,7 @@ import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.isDarkMode
+import dev.ujhhgtg.wekit.utils.collections.LruCache
 import dev.ujhhgtg.wekit.utils.reflection.int
 import dev.ujhhgtg.wekit.utils.strings.replaceEmojis
 import io.noties.markwon.AbstractMarkwonPlugin
@@ -153,21 +154,10 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
                 val canvas = args[0] as Canvas
                 val context = neatTextView.context
 
-                val isDarkMode = context.isDarkMode
-
-                val textPaint = TextPaint().apply {
-                    color =
-                        if (isDarkMode && !isSelfSender) "#CDCDCD".toColorInt() else "#282828".toColorInt()
-
-                    val spSize = 17f
-                    textSize = TypedValue.applyDimension(
-                        TypedValue.COMPLEX_UNIT_SP,
-                        spSize,
-                        context.resources.displayMetrics
-                    )
-
-                    isAntiAlias = true
-                    typeface = Typeface.DEFAULT
+                val textColor = if (context.isDarkMode && !isSelfSender) {
+                    "#CDCDCD".toColorInt()
+                } else {
+                    "#282828".toColorInt()
                 }
 
                 // Respecting bubble constraints
@@ -176,33 +166,17 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
 
                 if (maxWidth <= 0) return@hookBefore
 
-                if (activeRenderMode == RenderMode.MARKWON) {
-                    drawMarkdownWithMarkwon(
-                        canvas,
-                        origText,
-                        neatTextView.paddingLeft.toFloat(),
-                        neatTextView.paddingTop.toFloat(),
-                        maxWidth,
-                        textPaint
-                    )
-                    result = null
-                } else {
-                    val html = convertMarkdownToHtmlNative(origText)
+                // null => the text could not be rendered, leave the original drawing untouched.
+                val staticLayout = obtainLayout(context, origText, maxWidth, textColor)
+                    ?: return@hookBefore
 
-                    if (html != null) {
-                        drawHtmlOnCanvas(
-                            canvas,
-                            html,
-                            neatTextView.paddingLeft.toFloat(),
-                            neatTextView.paddingTop.toFloat(),
-                            maxWidth,
-                            textPaint
-                        )
-                        result = null
-                    } else {
-                        WeLogger.e(TAG, "convertMarkdownToHtmlNative returned nullptr, falling back to original rendering")
-                    }
+                canvas.withTranslation(
+                    neatTextView.paddingLeft.toFloat(),
+                    neatTextView.paddingTop.toFloat()
+                ) {
+                    staticLayout.draw(this)
                 }
+                result = null
             }
     }
 
@@ -320,39 +294,92 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
                 "</appmsg></msg>"
     }
 
-    private fun drawMarkdownWithMarkwon(
-        canvas: Canvas,
-        markdownString: String,
-        x: Float,
-        y: Float,
-        maxWidth: Int,
-        textPaint: TextPaint
-    ) {
-        val node = markwon.parse(markdownString)
-        val spanned = markwon.render(node)
-        val staticLayout = buildStaticLayout(spanned, textPaint, maxWidth)
+    // onDraw fires constantly (invalidation, scrolling, animation, text selection), so parsing the
+    // Markdown and laying it out from scratch on every call is heavy UI-thread work scaling with
+    // the number of visible messages. The finished layout is cached instead and only rebuilt when
+    // something that actually changes it changes.
+    private data class LayoutKey(
+        // Source text: keying on it means a fixed renderer (or edited message) yields a new entry
+        // instead of pinning a stale rendering forever.
+        val text: String,
+        // The measured bubble width: a width change must re-lay-out.
+        val maxWidth: Int,
+        val mode: RenderMode,
+        // A StaticLayout keeps the TextPaint it was built with, so incoming/outgoing bubbles and
+        // light/dark mode each need their own entry.
+        val textColor: Int,
+        val compactHtml: Boolean,
+        val noTextSizing: Boolean
+    )
 
-        canvas.withTranslation(x, y) {
-            staticLayout.draw(this)
+    // Bounded so it can never grow with the message history; only touched from onDraw, i.e. the
+    // main thread, so no synchronization is needed.
+    private const val LAYOUT_CACHE_SIZE = 64
+
+    private val layoutCache = LruCache<LayoutKey, StaticLayout>(maxLimit = LAYOUT_CACHE_SIZE)
+
+    /** Cached [StaticLayout] for [text], or null when the text could not be rendered at all. */
+    private fun obtainLayout(
+        context: Context,
+        text: String,
+        maxWidth: Int,
+        textColor: Int
+    ): StaticLayout? {
+        val key = LayoutKey(
+            text = text,
+            maxWidth = maxWidth,
+            mode = activeRenderMode,
+            textColor = textColor,
+            compactHtml = WePrefs.getBoolOrFalse(KEY_COMPACT_HTML),
+            noTextSizing = WePrefs.getBoolOrFalse(KEY_NO_TEXT_SIZING)
+        )
+        layoutCache[key]?.let { return it }
+
+        val spanned = if (key.mode == RenderMode.MARKWON) {
+            markwon.render(markwon.parse(text))
+        } else {
+            val html = convertMarkdownToHtmlNative(text)
+            if (html == null) {
+                // Nothing is cached for a native-side failure, so a later call retries.
+                WeLogger.e(
+                    TAG,
+                    "convertMarkdownToHtmlNative returned nullptr, falling back to original rendering"
+                )
+                return null
+            }
+            htmlToSpanned(html, key.compactHtml, key.noTextSizing)
         }
+
+        val layout = buildStaticLayout(spanned, buildTextPaint(context, textColor), maxWidth)
+        layoutCache[key] = layout
+        return layout
     }
 
-    private fun drawHtmlOnCanvas(
-        canvas: Canvas,
-        htmlString: String,
-        x: Float,
-        y: Float,
-        maxWidth: Int,
-        textPaint: TextPaint
-    ) {
-        var spanned = Html.fromHtml(
-            htmlString,
-            if (WePrefs.getBoolOrFalse(KEY_COMPACT_HTML))
-                Html.FROM_HTML_MODE_COMPACT
-            else Html.FROM_HTML_MODE_LEGACY
+    private fun buildTextPaint(context: Context, textColor: Int): TextPaint = TextPaint().apply {
+        color = textColor
+
+        val spSize = 17f
+        textSize = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_SP,
+            spSize,
+            context.resources.displayMetrics
         )
 
-        if (WePrefs.getBoolOrFalse(KEY_NO_TEXT_SIZING)) {
+        isAntiAlias = true
+        typeface = Typeface.DEFAULT
+    }
+
+    private fun htmlToSpanned(
+        htmlString: String,
+        compactHtml: Boolean,
+        noTextSizing: Boolean
+    ): Spanned {
+        var spanned = Html.fromHtml(
+            htmlString,
+            if (compactHtml) Html.FROM_HTML_MODE_COMPACT else Html.FROM_HTML_MODE_LEGACY
+        )
+
+        if (noTextSizing) {
             spanned = SpannableStringBuilder(spanned)
 
             val relativeSpans = spanned.getSpans(
@@ -372,11 +399,7 @@ object MarkdownRendering : ClickableFeature(), IResolveDex {
             }
         }
 
-        val staticLayout = buildStaticLayout(spanned, textPaint, maxWidth)
-
-        canvas.withTranslation(x, y) {
-            staticLayout.draw(this)
-        }
+        return spanned
     }
 
     private fun buildStaticLayout(spanned: Spanned, textPaint: TextPaint, maxWidth: Int): StaticLayout {
