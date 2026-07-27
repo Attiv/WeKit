@@ -1,6 +1,7 @@
 package dev.ujhhgtg.wekit.features
 
 import com.google.devtools.ksp.KspExperimental
+import com.google.devtools.ksp.getAllSuperTypes
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.Dependencies
 import com.google.devtools.ksp.processing.KSPLogger
@@ -16,6 +17,7 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.joinToCode
 import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.writeTo
 
@@ -64,12 +66,16 @@ class FeaturesScanner(
             compareBy(
                 // SwitchFeature first, ClickableFeature second
                 { symbol ->
-                    val superTypes = symbol.superTypes
-                        .map { it.resolve().declaration.qualifiedName?.asString() }
+                    // The whole chain, not just the direct supertypes: features are free to extend
+                    // an intermediate base class (e.g. AutoMomentsBase : ClickableFeature()), and
+                    // those must still be bucketed by the core class they ultimately derive from.
+                    val superTypes = symbol.getAllSuperTypes()
+                        .map { it.declaration.qualifiedName?.asString() }
                         .toSet()
                     when {
-                        superTypes.contains("$HOOKS_CORE_PACKAGE.SwitchFeature") -> 0
+                        // ClickableFeature extends SwitchFeature, so the more specific one wins
                         superTypes.contains("$HOOKS_CORE_PACKAGE.ClickableFeature") -> 1
+                        superTypes.contains("$HOOKS_CORE_PACKAGE.SwitchFeature") -> 0
                         else -> 2
                     }
                 },
@@ -104,7 +110,8 @@ class FeaturesScanner(
                     "%T.apply·{ name·=·%S; categories·=·listOf(%L); description·=·%S },",
                     typeName,
                     name,
-                    categories.joinToString(", ") { "\"$it\"" },
+                    // %S so KotlinPoet escapes quotes/backslashes/`$` in category names for us
+                    categories.map { CodeBlock.of("%S", it.toString()) }.joinToCode(", "),
                     description,
                 )
             }
