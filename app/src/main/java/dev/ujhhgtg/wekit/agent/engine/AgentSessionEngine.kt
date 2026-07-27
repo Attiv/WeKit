@@ -140,7 +140,7 @@ class AgentSessionEngine(
                 val wireTools = registry.requestTools(config.toolLoadingMode, discovered, config.toolVisibility)
                 val request = dev.ujhhgtg.wekit.agent.model.LlmRequest(
                     modelIdRemote = config.modelIdRemote,
-                    messages = messages.toList(),
+                    messages = pruneStaleImages(messages),
                     tools = wireTools.map { it.toSpec() },
                     reasoningEffort = config.reasoningEffort,
                     customJsonOverride = config.customJsonOverride,
@@ -226,6 +226,48 @@ class AgentSessionEngine(
         } catch (e: Throwable) {
             WeLogger.e(TAG, "turn failed", e)
             send(AgentEvent.TurnFailed(e))
+        } finally {
+            teardownTurn()
+        }
+    }
+
+    /**
+     * Best-effort cleanup that must run however the turn ended (completion, failure, user cancel).
+     *
+     * - A gesture left held by `ui-touch-down` would otherwise leave WeChat with a stuck ACTION_DOWN
+     *   in its input state until the next `ui-touch-up` that may never come, and pin the Activity.
+     * - JVM handles are weakly held, so nothing is pinned; this just reaps the collected shells.
+     *   A full clear is intentionally avoided — the registry is process-global while turns are
+     *   per-session, and concurrent sessions would lose their live handles.
+     */
+    private fun teardownTurn() {
+        runCatching { dev.ujhhgtg.wekit.agent.ui.UiAutomator.cancelActiveGesture() }
+            .onFailure { WeLogger.w(TAG, "gesture teardown failed: ${it.message}") }
+        runCatching { dev.ujhhgtg.wekit.agent.jvm.JvmObjectRegistry.purgeDead() }
+            .onFailure { WeLogger.w(TAG, "handle purge failed: ${it.message}") }
+    }
+
+    /**
+     * Context economy: screenshots staged by `ui-screenshot` are appended to the working message list
+     * and would otherwise be re-sent on **every** later request of the same turn. In the intended
+     * screenshot → tap → screenshot loop that grows quadratically — by round 10 the body also carries
+     * the 9 stale screenshots, each a few hundred KB of base64, and `maxModelRequests` defaults to 50.
+     *
+     * So only the most recent image message keeps its payload; earlier ones are replaced by a short
+     * note. Text (tool results, narration) is never touched — only the image payloads are dropped.
+     * Do not "optimise" this away: the model only ever needs to see the current screen.
+     */
+    private fun pruneStaleImages(messages: List<LlmMessage>): List<LlmMessage> {
+        // Fast path: zero or one image message — nothing to prune (still a defensive copy, since the
+        // caller keeps mutating its working list after the request is built).
+        if (messages.count { it.images.isNotEmpty() } <= 1) return messages.toList()
+        val newest = messages.indexOfLast { it.images.isNotEmpty() }
+        return messages.mapIndexed { i, m ->
+            if (i == newest || m.images.isEmpty()) m
+            else m.copy(
+                content = "（已省略 ${m.images.size} 张较早的界面截图，只保留最近一次截图以节省上下文）",
+                images = emptyList(),
+            )
         }
     }
 
