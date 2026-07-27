@@ -16,6 +16,8 @@ unsafe extern "C" {
 }
 
 pub const ANDROID_LOG_INFO: c_int = 4;
+// currently no `logw!` call sites, but kept so the log-level family stays complete
+#[allow(dead_code)]
 pub const ANDROID_LOG_WARN: c_int = 5;
 pub const ANDROID_LOG_ERROR: c_int = 6;
 
