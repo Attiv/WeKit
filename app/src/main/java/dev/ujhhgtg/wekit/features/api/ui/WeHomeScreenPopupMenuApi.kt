@@ -22,6 +22,8 @@ import dev.ujhhgtg.wekit.utils.hookBeforeDirectly
 import dev.ujhhgtg.wekit.utils.reflection.BString
 import dev.ujhhgtg.wekit.utils.reflection.bool
 import dev.ujhhgtg.wekit.utils.reflection.int
+import java.lang.reflect.Method
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 @Feature(name = "首页菜单服务", categories = ["API"], description = "提供向首页右上角菜单添加菜单项的能力")
@@ -92,6 +94,36 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
         }
     }
 
+    // adapter 只有在菜单构建时才能拿到，所以 getView 的 Hook 没法在 onEnable 里注册；
+    // 这里按 Method 去重，避免每打开一次菜单就往 getView 上再叠一层 Hook
+    // (那会让每次 getView 都反复安装/卸载 N 个全局的 ImageView.setImageResource Hook)
+    private val hookedGetViewMethods = ConcurrentHashMap.newKeySet<Method>()
+
+    private fun hookAdapterGetViewOnce(baseAdapter: BaseAdapter) {
+        val getView = baseAdapter.reflekt().firstMethod {
+            name = "getView"
+        }
+        if (!hookedGetViewMethods.add(getView.self)) return
+
+        var unhook: HookHandle? = null
+
+        getView.hookBefore {
+            unhook = ImageView::class.reflekt().firstMethod {
+                name = "setImageResource"
+            }.hookBeforeDirectly {
+                val fakeResId = args[0] as Int
+                val imageView = thisObject as ImageView
+                imageView.setImageDrawable(fakeResIdToResMap[fakeResId] ?: return@hookBeforeDirectly)
+                result = null
+            }
+        }
+
+        getView.hookAfter {
+            unhook?.unhook()
+            unhook = null
+        }
+    }
+
     override fun onEnable() {
         // WeChat 8.0.70 moved this to com.tencent.mm.ui.HomeUI
         methodAddItem.hookAfter {
@@ -115,26 +147,7 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
                 }
                 .get()!! as BaseAdapter
 
-            baseAdapter.reflekt().firstMethod {
-                name = "getView"
-            }.apply {
-                var unhook: HookHandle? = null
-
-                hookBefore {
-                    unhook = ImageView::class.reflekt().firstMethod {
-                        name = "setImageResource"
-                    }.hookBeforeDirectly {
-                        val fakeResId = args[0] as Int
-                        val imageView = thisObject as ImageView
-                        imageView.setImageDrawable(fakeResIdToResMap[fakeResId] ?: return@hookBeforeDirectly)
-                        result = null
-                    }
-                }
-
-                hookAfter {
-                    unhook!!.unhook()
-                }
-            }
+            hookAdapterGetViewOnce(baseAdapter)
 
             for (provider in providers) {
                 try {
@@ -203,5 +216,10 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
                 }
             }
         }
+    }
+
+    override fun onDisable() {
+        // getView 的 Hook 已被 unhookAll 撤销，重新启用时需要允许再次注册
+        hookedGetViewMethods.clear()
     }
 }
