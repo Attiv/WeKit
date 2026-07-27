@@ -110,7 +110,8 @@ object AutoLikeMoments : AutoMomentsBase(),
             WeLogger.d(TAG, "scanCachedTargetMoments: found ${snsIds.size} cached moments")
             for (snsId in snsIds) {
                 val snsInfo = WeMomentsApi.getSnsInfoBySnsId(snsId) ?: continue
-                processSnsInfo(snsInfo, "cached")
+                runCatching { processSnsInfo(snsInfo, "cached") }
+                    .onFailure { WeLogger.w(TAG, "auto-like processing failed", it) }
             }
         }
     }
@@ -209,8 +210,9 @@ object AutoLikeMoments : AutoMomentsBase(),
     }
 
     private fun processSnsInfoAsync(snsInfo: Any, source: String) {
-        thread(name = "AutoLikeMomentThread") {
-            processSnsInfo(snsInfo, source)
+        submitItemWork {
+            runCatching { processSnsInfo(snsInfo, source) }
+                .onFailure { WeLogger.w(TAG, "auto-like processing failed", it) }
         }
     }
 

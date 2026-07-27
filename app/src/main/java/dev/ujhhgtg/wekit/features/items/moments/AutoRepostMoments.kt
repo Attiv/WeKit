@@ -114,7 +114,8 @@ object AutoRepostMoments : AutoMomentsBase(),
             WeLogger.d(TAG, "scanCachedTargetMoments: found ${snsIds.size} cached moments")
             for (snsId in snsIds) {
                 val snsInfo = WeMomentsApi.getSnsInfoBySnsId(snsId) ?: continue
-                processSnsInfo(snsInfo, "cached")
+                runCatching { processSnsInfo(snsInfo, "cached") }
+                    .onFailure { WeLogger.w(TAG, "auto-forward processing failed", it) }
             }
         }
     }
@@ -158,7 +159,19 @@ object AutoRepostMoments : AutoMomentsBase(),
         }
         if (!canAttempt(snsTableId)) return
 
-        val result = sendWithDelay(rules.interval.value()) {
+        val result = sendWithDelay(
+            delay = rules.interval.value(),
+            // Committed while the action lock is still held: a repost whose media download outlives
+            // RETRY_INTERVAL_MS (routine for videos/live photos) lets a second thread clear
+            // canAttempt and queue up on the lock, and if the mark landed after the lock was
+            // released that thread would see isAlreadyForwarded == false and post a duplicate.
+            commit = { committed ->
+                if (committed.success) {
+                    handledSnsIds.add(snsTableId)
+                    if (committed.sent) markForwarded(snsTableId)
+                }
+            }
+        ) {
             val latestOwner = WeMomentsApi.getOwnerWxId(snsInfo)?.trim().orEmpty()
             val latestRules = settings.resolve(latestOwner)
             when {
@@ -182,8 +195,6 @@ object AutoRepostMoments : AutoMomentsBase(),
         }
 
         if (result.success) {
-            handledSnsIds.add(snsTableId)
-            if (result.sent) markForwarded(snsTableId)
             WeLogger.i(TAG, "auto-forward $source sent=${result.sent}, owner=$owner, sns=$snsTableId")
         } else {
             val message = "auto-forward $source failed, owner=$owner, sns=$snsTableId, message=${result.message}"
@@ -200,14 +211,20 @@ object AutoRepostMoments : AutoMomentsBase(),
     }
 
     private fun processSnsInfoAsync(snsInfo: Any, source: String) {
-        thread(name = "AutoForwardMomentThread") {
+        submitItemWork {
             runCatching { processSnsInfo(snsInfo, source) }
                 .onFailure { WeLogger.w(TAG, "auto-forward processing failed", it) }
         }
     }
 
+    /**
+     * Runs [block] under the action lock, honouring the configured 操作间隔, then applies [commit]
+     * to the outcome *before* the lock is released so no other thread can observe a published
+     * repost as not-yet-forwarded.
+     */
     private fun sendWithDelay(
         delay: Long,
+        commit: (WeMomentsApi.ActionResult) -> Unit,
         block: () -> WeMomentsApi.ActionResult
     ): WeMomentsApi.ActionResult = synchronized(actionLock) {
         if (delay > 0L) {
@@ -216,6 +233,7 @@ object AutoRepostMoments : AutoMomentsBase(),
         }
         val result = block()
         if (result.sent) lastActionSentAt = System.currentTimeMillis()
+        commit(result)
         result
     }
 

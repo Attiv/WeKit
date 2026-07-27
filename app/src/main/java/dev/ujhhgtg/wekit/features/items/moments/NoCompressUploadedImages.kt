@@ -95,7 +95,7 @@ object NoCompressUploadedImages : ClickableFeature(), IResolveDex {
                     val cachePath = vfsGetCachePathMethod.invoke(null, strConcat2, true) as? String
                     if (cachePath != null) {
                         val dst = cachePath.asPath
-                        src.copyTo(dst)
+                        src.copyTo(dst, overwrite = true)
                     }
                 }
             }
