@@ -80,15 +80,32 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
     private var transparentStatusBar by prefOption("global_bg_transparent_status_bar", false)
     private var opacity by prefOption("global_bg_opacity", 0.10f)
 
-    // Whether the built-in bubble theme's matching background is shown when the user has not
-    // picked their own image. On by default so selecting a theme "just works"; the user can turn
-    // it off here or override it by picking an image (which always wins).
+    // Whether the built-in bubble theme's matching background takes effect (over any user-picked
+    // image). Selecting a theme in CustomMessageBubbles turns this on so the background follows
+    // the theme by default; picking an image here turns it off, and the switch in the dialog lets
+    // the user flip it manually.
     private var useThemeBackground by prefOption("global_bg_use_theme_bg", true)
 
     private const val OVERLAY_TAG = "wekit_global_bg_overlay"
     private const val APPLIED_URI_TAG_KEY = 0x55020001
     private const val APPLY_STATUS_BAR_DELAY_MS = 80L
     private const val THEME_BG_TOKEN_PREFIX = "wekit_theme_bg:"
+
+    // Gradients are far subtler than photos at the default 10% overlay opacity, so theme selection
+    // raises the opacity to at least this value.
+    private const val THEME_BG_OPACITY = 0.40f
+
+    /**
+     * Called by [CustomMessageBubbles] when the user confirms a built-in theme: the theme's
+     * matching background takes over by default — even over a previously picked image — and this
+     * feature switches itself on if needed. The user can opt out (switch below) or replace the
+     * background by picking their own image in this feature's dialog.
+     */
+    fun onBuiltinThemeSelected() {
+        useThemeBackground = true
+        if (opacity < THEME_BG_OPACITY) opacity = THEME_BG_OPACITY
+        if (!isEnabled) applyToggle(true)
+    }
 
     /**
      * Activities that must never receive the background overlay — full-screen media viewers,
@@ -223,10 +240,13 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
                 text = {
                     DefaultColumn {
                         Text(
-                            text = if (hasImage) {
-                                "已设置背景图片"
-                            } else {
-                                "未设置背景图片"
+                            text = when {
+                                useThemeBgInput && currentTheme != BubbleTheme.NONE ->
+                                    "当前显示「${currentTheme.title}」主题背景" +
+                                            if (hasImage) " (自定义图片未启用)" else ""
+
+                                hasImage -> "已设置背景图片"
+                                else -> "未设置背景图片"
                             },
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -288,15 +308,11 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
                             },
                             supportingContent = {
                                 Text(
-                                    when {
-                                        currentTheme == BubbleTheme.NONE ->
-                                            "未选择内置气泡主题, 可在「自定义消息气泡」中选择"
-
-                                        hasImage ->
-                                            "当前主题: ${currentTheme.title}; 已设置的自定义图片优先"
-
-                                        else ->
-                                            "未设置自定义图片时, 显示「${currentTheme.title}」主题对应的聊天背景"
+                                    if (currentTheme == BubbleTheme.NONE) {
+                                        "未选择内置气泡主题, 可在「自定义消息气泡」中选择"
+                                    } else {
+                                        "开启后「${currentTheme.title}」主题背景优先生效; " +
+                                                "关闭或重新选择图片则使用自定义图片"
                                     }
                                 )
                             },
@@ -384,15 +400,16 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
     private fun applyBackground(activity: Activity) {
         if (activity.javaClass.name in blacklistedActivities) return
 
-        // A user-picked image always wins; the built-in bubble theme's background is the fallback.
-        val uri = backgroundUri
+        // With the theme background on and a theme selected, the theme wins; otherwise the
+        // user-picked image (if any) is shown.
         val darkMode = activity.isDarkMode
         val theme = BubbleTheme.current
-        val themeDrawable = if (uri == null && useThemeBackground) {
+        val themeDrawable = if (useThemeBackground && theme != BubbleTheme.NONE) {
             theme.backgroundDrawable(darkMode)
         } else {
             null
         }
+        val uri = if (themeDrawable == null) backgroundUri else null
         if (uri == null && themeDrawable == null) return
 
         val decor = activity.window?.decorView as? ViewGroup ?: return
@@ -486,6 +503,9 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
                 }
 
                 backgroundUri = uri.toString()
+                // Picking an image is an explicit "use my own background": stop the theme
+                // background from overriding it.
+                useThemeBackground = false
                 showToast("背景图片已设置, 重启微信生效")
             }
 

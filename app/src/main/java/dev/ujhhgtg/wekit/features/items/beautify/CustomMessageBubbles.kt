@@ -9,7 +9,6 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.NinePatchDrawable
 import android.graphics.drawable.StateListDrawable
 import android.view.View
@@ -326,10 +325,10 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
     }
 
     /**
-     * Built-in themes draw the bubble as a rounded rectangle programmatically, so no nine-patch
-     * asset is involved and the corner radius is user-adjustable. Any imported bubble image is
-     * ignored while a theme is active. A user-entered background color (non-transparent) still
-     * overrides the theme's default.
+     * Built-in themes draw the bubble programmatically ([ThemeBubbleDrawable]: rounded rect plus
+     * the theme's tail), so no nine-patch asset is involved and the corner radius is
+     * user-adjustable. Any imported bubble image is ignored while a theme is active. A
+     * user-entered background color (non-transparent) still overrides the theme's default.
      */
     private fun applyThemeBubble(bubbleView: View, theme: BubbleTheme, isSelfSender: Boolean, colorOverride: Int) {
         val darkMode = bubbleView.context.isDarkMode
@@ -340,15 +339,10 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
         }
         if (color == 0) return
 
-        val radiusPx = cornerRadiusDp * bubbleView.resources.displayMetrics.density
-        val normalDrawable = GradientDrawable().apply {
-            cornerRadius = radiusPx
-            setColor(color)
-        }
-        val pressedDrawable = GradientDrawable().apply {
-            cornerRadius = radiusPx
-            setColor(pressedColorOf(color))
-        }
+        val density = bubbleView.resources.displayMetrics.density
+        val radiusPx = cornerRadiusDp * density
+        val normalDrawable = ThemeBubbleDrawable(color, radiusPx, theme.tail, isSelfSender, density)
+        val pressedDrawable = ThemeBubbleDrawable(pressedColorOf(color), radiusPx, theme.tail, isSelfSender, density)
 
         installBubbleBackground(bubbleView, normalDrawable, pressedDrawable)
     }
@@ -815,8 +809,8 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
                                     valueRange = 0f..28f,
                                 )
                                 Text(
-                                    text = "内置主题使用可调圆角的纯色气泡, 已导入的气泡图片将被忽略; " +
-                                            "下方颜色已按主题填充, 可继续微调。确定后将自动应用主题对应的聊天背景, " +
+                                    text = "内置主题使用配套绘制的气泡样式 (含圆角与小尾巴), 已导入的气泡图片将被忽略; " +
+                                            "下方颜色已按主题填充, 可继续微调。确定后主题对应的聊天背景将默认生效, " +
                                             "可在「应用全局背景」中关闭或替换为自选图片。",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -870,12 +864,21 @@ object CustomMessageBubbles : ClickableFeature(), WeChatMessageViewApi.ICreateVi
                                 themeId = selectedTheme.id
                                 cornerRadiusDp = cornerRadiusInput
 
-                                // A theme comes with a matching chat background rendered by
-                                // ApplyGlobalBackground; switch that feature on so the background
-                                // shows up without a manual extra step.
-                                if (selectedTheme != BubbleTheme.NONE && !ApplyGlobalBackground.isEnabled) {
-                                    ApplyGlobalBackground.applyToggle(true)
-                                    showToast(context, "已自动启用「应用全局背景」以显示主题聊天背景")
+                                // A theme comes with a matching chat background: hand it over to
+                                // ApplyGlobalBackground, which makes the theme background take
+                                // effect by default (over any previously picked image) and enables
+                                // itself if needed. The user can opt out or replace it there.
+                                if (selectedTheme != BubbleTheme.NONE) {
+                                    val wasActive = ApplyGlobalBackground.isEnabled
+                                    ApplyGlobalBackground.onBuiltinThemeSelected()
+                                    showToast(
+                                        context,
+                                        if (wasActive) {
+                                            "已切换为「${selectedTheme.title}」主题聊天背景"
+                                        } else {
+                                            "已启用「应用全局背景」显示主题背景, 如未生效请重启微信"
+                                        }
+                                    )
                                 }
                                 onDismiss()
                             },
