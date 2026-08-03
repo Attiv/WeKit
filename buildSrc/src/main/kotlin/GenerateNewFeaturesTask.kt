@@ -20,8 +20,9 @@ import java.util.concurrent.TimeUnit
  * faithful stand-in for "when was this feature written". Renames don't count as additions —
  * git's rename detection reports them as `R`, and only `A` entries are collected.
  *
- * Only the feature *name* is extracted here; deciding which of those names are user-visible is
- * left to the UI, which already owns the category list.
+ * Only the feature name and addition time are extracted here; deciding which features are
+ * user-visible and ordering the resulting UI list are left to the UI, which owns the category
+ * list.
  */
 abstract class GenerateNewFeaturesTask : DefaultTask() {
     @get:InputDirectory
@@ -152,8 +153,8 @@ abstract class GenerateNewFeaturesTask : DefaultTask() {
             append("package ${namespace.get()}.features.core\n\n")
             append("object NewFeatures {\n")
             append("    const val WINDOW_DAYS: Int = ${windowDays.get()}\n\n")
-            append("    /** 功能名 -> 其源文件首次加入仓库的 epoch 秒, 最新在前. */\n")
-            append("    val ENTRIES: List<Pair<String, Long>> = listOf(\n")
+            append("    /** 功能名 -> 其源文件首次加入仓库的 epoch 秒. */\n")
+            append("    val ADDED_AT_BY_NAME: Map<String, Long> = mapOf(\n")
             if (body.isNotEmpty()) append(body).append('\n')
             append("    )\n")
             append("}\n")

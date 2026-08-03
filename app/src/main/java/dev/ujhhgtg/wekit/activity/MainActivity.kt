@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,9 +26,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -65,8 +62,7 @@ import dev.ujhhgtg.wekit.ui.content.IconButton
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.GitHubIcon
 import dev.ujhhgtg.wekit.ui.utils.TelegramIcon
-import dev.ujhhgtg.wekit.ui.utils.theme.darkScheme
-import dev.ujhhgtg.wekit.ui.utils.theme.lightScheme
+import dev.ujhhgtg.wekit.ui.utils.theme.ModuleAppTheme
 import dev.ujhhgtg.wekit.utils.android.androidUserId
 import dev.ujhhgtg.wekit.utils.android.getEnabled
 import dev.ujhhgtg.wekit.utils.android.setEnabled
@@ -91,20 +87,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @Composable
-    private fun ModuleTheme(
-        darkTheme: Boolean = isSystemInDarkTheme(),
-        content: @Composable () -> Unit
-    ) {
-        val colorScheme = if (darkTheme) darkScheme else lightScheme
-        MaterialExpressiveTheme(
-            colorScheme = colorScheme,
-            motionScheme = MotionScheme.expressive(),
-        ) {
-            content()
-        }
-    }
-
     private val selectFileLauncher = registerBshSnapshotDecompileLaunchers()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -125,7 +107,7 @@ class MainActivity : ComponentActivity() {
             }
             Shell.getShell()
             setContent {
-                ModuleTheme {
+                ModuleAppTheme {
                     RootTelegramStickerSetPickerContent(
                         discoverInstances = {
                             RootTelegramStickerSetRepository.discoverInstances(
@@ -165,7 +147,7 @@ class MainActivity : ComponentActivity() {
 
         Shell.getShell()
         setContent {
-            ModuleTheme {
+            ModuleAppTheme {
                 AppContent(
                     selectFileLauncher,
                     onUrlClick = { url ->

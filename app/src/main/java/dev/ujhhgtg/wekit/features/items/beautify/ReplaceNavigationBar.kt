@@ -132,9 +132,9 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
         NavItem(3, MaterialSymbols.Outlined.Person, MaterialSymbols.OutlinedFilled.Person, "我")
     )
 
-    private var useFloating by prefOption("nav_bar_use_floating", false)
-    private var useBackdrop by prefOption("nav_bar_use_backdrop", false)
-    private var animatePageChange by prefOption("nav_bar_animate_page_change", false)
+    private var useFloating by prefOption("nav_bar_use_floating", true)
+    private var useBackdrop by prefOption("nav_bar_use_backdrop", true)
+    private var animatePageChange by prefOption("nav_bar_animate_page_change", true)
     private var showFinderBadge by prefOption("nav_bar_show_finder_badge", true)
     private var hideLabels by prefOption("nav_bar_hide_labels", false)
     private var blurRadius by prefOption("nav_bar_blur_radius", 8)
@@ -799,7 +799,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                                 )
                             },
                             headlineContent = { Text("页面管理") },
-                            supportingContent = { Text("开关页面及调整顺序，下次启动微信生效") },
+                            supportingContent = { Text("开关页面及调整顺序, 下次启动微信生效") },
                         )
                         ListItem(
                             trailingContent = {
@@ -807,7 +807,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                                     animatePageChangeInput,
                                     { animatePageChangeInput = it })
                             },
-                            supportingContent = { Text("点击标签时滑动切换页面，而非直接跳转") },
+                            supportingContent = { Text("点击标签时滑动切换页面, 而非直接跳转") },
                             headlineContent = { Text("启用页面切换动画") },
                         )
                         ListItem(

@@ -153,6 +153,7 @@ release 产物位于对应的 `standard/release/` 和 `legacy/release/` 目录�
 ```bash
 # 默认安装 standard debug
 ./x run
+./x run --debug
 
 ./x run --flavor standard --release
 ./x run --flavor legacy

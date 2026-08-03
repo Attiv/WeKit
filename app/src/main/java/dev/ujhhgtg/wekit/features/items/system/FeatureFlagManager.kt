@@ -11,8 +11,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
@@ -22,10 +23,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -40,6 +44,8 @@ import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
+import dev.ujhhgtg.wekit.features.items.system.FeatureFlagManager.cacheLock
+import dev.ujhhgtg.wekit.features.items.system.FeatureFlagManager.markCacheDirty
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.IconButton
@@ -52,7 +58,9 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.reflection.withDexKit
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlinx.serialization.Serializable
 import org.luckypray.dexkit.query.matchers.ClassMatcher
 import kotlin.io.path.div
@@ -73,7 +81,7 @@ import java.lang.reflect.Modifier as JavaModifier
  * - [ly4.g] extends [h]: empty
  *
  * API entry: [fd5.d1].[b](String key, Object defaultValue) — central get method.
- * Key format: fullKey = b() + '_' + h()   (via [ly4.e.l])
+ * Key format: fullKey = b() + '_' + h()    (via [ly4.e.l])
  */
 @Feature(name = "灰度测试管理器", categories = ["系统与隐私"], description = "覆盖微信灰度测试 (Feature Flag) 的值")
 object FeatureFlagManager : ClickableFeature(), IResolveDex {
@@ -112,6 +120,50 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
             usingEqStrings("String", "Int", "Long", "Float", "key", "defaultValue")
             paramTypes(String::class.java, Any::class.java)
             returnType(Any::class.java)
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Flag details data model & reflective resolver
+    // ---------------------------------------------------------------------------
+
+    private data class FlagDetails(
+        val internalName: String = "",
+        val description: String = "(无)",
+        val typeName: String = "",
+        val configKey: String = ""
+    )
+
+    private fun resolveFlagDetails(className: String): FlagDetails {
+        return runCatching {
+            var internalName = ""
+            var description = ""
+            var typeName = ""
+            var configKey = ""
+
+            val flagInstance = className.toClass().createInstance()
+            val methods = flagInstance.reflekt().methods { returnType = String::class }
+
+            if (methods.isNotEmpty()) internalName = methods[0].invoke() as? String ?: ""
+            if (methods.size > 1) description = methods[1].invoke() as? String ?: ""
+            if (methods.size > 2) typeName = methods[2].invoke() as? String ?: ""
+
+            for (method in methods) {
+                val str = method.invoke() as? String ?: continue
+                if (str.startsWith("clicfg")) {
+                    configKey = str
+                }
+            }
+
+            FlagDetails(
+                internalName = internalName,
+                description = description.ifBlank { "(无)" },
+                typeName = typeName,
+                configKey = configKey
+            )
+        }.getOrElse { e ->
+            WeLogger.e(TAG, "failed to instantiate or inspect $className", e)
+            FlagDetails(description = "(无)")
         }
     }
 
@@ -220,6 +272,7 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
             FeatureFlagManagerDialog(onDismiss = onDismiss)
         }
     }
+
     // =====================================================================
     // Composable UI
     // =====================================================================
@@ -230,11 +283,28 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
         var featureFlagClasses by remember { mutableStateOf<List<String>>(emptyList()) }
         var searchQuery by remember { mutableStateOf("") }
 
-        val filteredClasses = remember(searchQuery, featureFlagClasses) {
-            if (searchQuery.isEmpty()) featureFlagClasses
-            else featureFlagClasses.filter { it.contains(searchQuery, ignoreCase = true) }
+        val detailsMap = remember { mutableStateMapOf<String, FlagDetails>() }
+        val listState = rememberLazyListState()
+
+        var selectedClassName by remember { mutableStateOf<String?>(null) }
+        var isOverrideDialogOpen by remember { mutableStateOf(false) }
+
+        // Dynamic reactive filtering: checks class name and description (with auto-update on detailsMap changes)
+        val filteredClasses by remember(searchQuery, featureFlagClasses) {
+            derivedStateOf {
+                if (searchQuery.isBlank()) {
+                    featureFlagClasses
+                } else {
+                    val query = searchQuery.trim()
+                    featureFlagClasses.filter { className ->
+                        className.contains(query, ignoreCase = true) ||
+                                detailsMap[className]?.description?.contains(query, ignoreCase = true) == true
+                    }
+                }
+            }
         }
 
+        // DexKit class scanning
         LaunchedEffect(Unit) {
             withContext(Dispatchers.IO) {
                 val superClassName = classFeatureFlagBase.clazz.name
@@ -245,11 +315,9 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
                             modifiers(JavaModifier.FINAL)
                             anyOf(
                                 ClassMatcher().apply {
-                                    // ly4.f subclasses: Concrete → f → e (2 levels)
                                     superClass { superClass = superClassName }
                                 },
                                 ClassMatcher().apply {
-                                    // ly4.i subclasses: Concrete → i → d → e (3 levels)
                                     superClass { superClass { superClass = superClassName } }
                                 }
                             )
@@ -259,6 +327,39 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
                 isLoading = false
             }
         }
+
+        // Background lazy loading with viewport priority and dialog pause support
+        LaunchedEffect(isLoading) {
+            if (isLoading) return@LaunchedEffect
+
+            withContext(Dispatchers.IO) {
+                while (detailsMap.size < featureFlagClasses.size) {
+                    if (selectedClassName != null || isOverrideDialogOpen) {
+                        snapshotFlow { selectedClassName == null && !isOverrideDialogOpen }.first { it }
+                    }
+
+                    val targetClass = withContext(Dispatchers.Main.immediate) {
+                        val visibleIndices = listState.layoutInfo.visibleItemsInfo.map { it.index }
+                        val visibleClasses = visibleIndices.mapNotNull { filteredClasses.getOrNull(it) }
+
+                        visibleClasses.firstOrNull { !detailsMap.containsKey(it) }
+                            ?: filteredClasses.firstOrNull { !detailsMap.containsKey(it) }
+                            ?: featureFlagClasses.firstOrNull { !detailsMap.containsKey(it) }
+                    }
+
+                    if (targetClass == null) break
+
+                    val details = resolveFlagDetails(targetClass)
+
+                    withContext(Dispatchers.Main.immediate) {
+                        detailsMap[targetClass] = details
+                    }
+                    yield()
+                }
+            }
+        }
+
+        val context = LocalContext.current
 
         AlertDialogContent(
             title = { Text("灰度测试管理器") },
@@ -286,7 +387,37 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
                             }
 
                             else -> {
-                                FlagList(classNames = filteredClasses)
+                                FlagList(
+                                    classNames = filteredClasses,
+                                    listState = listState,
+                                    detailsMap = detailsMap,
+                                    onItemClick = { className ->
+                                        selectedClassName = className
+                                        showComposeDialog(context) {
+                                            FlagActionDialog(
+                                                className = className,
+                                                initialDetails = detailsMap[className],
+                                                onOpenOverrideDialog = { runtimeKey, typeName ->
+                                                    isOverrideDialogOpen = true
+                                                    showComposeDialog(context) {
+                                                        OverrideValueDialog(
+                                                            runtimeKey = runtimeKey,
+                                                            typeName = typeName,
+                                                            onDismiss = {
+                                                                this.onDismiss()
+                                                                isOverrideDialogOpen = false
+                                                            }
+                                                        )
+                                                    }
+                                                },
+                                                onDismiss = {
+                                                    this.onDismiss()
+                                                    selectedClassName = null
+                                                }
+                                            )
+                                        }
+                                    }
+                                )
                             }
                         }
                     }
@@ -333,7 +464,7 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
                 .fillMaxWidth()
                 .weight(1f), contentAlignment = Alignment.Center
         ) {
-            Text("未找到匹配的类", style = MaterialTheme.typography.bodyMedium)
+            Text("未找到匹配的类或功能", style = MaterialTheme.typography.bodyMedium)
         }
     }
 
@@ -349,7 +480,7 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 8.dp),
-            placeholder = { Text("搜索类名...") },
+            placeholder = { Text("搜索类名或功能简介...") },
             singleLine = true,
             trailingIcon = {
                 if (query.isNotEmpty()) {
@@ -362,36 +493,53 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
     }
 
     @Composable
-    private fun ColumnScope.FlagList(classNames: List<String>) {
+    private fun ColumnScope.FlagList(
+        classNames: List<String>,
+        listState: LazyListState,
+        detailsMap: Map<String, FlagDetails>,
+        onItemClick: (String) -> Unit
+    ) {
         LazyColumn(
-            Modifier
+            state = listState,
+            modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
         ) {
-            items(classNames) { className ->
-                FlagListItem(className = className)
+            items(classNames, key = { it }) { className ->
+                FlagListItem(
+                    modifier = Modifier.animateItem(),
+                    className = className,
+                    details = detailsMap[className],
+                    onClick = { onItemClick(className) }
+                )
             }
         }
     }
 
     @Composable
-    private fun FlagListItem(className: String) {
-        var showActionDialog by remember { mutableStateOf(false) }
-
-        if (showActionDialog) {
-            FlagActionDialog(
-                className = className,
-                onDismiss = { showActionDialog = false }
-            )
-        }
-
-        Text(
-            text = className.substringAfterLast('.'),
-            modifier = Modifier
+    private fun FlagListItem(
+        className: String,
+        details: FlagDetails?,
+        onClick: () -> Unit,
+        modifier: Modifier = Modifier
+    ) {
+        ListItem(
+            modifier = modifier
                 .fillMaxWidth()
-                .clickable { showActionDialog = true }
-                .padding(vertical = 12.dp),
-            style = MaterialTheme.typography.bodyMedium
+                .clickable(onClick = onClick),
+            headlineContent = {
+                Text(
+                    text = className.substringAfterLast('.'),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            },
+            supportingContent = {
+                Text(
+                    text = details?.description ?: "加载中...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         )
         HorizontalDivider(Modifier.alpha(0.3f))
     }
@@ -399,36 +547,34 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
     @Composable
     private fun FlagActionDialog(
         className: String,
+        initialDetails: FlagDetails?,
+        onOpenOverrideDialog: (runtimeKey: String, typeName: String) -> Unit,
         onDismiss: () -> Unit
     ) {
-        var internalName by remember { mutableStateOf("") }
-        var description by remember { mutableStateOf("") }
-        var typeName by remember { mutableStateOf("") }
-        var configKey by remember { mutableStateOf("") }
-        var showOverrideDialog by remember { mutableStateOf(false) }
+        var details by remember { mutableStateOf(initialDetails) }
 
         LaunchedEffect(Unit) {
-            val flagInstance = className.toClass().createInstance()
-            flagInstance
-                .reflekt()
-                .methods { returnType = String::class }
-                .apply {
-                    // this[0] = b() (name), this[1] = c() (desc), this[2] = h() (type),
-                    // this[3] = j(), this[4] = k(), this[5] = l() (fullKey = b() + '_' + h())
-                    if (isNotEmpty()) internalName = this[0].invoke()!! as String
-                    if (size > 1) description = this[1].invoke()!! as String
-                    if (size > 2) typeName = this[2].invoke()!! as String
-                    for (i in indices) {
-                        val str = this[i].invoke()!! as String
-                        if (str.startsWith("clicfg")) {
-                            configKey = str
-                        }
-                    }
+            if (details == null) {
+                withContext(Dispatchers.IO) {
+                    details = resolveFlagDetails(className)
                 }
+            }
         }
 
-        AlertDialog(
-            onDismissRequest = onDismiss,
+        val currentDetails = details ?: FlagDetails()
+        val internalName = currentDetails.internalName
+        val description = currentDetails.description
+        val typeName = currentDetails.typeName
+        val configKey = currentDetails.configKey
+
+        val effectiveTypeName = typeName.ifEmpty { "Int" }
+        val effectiveName = internalName.ifEmpty { configKey }
+
+        val runtimeKey = if (effectiveName.isNotEmpty()) {
+            "${effectiveName}_${effectiveTypeName}"
+        } else null
+
+        AlertDialogContent(
             title = {
                 Text(
                     text = className.substringAfterLast('.'),
@@ -436,10 +582,6 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
                 )
             },
             text = {
-                val runtimeKey = if (internalName.isNotEmpty() && typeName.isNotEmpty()) {
-                    "${internalName}_${typeName}"
-                } else null
-
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -451,21 +593,18 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
                     CopyInfoItem("复制配置键名", configKey)
 
                     ListItem(
-                        modifier = Modifier.clickable { showOverrideDialog = true },
+                        modifier = Modifier.clickable {
+                            if (runtimeKey == null) {
+                                showToast("无法解析该灰度测试项的键名")
+                                return@clickable
+                            }
+                            onOpenOverrideDialog(runtimeKey, effectiveTypeName)
+                        },
                         supportingContent = { Text("为该灰度测试项覆盖其当前取值") },
                         headlineContent = {
                             Text("覆盖功能取值", style = MaterialTheme.typography.bodyLarge)
                         },
                     )
-
-                    // Override value sub-dialog
-                    if (showOverrideDialog && runtimeKey != null) {
-                        OverrideValueDialog(
-                            runtimeKey = runtimeKey,
-                            typeName = typeName,
-                            onDismiss = { showOverrideDialog = false }
-                        )
-                    }
                 }
             },
             confirmButton = {
@@ -494,7 +633,7 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
         onDismiss: () -> Unit
     ) {
         // Map WeChat type name → internal type char
-        val defaultTypeChar = when (typeName) {
+        val defaultTypeChar = when (typeName.ifEmpty { "Int" }) {
             "Int" -> "i"
             "Float" -> "f"
             "Long" -> "l"
@@ -509,8 +648,7 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
         var type by remember { mutableStateOf(existingOverride?.internalType ?: defaultTypeChar) }
         var rawValue by remember { mutableStateOf(existingOverride?.rawValue ?: "") }
 
-        AlertDialog(
-            onDismissRequest = onDismiss,
+        AlertDialogContent(
             title = { Text("设置覆盖值") },
             text = {
                 Column {

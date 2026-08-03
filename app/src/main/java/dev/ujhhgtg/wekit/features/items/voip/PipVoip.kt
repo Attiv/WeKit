@@ -117,6 +117,9 @@ object PipVoip : SwitchFeature(), IResolveDex {
                 when (resultCode) {
                     PipVoipActivity.RESULT_READY -> {
                         commands = resultData?.let {
+                            // ResultReceiver is an anonymous PipVoipActivity class. This Bundle is
+                            // unmarshalled in WeChat, whose default class loader cannot see it.
+                            it.classLoader = PipVoipActivity::class.java.classLoader
                             BundleCompat.getParcelable(
                                 it,
                                 PipVoipActivity.EXTRA_COMMAND_RECEIVER,

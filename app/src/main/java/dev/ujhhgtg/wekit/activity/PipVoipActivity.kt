@@ -42,7 +42,7 @@ import com.composables.icons.materialsymbols.outlined.Mic
 import com.composables.icons.materialsymbols.outlined.Mic_off
 import com.composables.icons.materialsymbols.outlined.Videocam
 import com.composables.icons.materialsymbols.outlined.Videocam_off
-import dev.ujhhgtg.wekit.ui.utils.theme.ModuleTheme
+import dev.ujhhgtg.wekit.ui.utils.theme.ModuleAppTheme
 
 @Keep
 class PipVoipActivity : ComponentActivity() {
@@ -90,7 +90,7 @@ class PipVoipActivity : ComponentActivity() {
         micMuted = intent.getBooleanExtra(EXTRA_MIC_MUTED, false)
         videoEnabled = intent.getBooleanExtra(EXTRA_VIDEO_ENABLED, true)
         setContent {
-            ModuleTheme(darkTheme = true) {
+            ModuleAppTheme(darkTheme = true) {
                 PipControls()
             }
         }

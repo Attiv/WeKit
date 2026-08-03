@@ -160,9 +160,23 @@ struct RunArgs {
     #[arg(short, long, value_enum, default_value = "standard")]
     flavor: Flavor,
 
+    /// Explicitly install the debug build (default).
+    #[arg(long, conflicts_with = "release")]
+    debug: bool,
+
     /// Install the release build instead of debug.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "debug")]
     release: bool,
+}
+
+impl RunArgs {
+    fn is_release(&self) -> bool {
+        match (self.debug, self.release) {
+            (false, false) | (true, false) => false,
+            (false, true) => true,
+            (true, true) => unreachable!("clap rejects --debug with --release"),
+        }
+    }
 }
 
 #[derive(Args)]
@@ -606,7 +620,7 @@ fn task_run(args: RunArgs) -> Result<()> {
     task_configure()?;
     task_build_native(&[])?;
     let root = workspace_root();
-    let gradle_task = gradle_variant_task("install", Some(&args.flavor), args.release);
+    let gradle_task = gradle_variant_task("install", Some(&args.flavor), args.is_release());
     println!("run: ./gradlew {gradle_task}");
     run_gradlew(&[&gradle_task], &root)
 }
@@ -1578,6 +1592,58 @@ mod tests {
             }) => args,
             _ => unreachable!(),
         }
+    }
+
+    fn parse_run_args(extra: &[&str]) -> RunArgs {
+        let mut argv = vec!["xtask", "run"];
+        argv.extend_from_slice(extra);
+        match Cli::try_parse_from(argv).unwrap().command {
+            Cmd::Run(args) => args,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn run_debug_flag_matches_the_default() {
+        let default = parse_run_args(&[]);
+        let explicit_debug = parse_run_args(&["--debug"]);
+
+        assert_eq!(
+            gradle_variant_task("install", Some(&default.flavor), default.is_release()),
+            "installStandardDebug",
+        );
+        assert_eq!(
+            gradle_variant_task(
+                "install",
+                Some(&explicit_debug.flavor),
+                explicit_debug.is_release(),
+            ),
+            "installStandardDebug",
+        );
+    }
+
+    #[test]
+    fn run_profile_flags_select_the_expected_variant() {
+        let legacy_debug = parse_run_args(&["--flavor", "legacy", "--debug"]);
+        let release = parse_run_args(&["--release"]);
+
+        assert_eq!(
+            gradle_variant_task(
+                "install",
+                Some(&legacy_debug.flavor),
+                legacy_debug.is_release(),
+            ),
+            "installLegacyDebug",
+        );
+        assert_eq!(
+            gradle_variant_task("install", Some(&release.flavor), release.is_release()),
+            "installStandardRelease",
+        );
+    }
+
+    #[test]
+    fn run_rejects_conflicting_profile_flags() {
+        assert!(Cli::try_parse_from(["xtask", "run", "--debug", "--release"]).is_err());
     }
 
     #[test]

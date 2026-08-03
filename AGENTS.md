@@ -28,7 +28,7 @@
 - `libs/common/bsh/` — submodule: forked BeanShell interpreter with snapshot serialization (`BshSnapshot`, `BshSnapshotHelper`); snapshots are encrypted AST byte representations used by the WAuxiliary Xposed module; `app/src/main/java/dev/ujhhgtg/wekit/utils/BshSnapshotDecompiler.kt` — decompiles encrypted BeanShell snapshot files back into Java-like source code; the AES key was recovered from WAuxiliary's decompiled source
 - `libs/common/reflekt/` — submodule: reflection utility library (`dev.ujhhgtg.reflekt`)
 - `libs/common/stubs/` — compileOnly stubs for WeChat and Android hidden classes
-- `buildSrc/` — custom Gradle tasks: `GenerateMethodHashesTask` (`IResolveDex` `resolveDex` method MD5 cache), `GenerateNewFeaturesTask` (features whose source file was added within 30 days of the HEAD commit → `NewFeatures.ENTRIES`, backing the 新功能 pseudo-category)
+- `buildSrc/` — custom Gradle tasks: `GenerateMethodHashesTask` (`IResolveDex` `resolveDex` method MD5 cache), `GenerateNewFeaturesTask` (features whose source file was added within 30 days of the HEAD commit → `NewFeatures.ADDED_AT_BY_NAME`, backing the 新功能 pseudo-category)
 - `xtask/` — build orchestration behind `./x`: native-lib compilation + NDK linker config, APK
   assembly via Gradle, and Zygisk module packaging/flashing
 
