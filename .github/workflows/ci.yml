@@ -99,12 +99,21 @@ jobs:
           cargo xtask build --native-only
 
       - name: Decode keystore
+        id: keystore
         if: github.event_name != 'pull_request'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/wekit-keystore.jks
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::notice::KEYSTORE_BASE64 is not configured — falling back to the debug signing config."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/wekit-keystore.jks"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: Build Release (Signed)
-        if: github.event_name != 'pull_request'
+        if: steps.keystore.outputs.signed == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WEKIT_KEYSTORE_FILE: ${{ runner.temp }}/wekit-keystore.jks
@@ -113,8 +122,11 @@ jobs:
           WEKIT_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --warning-mode all --stacktrace
 
+      # Also covers a push/dispatch build without a keystore secret: the Gradle signingConfigs block
+      # falls back to the debug key when the WEKIT_KEYSTORE_* env vars are absent, so the APK is
+      # still installable — it just isn't signed with the release key.
       - name: Build Release (Unsigned)
-        if: github.event_name == 'pull_request'
+        if: steps.keystore.outputs.signed != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew assembleRelease --warning-mode all --stacktrace
@@ -328,6 +340,11 @@ jobs:
           COMMIT_AUTHOR:     ${{ github.event.head_commit.author.name || github.actor }}
           REPO:              ${{ github.repository }}
         run: |
+          if [ -z "${BOT_TOKEN}" ]; then
+            echo "::notice::TELEGRAM_TOKEN is not configured — skipping the upload."
+            exit 0
+          fi
+
           caption="🎉 *检测到新的 GitHub 推送！*
           *Commit SHA:* \`${SHA}\`
           \`\`\`
