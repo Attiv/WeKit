@@ -4,9 +4,14 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.ImageDecoder
+import android.graphics.drawable.BitmapDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
@@ -29,10 +34,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.core.view.isVisible
+import androidx.core.net.toUri
 import androidx.core.view.postDelayed
-import coil3.load
-import coil3.request.crossfade
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.Modifiers
 import dev.ujhhgtg.wekit.activity.TransparentActivity
@@ -53,7 +56,9 @@ import dev.ujhhgtg.wekit.utils.android.isDarkMode
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.nul
 import java.util.WeakHashMap
+import kotlin.concurrent.thread
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 @Feature(
@@ -86,10 +91,17 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
     // the user flip it manually.
     private var useThemeBackground by prefOption("global_bg_use_theme_bg", true)
 
-    private const val OVERLAY_TAG = "wekit_global_bg_overlay"
-    private const val APPLIED_URI_TAG_KEY = 0x55020001
     private const val APPLY_STATUS_BAR_DELAY_MS = 80L
     private const val THEME_BG_TOKEN_PREFIX = "wekit_theme_bg:"
+
+    // The wallpaper layer of each window, keyed by its decor view so an entry dies with the window.
+    // It is an overlay drawable rather than a child view — see [GlobalBackgroundDrawable].
+    private val overlays = WeakHashMap<View, GlobalBackgroundDrawable>()
+
+    // The decoded user background, shared by every window: it is the same picture everywhere, and
+    // decoding a full-screen photo once per Activity would be both slow and a needless allocation.
+    @Volatile
+    private var cachedBackground: Pair<String, Bitmap>? = null
 
     // Gradients are far subtler than photos at the default 10% overlay opacity, so theme selection
     // raises the opacity to at least this value.
@@ -184,7 +196,7 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
                         activityAttachedViews.getOrPut(activity) { mutableSetOf() }.add(v)
                     }
                     WeLogger.d(TAG, "view attached to ${activity.javaClass.simpleName}")
-                    overlayFromActivity(activity)?.isVisible = false
+                    overlayFromActivity(activity)?.hidden = true
                 }
 
                 override fun onViewDetachedFromWindow(v: View) {
@@ -196,7 +208,7 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
                     }
                     if (empty) {
                         WeLogger.d(TAG, "all views detached from ${activity.javaClass.simpleName}")
-                        overlayFromActivity(activity)?.isVisible = true
+                        overlayFromActivity(activity)?.hidden = false
                     }
                 }
             })
@@ -219,8 +231,10 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
         return null
     }
 
-    private fun overlayFromActivity(activity: Activity): ImageView? =
-        findOverlay(activity.window?.decorView as? ViewGroup ?: return null)
+    private fun overlayFromActivity(activity: Activity): GlobalBackgroundDrawable? {
+        val decor = activity.window?.decorView ?: return null
+        return synchronized(overlays) { overlays[decor] }
+    }
 
     private const val MIN = 0.01f
     private const val MAX = 0.80f
@@ -413,53 +427,102 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
         if (uri == null && themeDrawable == null) return
 
         val decor = activity.window?.decorView as? ViewGroup ?: return
-        val overlay = findOverlay(decor) ?: createOverlay(activity, decor)
+        val overlay = overlayFor(decor)
 
-        overlay.visibility = View.VISIBLE
-        overlay.alpha = opacity
-        overlay.bringToFront()
+        overlay.hidden = false
+        overlay.alpha = (opacity.miniMaxed() * 255f).roundToInt()
 
-        // The tag records what's currently displayed; the theme token includes the light/dark
+        // The token records what's currently displayed; the theme token includes the light/dark
         // variant so a system theme switch swaps the gradient on the next resume.
         val token = uri ?: "$THEME_BG_TOKEN_PREFIX${theme.id}:${if (darkMode) "dark" else "light"}"
-        if (overlay.getTag(APPLIED_URI_TAG_KEY) != token) {
-            overlay.setTag(APPLIED_URI_TAG_KEY, token)
-            if (uri != null) {
-                overlay.load(uri) {
-                    crossfade(true)
-                }
-            } else {
-                overlay.setImageDrawable(themeDrawable)
+        if (overlay.token == token) return
+        overlay.token = token
+
+        if (themeDrawable != null) {
+            overlay.setImage(themeDrawable)
+        } else if (uri != null) {
+            val resources = activity.resources
+            loadBackgroundImage(activity, uri) { bitmap ->
+                // A resume in between may have swapped the wallpaper while we were decoding.
+                if (overlay.token != token) return@loadBackgroundImage
+                overlay.setImage(BitmapDrawable(resources, bitmap))
             }
         }
     }
 
-    private fun createOverlay(context: Context, decor: ViewGroup): ImageView {
-        return ImageView(context).apply {
-            tag = OVERLAY_TAG
-            background = null
-            isClickable = false
-            isFocusable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
+    /**
+     * The wallpaper layer of [decor], created on first use. It is added to the decor view's overlay
+     * instead of being a child view (see [GlobalBackgroundDrawable]), so it draws above everything
+     * without ever showing up in a view-hierarchy scan.
+     */
+    private fun overlayFor(decor: ViewGroup): GlobalBackgroundDrawable {
+        synchronized(overlays) { overlays[decor] }?.let { return it }
+
+        val overlay = GlobalBackgroundDrawable()
+        // On the first resume the decor view may not be laid out yet; start from the display size
+        // so the first frame is covered, and let the layout listener correct it right after.
+        val metrics = decor.resources.displayMetrics
+        overlay.setBounds(
+            0,
+            0,
+            if (decor.width > 0) decor.width else metrics.widthPixels,
+            if (decor.height > 0) decor.height else metrics.heightPixels,
+        )
+        decor.overlay.add(overlay)
+        decor.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+            overlay.setBounds(0, 0, view.width, view.height)
+        }
+
+        synchronized(overlays) { overlays[decor] = overlay }
+        return overlay
+    }
+
+    /**
+     * Decodes the user-picked background off the main thread and hands the bitmap back on it. The
+     * result is cached process-wide, so opening another Activity reuses it instead of decoding a
+     * full-screen photo again.
+     */
+    private fun loadBackgroundImage(context: Context, uri: String, onReady: (Bitmap) -> Unit) {
+        cachedBackgroundOf(uri)?.let {
+            onReady(it)
+            return
+        }
+
+        val appContext = context.applicationContext
+        val handler = Handler(Looper.getMainLooper())
+        thread(name = "wekit-global-bg") {
+            val bitmap = cachedBackgroundOf(uri)
+                ?: decodeBackground(appContext, uri)
+                ?: return@thread
+            cachedBackground = uri to bitmap
+            handler.post { onReady(bitmap) }
+        }
+    }
+
+    private fun cachedBackgroundOf(uri: String): Bitmap? = cachedBackground
+        ?.takeIf { (cachedUri, bitmap) -> cachedUri == uri && !bitmap.isRecycled }
+        ?.second
+
+    /**
+     * Decodes [uri] downsampled to roughly the display size: the wallpaper is only ever drawn
+     * full-screen, so keeping a 12MP original around would just be a ~48MB allocation for the same
+     * pixels. [ImageDecoder] also applies the EXIF orientation for us.
+     */
+    private fun decodeBackground(context: Context, uri: String): Bitmap? = runCatching {
+        val metrics = context.resources.displayMetrics
+        val source = ImageDecoder.createSource(context.contentResolver, uri.toUri())
+        ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            // Software so the bitmap stays drawable on any canvas the host hands us.
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val sample = min(
+                info.size.width / max(1, metrics.widthPixels),
+                info.size.height / max(1, metrics.heightPixels),
             )
-            elevation = 100f
-            decor.addView(this)
+            decoder.setTargetSampleSize(max(1, sample))
         }
-    }
-
-    private fun findOverlay(decor: ViewGroup): ImageView? {
-        for (index in 0 until decor.childCount) {
-            val child = decor.getChildAt(index)
-            if (child is ImageView && child.tag == OVERLAY_TAG) {
-                return child
-            }
-        }
-        return null
-    }
+    }.onFailure {
+        WeLogger.w(TAG, "failed to decode background image", it)
+    }.getOrNull()
 
     private fun View.makeTransparent() {
         setBackgroundColor(Color.TRANSPARENT)
