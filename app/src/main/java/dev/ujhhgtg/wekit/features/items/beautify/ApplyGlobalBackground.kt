@@ -3,11 +3,11 @@ package dev.ujhhgtg.wekit.features.items.beautify
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.ImageDecoder
 import android.graphics.drawable.BitmapDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -18,25 +18,27 @@ import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.outlined.Delete
+import com.composables.icons.materialsymbols.outlined.Opacity
 import androidx.core.view.postDelayed
 import dev.ujhhgtg.reflekt.reflekt
+import dev.ujhhgtg.wekit.R
+import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
 import dev.ujhhgtg.reflekt.utils.Modifiers
 import dev.ujhhgtg.wekit.activity.TransparentActivity
 import dev.ujhhgtg.wekit.constants.PackageNames
@@ -44,26 +46,36 @@ import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
+import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
-import dev.ujhhgtg.wekit.ui.content.Button
-import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.TextButton
+import dev.ujhhgtg.wekit.ui.content.m3.BaseItemContainer
+import dev.ujhhgtg.wekit.ui.content.m3.BaseWidget
+import dev.ujhhgtg.wekit.ui.content.m3.IntNumberPickerWidget
+import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
+import dev.ujhhgtg.wekit.ui.content.m3.SwitchWidget
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.isDarkMode
 import dev.ujhhgtg.wekit.utils.android.showToast
+import dev.ujhhgtg.wekit.utils.fs.KnownPaths
+import dev.ujhhgtg.wekit.utils.fs.asAndroidUri
 import dev.ujhhgtg.wekit.utils.nul
 import java.util.WeakHashMap
 import kotlin.concurrent.thread
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.div
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 @Feature(
-    name = "应用全局背景", categories = ["界面美化"],
-    description = "将微信背景全局替换为图片"
+    id = "应用全局背景",
+    nameRes = "feature_apply_global_background_name",
+    categoryIds = [FeatureCategoryIds.BEAUTIFY],
+    descriptionRes = "feature_apply_global_background_description",
 )
 object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
 
@@ -91,6 +103,11 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
     // the user flip it manually.
     private var useThemeBackground by prefOption("global_bg_use_theme_bg", true)
 
+    private const val BACKGROUND_IMAGE_FILE = "global_background.png"
+
+    // The picked image is copied here instead of keeping a SAF content:// uri whose
+    // persistable permission grant some custom ROMs drop after reboot.
+    private val backgroundImageFile by lazy { KnownPaths.moduleAssets / BACKGROUND_IMAGE_FILE }
     private const val APPLY_STATUS_BAR_DELAY_MS = 80L
     private const val THEME_BG_TOKEN_PREFIX = "wekit_theme_bg:"
 
@@ -152,6 +169,8 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
     )
 
     override fun onEnable() {
+        migrateLegacyBackgroundUri()
+
         Activity::class.reflekt().apply {
             firstMethod {
                 name = "onCreate"
@@ -236,118 +255,163 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
         return synchronized(overlays) { overlays[decor] }
     }
 
-    private const val MIN = 0.01f
-    private const val MAX = 0.80f
-    private val MINIMAX = MIN..MAX
-    private fun Float.miniMaxed() = this.coerceIn(MINIMAX)
+    private const val MIN_OPACITY_PERCENT = 1
+    private const val MAX_OPACITY_PERCENT = 80
+    private fun Float.miniMaxed(): Float =
+        coerceIn(MIN_OPACITY_PERCENT / 100f, MAX_OPACITY_PERCENT / 100f)
+
+    /**
+     * Old versions stored the SAF content:// uri of the picked image. Copy that image into
+     * moduleAssets once and rewrite the pref to a file uri. On failure the legacy value is
+     * kept so a transient failure (e.g. storage not ready yet) retries on the next startup.
+     */
+    private fun migrateLegacyBackgroundUri() {
+        val legacy = backgroundUri ?: return
+        if (!legacy.startsWith("content://")) return
+
+        val migrated = runCatching {
+            HostInfo.application.contentResolver.openInputStream(Uri.parse(legacy))?.use { input ->
+                backgroundImageFile.toFile().outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } != null
+        }.onFailure {
+            WeLogger.w(TAG, "failed to migrate legacy background image", it)
+        }.getOrDefault(false)
+
+        if (migrated) {
+            backgroundUri = backgroundImageFile.asAndroidUri.toString()
+        }
+    }
 
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {
+            val originalOpacity = remember { opacity }
+            val originalTransparentStatusBar = remember { transparentStatusBar }
+            val originalUseThemeBackground = remember { useThemeBackground }
             var hasImage by remember { mutableStateOf(backgroundUri != null) }
-            var opacityInput by remember { mutableFloatStateOf(opacity) }
+            var opacityPercent by remember {
+                mutableIntStateOf(
+                    (opacity * 100f).roundToInt().coerceIn(MIN_OPACITY_PERCENT, MAX_OPACITY_PERCENT)
+                )
+            }
             var transparentStatusBarInput by remember { mutableStateOf(transparentStatusBar) }
             var useThemeBgInput by remember { mutableStateOf(useThemeBackground) }
             val currentTheme = BubbleTheme.current
+            var restartRequired by remember { mutableStateOf(false) }
+            val currentRestartRequired by rememberUpdatedState(restartRequired)
+            val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
+
+            DisposableEffect(Unit) {
+                onDispose {
+                    if (currentRestartRequired) {
+                        showToast(localizedContext.getString(R.string.saved_restart_wechat))
+                    }
+                }
+            }
 
             AlertDialogContent(
-                title = { Text("应用全局背景") },
+                title = { Text(stringResource(R.string.beautify_global_background_title)) },
                 text = {
-                    DefaultColumn {
-                        Text(
-                            text = when {
-                                useThemeBgInput && currentTheme != BubbleTheme.NONE ->
-                                    "当前显示「${currentTheme.title}」主题背景" +
-                                            if (hasImage) " (自定义图片未启用)" else ""
-
-                                hasImage -> "已设置背景图片"
-                                else -> "未设置背景图片"
-                            },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(onClick = {
-                                opacity = opacityInput.miniMaxed()
-                                transparentStatusBar = transparentStatusBarInput
-                                useThemeBackground = useThemeBgInput
-                                onDismiss()
-                                selectBackgroundImage(context)
-                            }) {
-                                Text("选择图片")
-                            }
-                            TextButton(
-                                enabled = hasImage,
+                    SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
+                        item {
+                            BaseWidget(
+                                title = stringResource(R.string.action_select_image),
+                                description = stringResource(
+                                    if (hasImage) {
+                                        R.string.beautify_global_background_set
+                                    } else {
+                                        R.string.beautify_global_background_not_set
+                                    }
+                                ),
                                 onClick = {
-                                    backgroundUri = null
-                                    hasImage = false
-                                    showToast("已清除背景图片, 重启微信生效")
-                                }
-                            ) {
-                                Text("清除图片")
+                                    onDismiss()
+                                    selectBackgroundImage(context)
+                                },
+                                trailingContent = {
+                                    IconButton(
+                                        enabled = hasImage,
+                                        onClick = {
+                                            backgroundUri = null
+                                            hasImage = false
+                                            runCatching { backgroundImageFile.deleteIfExists() }
+                                                .onFailure {
+                                                    WeLogger.w(TAG, "failed to delete background image file", it)
+                                                }
+                                            showToast(localizedContext.getString(R.string.beautify_global_background_cleared))
+                                        },
+                                    ) {
+                                        Icon(
+                                            MaterialSymbols.Outlined.Delete,
+                                            contentDescription = stringResource(R.string.action_clear_image),
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            BaseItemContainer {
+                                IntNumberPickerWidget(
+                                    icon = MaterialSymbols.Outlined.Opacity,
+                                    title = stringResource(R.string.opacity_percent),
+                                    value = opacityPercent,
+                                    startInt = MIN_OPACITY_PERCENT,
+                                    endInt = MAX_OPACITY_PERCENT,
+                                    stepSize = 1,
+                                    valueSuffix = "%",
+                                    onValueChange = {
+                                        opacityPercent = it
+                                        val newOpacity = it / 100f
+                                        opacity = newOpacity
+                                        restartRequired =
+                                            newOpacity != originalOpacity ||
+                                                    transparentStatusBarInput != originalTransparentStatusBar ||
+                                                    useThemeBgInput != originalUseThemeBackground
+                                    },
+                                )
                             }
                         }
-                        Text(
-                            text = "透明度: ${(opacityInput * 100f).roundToInt()}%",
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        Slider(
-                            value = opacityInput,
-                            onValueChange = { opacityInput = it.miniMaxed() },
-                            valueRange = MINIMAX
-                        )
-                        ListItem(
-                            modifier = Modifier.clickable {
-                                transparentStatusBarInput = !transparentStatusBarInput
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = transparentStatusBarInput,
-                                    onCheckedChange = null
-                                )
-                            },
-                            supportingContent = { Text("设置状态栏背景为透明") },
-                            headlineContent = { Text("状态栏背景透明") },
-                        )
-                        ListItem(
-                            modifier = Modifier.clickable {
-                                useThemeBgInput = !useThemeBgInput
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = useThemeBgInput,
-                                    onCheckedChange = null
-                                )
-                            },
-                            supportingContent = {
-                                Text(
-                                    if (currentTheme == BubbleTheme.NONE) {
-                                        "未选择内置气泡主题, 可在「自定义消息气泡」中选择"
-                                    } else {
-                                        "开启后「${currentTheme.title}」主题背景优先生效; " +
-                                                "关闭或重新选择图片则使用自定义图片"
-                                    }
-                                )
-                            },
-                            headlineContent = { Text("使用内置主题背景") },
-                        )
+                        item {
+                            SwitchWidget(
+                                iconPlaceholder = false,
+                                title = stringResource(R.string.beautify_global_background_status_bar),
+                                description = stringResource(R.string.beautify_global_background_status_bar_summary),
+                                checked = transparentStatusBarInput,
+                                onCheckedChange = {
+                                    transparentStatusBarInput = it
+                                    transparentStatusBar = it
+                                    restartRequired =
+                                        opacity != originalOpacity ||
+                                                it != originalTransparentStatusBar ||
+                                                useThemeBgInput != originalUseThemeBackground
+                                },
+                            )
+                        }
+                        item {
+                            SwitchWidget(
+                                iconPlaceholder = false,
+                                title = "使用内置主题背景",
+                                description = if (currentTheme == BubbleTheme.NONE) {
+                                    "未选择内置气泡主题，可在「自定义消息气泡」中选择"
+                                } else {
+                                    "开启后「${currentTheme.title}」主题背景优先生效；关闭后使用自定义图片"
+                                },
+                                checked = useThemeBgInput,
+                                onCheckedChange = {
+                                    useThemeBgInput = it
+                                    useThemeBackground = it
+                                    restartRequired =
+                                        opacity != originalOpacity ||
+                                                transparentStatusBarInput != originalTransparentStatusBar ||
+                                                it != originalUseThemeBackground
+                                },
+                            )
+                        }
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = onDismiss) { Text("取消") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_close)) }
                 },
-                confirmButton = {
-                    Button(onClick = {
-                        opacity = opacityInput.miniMaxed()
-                        transparentStatusBar = transparentStatusBarInput
-                        useThemeBackground = useThemeBgInput
-                        showToast("已保存, 重启微信生效")
-                        onDismiss()
-                    }) {
-                        Text("保存")
-                    }
-                }
             )
         }
     }
@@ -555,21 +619,25 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
                 finish()
                 if (uri == null) return@registerForActivityResult
 
-                val contentResolver = HostInfo.application.contentResolver
-                runCatching {
-                    contentResolver.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    )
+                val ok = runCatching {
+                    HostInfo.application.contentResolver.openInputStream(uri)?.use { input ->
+                        backgroundImageFile.toFile().outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    } != null
                 }.onFailure {
-                    WeLogger.w(TAG, "failed to take persistable uri permission", it)
-                }
+                    WeLogger.e(TAG, "failed to import background image", it)
+                }.getOrDefault(false)
 
-                backgroundUri = uri.toString()
-                // Picking an image is an explicit "use my own background": stop the theme
-                // background from overriding it.
-                useThemeBackground = false
-                showToast("背景图片已设置, 重启微信生效")
+                if (ok) {
+                    backgroundUri = backgroundImageFile.asAndroidUri.toString()
+                    // Picking an image is an explicit "use my own background": stop the theme
+                    // background from overriding it.
+                    useThemeBackground = false
+                    showToast(context.localizedBeautifyString(R.string.beautify_global_background_selected))
+                } else {
+                    showToast(context.localizedBeautifyString(R.string.beautify_global_background_import_failed))
+                }
             }
 
             launcher.launch(
