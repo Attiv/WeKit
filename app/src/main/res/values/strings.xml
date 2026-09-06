@@ -1256,6 +1256,7 @@
     <string name="nav_page_management_summary">Change page visibility and order. Takes effect next time WeChat starts.</string>
     <string name="nav_page_animation">Enable page transition animation</string>
     <string name="nav_page_animation_summary">Animate between pages when tapping a tab instead of jumping directly</string>
+    <string name="nav_use_wechat_icons">Use WeChat native icons</string>
     <string name="nav_use_floating_bar">Use floating bottom bar</string>
     <string name="nav_auto_hide_bar">Auto-hide bottom bar</string>
     <string name="nav_auto_hide_bar_summary">Hide the bar with an animation when scrolling down the conversation list, restore when scrolling up</string>

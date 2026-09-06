@@ -291,7 +291,7 @@ private fun MainPagerScreen(
                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 activeContentColor = MaterialTheme.colorScheme.primary,
             ),
-            iconContent = { item, index ->
+            iconContent = { item, index, _ ->
                 Crossfade(
                     targetState = index == pagerState.targetPage,
                     animationSpec = tween(200),
