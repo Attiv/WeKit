@@ -280,7 +280,6 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
     private val SCROLL_HIDE_EASING = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
     private const val SCROLL_HIDE_DURATION_MS = 300
     private const val SCROLL_HIDE_MIN_SCALE = 0.85f
-    private const val RECENT_PAGE_HIDE_DURATION_MS = 260
 
     private fun normalizedTabOrder(rawOrder: String = tabOrder): List<NavItem> {
         val orderedIndices = rawOrder.split(",")
@@ -565,8 +564,12 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                 contentParent.clipToPadding = false
                 composeView.clipChildren = false
                 composeView.clipToPadding = false
+                // Prepare the sampled RenderNodes before the pager's real traversal so its
+                // SurfaceView position wins. Z ordering still paints/hit-tests the bar on top.
+                composeView.z = if (floating) viewPager.z + 1f else 0f
                 parent.addView(
                     composeView,
+                    if (floating) contentParent.indexOfChild(viewPager) else -1,
                     if (floating) FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
                         FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -740,35 +743,25 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                                 }
                             }
                         } else {
-                            // The floating bar lives outside the native tab container, so
-                            // follow its "Recent" page animation independently of scroll hide.
-                            val recentPageHideProgress by animateFloatAsState(
-                                targetValue = if (recentPageHiddenState.value) 1f else 0f,
-                                animationSpec = tween(RECENT_PAGE_HIDE_DURATION_MS),
-                                label = "navRecentPageHide",
-                            )
                             Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .graphicsLayer {
-                                        translationY = recentPageHideProgress * size.height
-                                        alpha = 1f - recentPageHideProgress
-                                    }
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 val bottomCenter = Modifier.align(Alignment.BottomCenter)
 
-                                // NagramXF-style scroll auto-hide: slide below the screen,
-                                // shrink to 85% and fade out, reversing when the list scrolls
-                                // up again. barHeightPx includes the bottom padding because
+                                // Share the slide/shrink/fade animation for both hide reasons;
+                                // only scroll-driven hiding is gated by the auto-hide setting.
+                                // barHeightPx includes the bottom padding because
                                 // onSizeChanged observes the padded bounds, so translating by
                                 // it moves the bar fully off screen.
-                                val autoHideProgress by animateFloatAsState(
-                                    targetValue = if (appearance.autoHide && barScrollHiddenState.value) 1f else 0f,
+                                val barHideProgress by animateFloatAsState(
+                                    targetValue = if (recentPageHiddenState.value ||
+                                        (appearance.autoHide && barScrollHiddenState.value)
+                                    ) 1f else 0f,
                                     animationSpec = tween(
                                         SCROLL_HIDE_DURATION_MS,
                                         easing = SCROLL_HIDE_EASING
                                     ),
-                                    label = "navAutoHide"
+                                    label = "navBarHide"
                                 )
                                 val barHeightPx = remember { mutableIntStateOf(0) }
                                 val bottomPadding =
@@ -782,7 +775,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                                             .onSizeChanged { barHeightPx.intValue = it.height }
                                             .padding(bottom = bottomPadding)
                                             .graphicsLayer {
-                                                val progress = autoHideProgress
+                                                val progress = barHideProgress
                                                 translationY = progress * barHeightPx.intValue
                                                 alpha = 1f - progress
                                                 val scale =
