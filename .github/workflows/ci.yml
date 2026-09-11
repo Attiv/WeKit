@@ -460,9 +460,8 @@ jobs:
           enable-cache: false
 
       - name: Install system dependencies
-        # glslc compiles the llama.cpp Vulkan shaders for the llama-native pack.
         run: |
-          sudo apt-get update && sudo apt-get install -y gcc-multilib glslc
+          sudo apt-get update && sudo apt-get install -y gcc-multilib
           uv sync --locked --managed-python --project wekit-zygisk --group build
           echo "$GITHUB_WORKSPACE/wekit-zygisk/.venv/bin" >> "$GITHUB_PATH"
 
@@ -476,7 +475,7 @@ jobs:
             "$AGENT_TOOLSDIRECTORY/Python" || true
           sudo docker image prune -af >/dev/null 2>&1 || true
           sudo apt-get clean
-          # Headroom against OOM during the llama.cpp/native compile bursts.
+          # Headroom against OOM during native compile bursts.
           sudo fallocate -l 6G /mnt/swapfile || true
           sudo chmod 600 /mnt/swapfile || true
           sudo mkswap /mnt/swapfile >/dev/null 2>&1 || true

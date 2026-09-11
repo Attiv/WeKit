@@ -14,7 +14,6 @@ enum class ModelProviderType {
     ANTHROPIC_MESSAGES,
     GEMINI_GENERATE_CONTENT,
     GEMINI_INTERACTIONS,
-    LOCAL_LLAMA,
 }
 
 /**

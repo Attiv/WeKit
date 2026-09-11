@@ -9,7 +9,6 @@ import dev.ujhhgtg.wekit.agent.data.entity.MessageRole
 import dev.ujhhgtg.wekit.agent.data.entity.LinuxEnvironmentEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ModelEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ModelProviderEntity
-import dev.ujhhgtg.wekit.agent.data.entity.ModelProviderType
 import dev.ujhhgtg.wekit.agent.data.entity.PerTurnPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.PresetPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ProviderEntity
@@ -19,7 +18,6 @@ import dev.ujhhgtg.wekit.agent.data.entity.ToolCallEntity
 import dev.ujhhgtg.wekit.agent.model.LlmMessage
 import dev.ujhhgtg.wekit.agent.model.LlmRole
 import dev.ujhhgtg.wekit.agent.model.LlmToolCall
-import dev.ujhhgtg.wekit.agent.model.local.LocalLlama
 import dev.ujhhgtg.wekit.agent.environment.LinuxEnvironmentType
 import dev.ujhhgtg.wekit.agent.environment.EnvironmentSnapshot
 import dev.ujhhgtg.wekit.agent.environment.LinuxEnvironmentDeletionPlan
@@ -90,9 +88,6 @@ object WeAgentRepository {
      * dozen other surfaces. Encrypting here would only obscure the key from its owner.
      */
     suspend fun upsertModelProvider(provider: ModelProviderEntity) {
-        check(provider.id != LocalLlama.PROVIDER_ID && provider.type != ModelProviderType.LOCAL_LLAMA) {
-            "the local llama provider is managed by WeKit and cannot be created or edited manually"
-        }
         db.modelProviderDao().upsert(provider)
     }
 
@@ -644,9 +639,6 @@ object WeAgentRepository {
      * transaction commits.
      */
     suspend fun deleteModelProvider(id: String) {
-        check(id != LocalLlama.PROVIDER_ID) {
-            "the local llama provider is built in and cannot be deleted"
-        }
         val modelIds = db.modelDao().getForProviderOnce(id).map { it.id }.toSet()
         val settingKeys = WeAgentSettings.modelDefaultKeysFor(modelIds)
         db.withTransaction {
@@ -661,23 +653,7 @@ object WeAgentRepository {
     }
 
     suspend fun upsertModel(model: ModelEntity) {
-        db.withTransaction {
-            val current = db.modelDao().getById(model.id)
-            if (model.providerId == LocalLlama.PROVIDER_ID || current?.providerId == LocalLlama.PROVIDER_ID) {
-                check(current != null && current.providerId == LocalLlama.PROVIDER_ID &&
-                        model.providerId == LocalLlama.PROVIDER_ID) {
-                    "local llama models are package-managed and cannot be added or reassigned manually"
-                }
-                db.modelDao().upsert(
-                    current.copy(
-                        reasoningEffort = model.reasoningEffort,
-                        contextWindow = model.contextWindow,
-                    )
-                )
-            } else {
-                db.modelDao().upsert(model)
-            }
-        }
+        db.modelDao().upsert(model)
     }
 
     /**
@@ -686,22 +662,6 @@ object WeAgentRepository {
      */
     suspend fun deleteModel(id: String) {
         val model = db.modelDao().getById(id) ?: return
-        check(model.providerId != LocalLlama.PROVIDER_ID) {
-            "local llama models are package-managed and cannot be deleted manually"
-        }
-        deleteStoredModel(model)
-    }
-
-    /** Package sync-only stale-row deletion that retains the normal model-deletion cascade. */
-    suspend fun deleteLocalLlamaModelForSync(id: String) {
-        val model = db.modelDao().getById(id) ?: return
-        check(model.providerId == LocalLlama.PROVIDER_ID) {
-            "sync deletion is restricted to local llama model rows"
-        }
-        deleteStoredModel(model)
-    }
-
-    private suspend fun deleteStoredModel(model: ModelEntity) {
         val settingKeys = WeAgentSettings.modelDefaultKeysFor(setOf(model.id))
         db.withTransaction {
             db.sessionDao().clearModelBindings(listOf(model.id))
@@ -722,9 +682,6 @@ object WeAgentRepository {
      * no vision); new ids get fresh UUIDs. Returns separate added/overwritten counts.
      */
     suspend fun importModels(providerId: String, remoteIds: List<String>): ModelImportResult {
-        check(providerId != LocalLlama.PROVIDER_ID) {
-            "local llama models are derived from installed packages and cannot be imported manually"
-        }
         var added = 0
         var overwritten = 0
         db.withTransaction {

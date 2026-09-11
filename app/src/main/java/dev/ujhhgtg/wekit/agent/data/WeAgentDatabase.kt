@@ -60,7 +60,7 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
         ExternalServiceEntity::class,
         BridgeToolAuditEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 9, to = 10), // adds external_services table
@@ -154,6 +154,27 @@ abstract class WeAgentDatabase : RoomDatabase() {
             "DROP TABLE `tool_permissions`",
         )
 
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                migration15To16Sql.forEach(db::execSQL)
+            }
+        }
+
+        // Remove the retired local provider before Room decodes provider types. Sessions and
+        // messages remain; affected model selections fall back to the remaining remote models.
+        val migration15To16Sql = listOf(
+            "UPDATE sessions SET modelId = NULL, contextWindow = NULL WHERE modelId IN " +
+                    "(SELECT id FROM models WHERE providerId = 'local-llama' OR providerId IN " +
+                    "(SELECT id FROM model_providers WHERE type = 'LOCAL_LLAMA'))",
+            "DELETE FROM settings WHERE `key` = 'local_compute_backend' OR " +
+                    "(`key` IN ('default_model_id', 'small_model_id') AND value IN " +
+                    "(SELECT id FROM models WHERE providerId = 'local-llama' OR providerId IN " +
+                    "(SELECT id FROM model_providers WHERE type = 'LOCAL_LLAMA')))",
+            "DELETE FROM models WHERE providerId = 'local-llama' OR providerId IN " +
+                    "(SELECT id FROM model_providers WHERE type = 'LOCAL_LLAMA')",
+            "DELETE FROM model_providers WHERE id = 'local-llama' OR type = 'LOCAL_LLAMA'",
+        )
+
         private fun build(): WeAgentDatabase {
             val external = KnownPaths.moduleData.resolve("agent/weagent.db").toFile()
             val private = File(HostInfo.application.filesDir, "wekit-agent/weagent.db")
@@ -197,7 +218,7 @@ abstract class WeAgentDatabase : RoomDatabase() {
             // -shm/-wal sidecars that misbehave on FUSE-emulated external storage
             // (moduleData lives on /sdcard). Private storage always uses WAL.
             .setJournalMode(journalMode)
-            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
             // Destructive fallback is scoped to the pre-release schemas (1–8) only, which no
             // migration path was ever written for. From 9 onwards every step must have a
             // migration: a missing one then fails loudly at open time instead of silently
