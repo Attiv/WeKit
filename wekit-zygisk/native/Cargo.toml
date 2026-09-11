@@ -14,3 +14,6 @@ jni = { version = "0.22", default-features = false }
 anyhow = "1"
 sha2 = "0.11"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+
+[build-dependencies]
+cmake = "0.1"

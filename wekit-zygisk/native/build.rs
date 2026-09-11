@@ -1,13 +1,5 @@
 use std::env;
 use std::path::PathBuf;
-use std::process::Command;
-
-fn run(command: &mut Command) {
-    let status = command.status().unwrap_or_else(|error| {
-        panic!("failed to run {command:?}: {error}; install CMake >= 3.28 and Ninja")
-    });
-    assert!(status.success(), "{command:?} exited with {status}");
-}
 
 fn main() {
     println!("cargo:rerun-if-env-changed=WEKIT_ANDROID_NDK");
@@ -25,19 +17,8 @@ fn main() {
         println!("cargo:rerun-if-changed={}", source.display());
     }
 
-    let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let build = out.join("cmake");
-    let install = out.join("native");
-    let cmake = env::var_os("CMAKE").unwrap_or_else(|| "cmake".into());
-    let mut configure = Command::new(&cmake);
-    configure
-        .arg("-S")
-        .arg(&manifest)
-        .arg("-B")
-        .arg(&build)
-        .args(["-G", "Ninja"])
-        .arg("-DCMAKE_BUILD_TYPE=RelWithDebInfo")
-        .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install.display()));
+    let mut config = cmake::Config::new(&manifest);
+    config.generator("Ninja").profile("RelWithDebInfo");
     if android {
         assert_eq!(
             env::var("TARGET").unwrap(),
@@ -50,33 +31,21 @@ fn main() {
         );
         let api =
             env::var("WEKIT_ANDROID_API").expect("run ./x configure to select the Android API");
-        configure
-            .arg(format!(
-                "-DCMAKE_TOOLCHAIN_FILE={}",
-                ndk.join("build/cmake/android.toolchain.cmake").display()
-            ))
-            .arg("-DANDROID_ABI=arm64-v8a")
-            .arg(format!("-DANDROID_PLATFORM=android-{api}"))
-            .arg("-DANDROID_STL=c++_static");
+        config
+            .define(
+                "CMAKE_TOOLCHAIN_FILE",
+                ndk.join("build/cmake/android.toolchain.cmake"),
+            )
+            .define("ANDROID_ABI", "arm64-v8a")
+            .define("ANDROID_PLATFORM", format!("android-{api}"))
+            .define("ANDROID_STL", "c++_static");
         let lsplant = root.join("third_party/lsplant");
         println!(
             "cargo:rerun-if-changed={}",
             lsplant.join("lsplant/src/main/jni").display()
         );
     }
-    run(&mut configure);
-    let mut compile = Command::new(&cmake);
-    compile
-        .arg("--build")
-        .arg(&build)
-        .args(["--target", "wekit_xz"]);
-    if android {
-        compile.arg("wekit_lsplant_bridge");
-    }
-    run(compile
-        .arg("--parallel")
-        .arg(env::var("NUM_JOBS").unwrap_or_else(|_| "1".into())));
-    run(Command::new(&cmake).arg("--install").arg(&build));
+    let install = config.build();
 
     println!(
         "cargo:rustc-link-search=native={}",
