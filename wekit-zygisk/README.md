@@ -46,9 +46,14 @@ use the same APK version.
 `module.apk` through that directory and prepares the private APK copy and in-memory
 DEX. The current lifecycle does not require `exemptFd`.
 
-The installer retains `MODULE_HOT_INSTALL_REQUEST=true` for compatible root
-managers. This is not a guarantee that native loader updates can take effect
-without rebooting, and it never replaces code in an already running process.
+The installer compares the new loader byte-for-byte with the active module's
+`zygisk/arm64-v8a.so`, not a pending update. Native changes require a device reboot;
+an unchanged loader allows APK updates without a device reboot once activated.
+Only an enabled module with an unchanged loader requests
+`MODULE_HOT_INSTALL_REQUEST=true`. First installs, disabled/removed modules and
+comparison errors also advise a reboot. Hot installation requires manager support;
+if the manager keeps the update pending, follow its reboot requirement. Fully stop
+and restart all WeChat processes after activation: running code is never replaced.
 The APK and loader follow the manager's module activation lifecycle together.
 
 ## Build
