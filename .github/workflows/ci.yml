@@ -105,6 +105,9 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y gcc-multilib
+          python3 -m venv "$RUNNER_TEMP/zygisk-build-tools"
+          "$RUNNER_TEMP/zygisk-build-tools/bin/pip" install cmake==3.31.6 ninja==1.11.1.4
+          echo "$RUNNER_TEMP/zygisk-build-tools/bin" >> "$GITHUB_PATH"
 
       - name: Validate build tools, DEX reader, and i18n catalogs
         run: |
@@ -449,6 +452,9 @@ jobs:
         # glslc compiles the llama.cpp Vulkan shaders for the llama-native pack.
         run: |
           sudo apt-get update && sudo apt-get install -y gcc-multilib glslc
+          python3 -m venv "$RUNNER_TEMP/zygisk-build-tools"
+          "$RUNNER_TEMP/zygisk-build-tools/bin/pip" install cmake==3.31.6 ninja==1.11.1.4
+          echo "$RUNNER_TEMP/zygisk-build-tools/bin" >> "$GITHUB_PATH"
 
       - name: Free disk space and report
         # This job is much heavier than a plain APK build (cold PRoot build,

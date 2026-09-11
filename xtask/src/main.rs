@@ -543,10 +543,15 @@ fn task_configure() -> Result<()> {
         .with_context(|| format!("failed to write {}", config_path.display()))?;
     println!("configure: wrote {}", config_path.display());
 
-    // Write for wekit-zygisk (same linker config + extra linker flags for symbol visibility)
+    // The C++ ART bridge uses exactly the same pinned NDK/API as Rust and AGP.
+    let ndk_dir = pinned_ndk_dir(&root, None)?;
+    let zygisk_out = format!(
+        "{out}WEKIT_ANDROID_NDK = \"{}\"\nWEKIT_ANDROID_API = \"{MIN_SDK}\"\n",
+        ndk_dir.to_string_lossy().replace('\\', "/")
+    );
     let zygisk_config_path = zygisk_dir(&root).join("native/.cargo/config.toml");
     fs::create_dir_all(zygisk_config_path.parent().unwrap())?;
-    fs::write(&zygisk_config_path, &out)
+    fs::write(&zygisk_config_path, &zygisk_out)
         .with_context(|| format!("failed to write {}", zygisk_config_path.display()))?;
     println!("configure: wrote {}", zygisk_config_path.display());
 
@@ -1044,6 +1049,34 @@ fn copy_if_changed(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn build_zygisk_native(root: &Path, abi_names: &[String], save_symbols: bool) -> Result<()> {
+    // Do not recursively initialize LSPlant's unrelated SSH test submodules.
+    // The explicit override checks out its pinned gitlink despite update=none.
+    run_cmd(
+        "git",
+        &[
+            "-c",
+            "submodule.third_party/lsplant.update=checkout",
+            "submodule",
+            "update",
+            "--init",
+            "--",
+            "third_party/lsplant",
+            "third_party/dobby",
+        ],
+        root,
+    )?;
+    run_cmd(
+        "git",
+        &[
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+            "--",
+            "lsplant/src/main/jni/external/dex_builder",
+        ],
+        &root.join("third_party/lsplant"),
+    )?;
     let ndk = pinned_ndk_dir(root, None)?;
     let strip = ndk
         .join("toolchains/llvm/prebuilt")

@@ -70,7 +70,45 @@ Run `./x build --help` or `./x run --help` for options.
 
 - Rust toolchain with the Android targets
 - rust-analyzer
-- Android NDK
+- Android NDK pinned in `gradle/libs.versions.toml`
+- CMake 3.28 or newer and Ninja (CI uses CMake 3.31.6 and Ninja 1.11.1.4)
+
+`./x build` initializes the pinned LSPlant and Dobby sources and LSPlant's
+runtime dependencies. LSPlant's unrelated test/documentation submodules are
+not required. `./x configure` writes the selected NDK and API level into the
+Cargo configuration; direct Android Cargo builds also need this configuration
+and the initialized native dependencies. Desktop Rust tests do not build LSPlant.
+
+## ART hooks
+
+The Zygisk lifecycle, companion IPC, payload loading, JNI registration and ART
+symbol resolution remain in Rust. A small C ABI bridge statically links
+[LSPlant](https://github.com/LSPosed/LSPlant) and
+[Dobby](https://github.com/LSPosed/Dobby), including the C++ runtime, into the
+existing `libwekit_zygisk.so`. No additional loader-side shared library is needed.
+The gitlinks pin LSPlant to `d8b5d1dbb664abc606644036822e4bb64547edf6` and Dobby to
+`edb2af1216313cf6c0d6771be2b279c1db573faf` (the source used by LSPlant's Dobby 1.2
+test dependency); their upstream license files remain in
+the submodules (LSPlant: LGPL-3.0, Dobby: Apache-2.0).
+
+LSPlant initializes during native `postAppSpecialize`, before entering module
+Java code, and trusts the module's in-memory DEX files. Kotlin retains the
+`IHookBridge` callback contract, including priorities, mutable arguments,
+before/after callbacks, original invocation and constructor handling. Explicit
+method deoptimization is provided by LSPlant.
+
+Unhooking a handle removes only its callback. The underlying LSPlant hook and
+backup remain alive until process exit, and an empty callback list invokes the
+original method directly. This preserves in-flight calls and allows later
+registrations to reuse the hook; it retains generated code and some dispatch
+overhead. `hookCounter` and `hookedMethods` describe members with active callbacks.
+This follows LSPosed's logical-unhook lifecycle: LSPlant does not permit using a
+backup after physical unhooking.
+
+On a device, validate startup, static/instance/constructor hooks, argument and
+result replacement, original exceptions, callback ordering, concurrent calls,
+logical unhook/re-registration and explicit deoptimization. Desktop tests and a
+successful native build cannot establish ART or WeChat runtime compatibility.
 
 ## See also
 
