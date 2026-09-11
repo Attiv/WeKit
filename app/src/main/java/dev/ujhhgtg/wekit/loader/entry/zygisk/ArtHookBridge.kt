@@ -41,17 +41,15 @@ class ArtHookBridge : IHookBridge {
         require(member is Method || member is Constructor<*>) {
             "hookMethod: unsupported member type ${member::class.java}"
         }
+        // LSPlant handles native methods, generated proxy methods and concrete
+        // interface methods. Abstract declarations have no implementation to hook.
         require(!Modifier.isAbstract(member.modifiers)) {
             "hookMethod: cannot hook abstract member $member"
         }
-        require(!Modifier.isNative(member.modifiers)) {
-            "hookMethod: cannot hook native member $member"
-        }
-        require(!Proxy.isProxyClass(member.declaringClass)) {
-            "hookMethod: cannot hook proxy member $member"
-        }
-        require(!Modifier.isInterface(member.declaringClass.modifiers)) {
-            "hookMethod: cannot hook interface member $member"
+        // LSPlant d8b5d1d uses Method.getReturnType() for every member declared
+        // by a generated proxy class; passing a Constructor is invalid JNI usage.
+        require(member !is Constructor<*> || !Proxy.isProxyClass(member.declaringClass)) {
+            "hookMethod: this LSPlant version cannot hook generated proxy constructor $member"
         }
 
         val candidate = ArtHookBridgeRuntime.HookEntry(member)

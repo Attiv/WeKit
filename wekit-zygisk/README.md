@@ -97,6 +97,16 @@ Java code, and trusts the module's in-memory DEX files. Kotlin retains the
 before/after callbacks, original invocation and constructor handling. Explicit
 method deoptimization is provided by LSPlant.
 
+Hook targets may be ordinary methods, JNI/native methods, methods declared by
+generated `java.lang.reflect.Proxy` classes, concrete interface methods
+(default, static or private), and ordinary constructors. Abstract declarations
+remain rejected: for an abstract interface method, hook the concrete method on
+the implementing/proxy class. Generated proxy constructors also remain rejected
+because the pinned LSPlant's proxy signature path calls `Method.getReturnType()`
+on the reflected target, which is invalid for a `Constructor`. Native method
+hooks intercept ART method calls; they do not intercept direct calls to the
+underlying C/C++ function. LSPlant returns false when deoptimizing native methods.
+
 Unhooking a handle removes only its callback. The underlying LSPlant hook and
 backup remain alive until process exit, and an empty callback list invokes the
 original method directly. This preserves in-flight calls and allows later
@@ -105,8 +115,9 @@ overhead. `hookCounter` and `hookedMethods` describe members with active callbac
 This follows LSPosed's logical-unhook lifecycle: LSPlant does not permit using a
 backup after physical unhooking.
 
-On a device, validate startup, static/instance/constructor hooks, argument and
-result replacement, original exceptions, callback ordering, concurrent calls,
+On a device, validate startup, static/instance/constructor hooks, native and
+generated proxy methods, concrete interface methods, argument and result
+replacement, original exceptions, callback ordering, concurrent calls,
 logical unhook/re-registration and explicit deoptimization. Desktop tests and a
 successful native build cannot establish ART or WeChat runtime compatibility.
 
