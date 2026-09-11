@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Execute original and relocated A64 functions with Unicorn and compare registers.
 
-Install tests/requirements-arm64.txt, then run this file with rustc on PATH.
+From the repository root, with uv and rustc on PATH, run:
+    uv run --locked --project wekit-zygisk --group test python wekit-zygisk/native/tests/arm64_relocation.py
 This tests instruction semantics, not Android's cache/BTI enforcement or ART.
 """
 import pathlib

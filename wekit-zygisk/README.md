@@ -119,13 +119,20 @@ The emitter was developed with reference to
 [Dobby's ARM64 relocation](https://github.com/LSPosed/Dobby/blob/c1da0315d7a2069bde2ab432e45d4ab6df91237a/source/InstructionRelocation/arm64/InstructionRelocationARM64.cc)
 and [Arm's code synchronization guidance](https://developer.arm.com/community/arm-community-blogs/b/architectures-and-processors-blog/posts/caches-self-modifying-code-working-with-threads).
 
-Desktop validation:
+Desktop validation (from the repository root, with uv and Rust installed):
 
 ```sh
 cargo test -p wekit-zygisk --lib
-python3 -m venv /tmp/wekit-arm64-tests
-/tmp/wekit-arm64-tests/bin/pip install -r wekit-zygisk/native/tests/requirements-arm64.txt
-/tmp/wekit-arm64-tests/bin/python wekit-zygisk/native/tests/arm64_relocation.py
+uv run --locked --project wekit-zygisk --group test python wekit-zygisk/native/tests/arm64_relocation.py
+```
+
+Python tooling dependencies are declared in `pyproject.toml` and pinned in
+`uv.lock`: the `test` group provides Unicorn, and the `build` group provides
+CMake and Ninja. uv creates and manages `wekit-zygisk/.venv` automatically.
+To make the pinned build tools available to the native build, run:
+
+```sh
+uv run --locked --project wekit-zygisk --group build ./x build --native-only
 ```
 
 The Unicorn suite compiles the production Rust emitter, executes original and
