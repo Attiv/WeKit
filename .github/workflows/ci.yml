@@ -46,11 +46,21 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Free disk space for build and caches
+        # Cache uploads need space for a temporary archive after the APK build.
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
+          # Keep a single owner for Gradle dependency and wrapper caches.
           cache: gradle
 
       - name: Grant execute permission
@@ -91,16 +101,6 @@ jobs:
         with:
           cache-on-failure: true
           workspaces: . -> target
-
-      - name: Cache Gradle build cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/configuration-cache
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.0.1
@@ -180,6 +180,15 @@ jobs:
         with:
           name: wekit-mapping
           path: dist/mapping/*.txt
+
+      - name: Free build intermediates before saving caches
+        if: always()
+        # APKs and mappings have already been collected into dist/ and uploaded.
+        # Keep the Gradle, Rust, and PRoot caches for their post-job save steps.
+        run: |
+          df -h /
+          rm -rf app/build
+          df -h /
 
   dex-test:
     runs-on: ubuntu-latest
