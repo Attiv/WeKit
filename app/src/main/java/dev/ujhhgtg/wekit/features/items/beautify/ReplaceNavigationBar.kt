@@ -278,6 +278,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
     private val SCROLL_HIDE_EASING = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
     private const val SCROLL_HIDE_DURATION_MS = 300
     private const val SCROLL_HIDE_MIN_SCALE = 0.85f
+    private const val RECENT_PAGE_HIDE_DURATION_MS = 260
 
     private fun normalizedTabOrder(rawOrder: String = tabOrder): List<NavItem> {
         val orderedIndices = rawOrder.split(",")
@@ -442,6 +443,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
         }
 
         WeMainActivityBeautifyApi.methodDoOnCreate.hookAfter {
+            recentPageHiddenState.value = false
             val activity = thisObject!!.reflekt()
                 .firstField {
                     type = "com.tencent.mm.ui.MMFragmentActivity"
@@ -525,6 +527,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                     // Leaving the conversation page always restores the bar and invalidates
                     // the scroll-direction tracker, so returning to the list starts fresh.
                     if (position != homePagerIndex) {
+                        recentPageHiddenState.value = false
                         barScrollHiddenState.value = false
                         scrollUpdated = false
                     }
@@ -736,8 +739,20 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                                 }
                             }
                         } else {
+                            // The floating bar lives outside the native tab container, so
+                            // follow its "Recent" page animation independently of scroll hide.
+                            val recentPageHideProgress by animateFloatAsState(
+                                targetValue = if (recentPageHiddenState.value) 1f else 0f,
+                                animationSpec = tween(RECENT_PAGE_HIDE_DURATION_MS),
+                                label = "navRecentPageHide",
+                            )
                             Box(
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .graphicsLayer {
+                                        translationY = recentPageHideProgress * size.height
+                                        alpha = 1f - recentPageHideProgress
+                                    }
                             ) {
                                 val bottomCenter = Modifier.align(Alignment.BottomCenter)
 
@@ -884,6 +899,16 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
             attachBar(composeView, barAppearanceState.value.floating)
         }
 
+        // TaskBarAnimController starts this listener only when it actually hides the
+        // native tabs. Its generic isOpen callback also fires while closing/cancelling.
+        // The docked replacement already inherits the native container's animation.
+        methodRecentPageHideAnimationStart.hookAfter {
+            recentPageHiddenState.value = true
+        }
+        methodRecentPageClose.hookAfter {
+            recentPageHiddenState.value = false
+        }
+
         methodUpdateTabUnread.hookBefore {
             val count = args[0] as Int
             unreadCountState.intValue = count
@@ -970,6 +995,9 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
     private val finderUnreadCountState = mutableIntStateOf(0)
     private val showFinderDotState = mutableStateOf(false)
     private val contactUnreadCountState = mutableIntStateOf(0)
+
+    // Always follow the host's Recent page, regardless of the scroll auto-hide setting.
+    private val recentPageHiddenState = mutableStateOf(false)
 
     // True while the bar should be hidden by the conversation-list scroll auto-hide.
     private val barScrollHiddenState = mutableStateOf(false)
@@ -1303,6 +1331,25 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                     }) { Text(stringResource(R.string.dialog_confirm)) }
                 },
             )
+        }
+    }
+
+    private val methodRecentPageHideAnimationStart by dexMethod {
+        matcher {
+            declaredClass {
+                usingEqStrings($$"com/tencent/mm/plugin/taskbar/ui/TaskBarAnimController$6")
+            }
+            name = "onAnimationStart"
+            paramTypes("android.animation.Animator")
+            returnType = "void"
+        }
+    }
+
+    private val methodRecentPageClose by dexMethod {
+        matcher {
+            usingEqStrings("com/tencent/mm/plugin/taskbar/ui/TaskBarAnimController", "onClose")
+            paramTypes("boolean")
+            returnType = "void"
         }
     }
 
