@@ -46,8 +46,8 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -75,6 +75,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.get
 import androidx.core.view.descendants
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -210,7 +212,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
         val draw = reflected.firstMethod { name = "onDraw"; parameters(Canvas::class) }
         fun render(alpha: Int): ImageBitmap {
             focusAlpha.set(alpha)
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val bitmap = createBitmap(width, height)
             draw.invoke(Canvas(bitmap))
             return bitmap.asImageBitmap()
         }
@@ -224,12 +226,12 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                 .single { it.alpha == 0 }
             // Apply that filter to an opaque white swatch: ColorFilter exposes no
             // public color getter, and the icon's edge pixels contain anti-aliasing.
-            val swatch = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+            val swatch = createBitmap(1, 1)
             Canvas(swatch).drawPaint(Paint().apply {
                 color = android.graphics.Color.WHITE
                 colorFilter = activePaint.colorFilter
             })
-            val activeColor = Color(swatch.getPixel(0, 0))
+            val activeColor = Color(swatch[0, 0])
             swatch.recycle()
             WechatTabIcons(outlined, render(255), activeColor)
         } finally {
@@ -543,11 +545,10 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
             // Capture view references before removing the host's tab children. Their logical
             // tags survive reordered/disabled pages; only decode snapshots when requested.
             val nativeIconViews = bottomTabViewGroup.descendants
-                .filter { it.javaClass.name == "com.tencent.mm.ui.TabIconView" }
-                .associate { icon ->
+                .filter { it.javaClass.name == "com.tencent.mm.ui.TabIconView" }.associateBy { icon ->
                     val tab = generateSequence(icon.parent as View) { it.parent as? View }
                         .first { it.tag is Int }
-                    (tab.tag as Int) to icon
+                    tab.tag as Int
                 }
 
             fun attachBar(composeView: ComposeView, floating: Boolean) {
