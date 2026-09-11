@@ -1309,6 +1309,9 @@
     <string name="conversation_grouping_tab_layout_content_description">未占满时居中，超出一行时靠左并可横向滚动</string>
     <string name="conversation_grouping_tab_layout_equal">等宽铺满</string>
     <string name="conversation_grouping_tab_layout_equal_description">所有标签等宽分配，占满整行</string>
+    <string name="conversation_grouping_unread_title">未读提示</string>
+    <string name="conversation_grouping_include_official_unread">计入公众号未读</string>
+    <string name="conversation_grouping_include_official_unread_description">将公众号未读计入分组标签的数字和红点</string>
     <string name="fab_default_scan">扫一扫</string>
     <string name="fab_default_moments">朋友圈</string>
     <string name="fab_default_wallet">钱包</string>

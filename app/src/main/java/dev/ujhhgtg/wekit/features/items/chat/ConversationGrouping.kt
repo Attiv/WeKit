@@ -106,6 +106,7 @@ import dev.ujhhgtg.wekit.ui.content.IconButton
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.content.m3.RadioButtonWidget
 import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
+import dev.ujhhgtg.wekit.ui.content.m3.SwitchWidget
 import dev.ujhhgtg.wekit.ui.utils.LifecycleOwnerProvider
 import dev.ujhhgtg.wekit.ui.utils.setLifecycleOwner
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
@@ -152,6 +153,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     private var equalWidthTabs by WePrefs.prefOption("conversation_grouping_equal_width_tabs", false)
     private val equalWidthTabsState by lazy { mutableStateOf(equalWidthTabs) }
+    private var includeOfficialUnread by WePrefs.prefOption("conversation_grouping_include_official_unread", true)
 
     private val groupTabHorizontalPadding = 16.dp
 
@@ -577,6 +579,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {
+            var countOfficialUnread by remember { mutableStateOf(includeOfficialUnread) }
             AlertDialogContent(
                 title = { Text(stringResource(R.string.feature_conversation_grouping_name)) },
                 textTopSpacing = 0.dp,
@@ -607,6 +610,26 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                         onClick = {
                                             equalWidthTabs = true
                                             equalWidthTabsState.value = true
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        item {
+                            SegmentedColumn(
+                                title = stringResource(R.string.conversation_grouping_unread_title),
+                                contentPadding = PaddingValues(0.dp),
+                                titlePadding = PaddingValues(start = 16.dp, top = 8.dp, bottom = 8.dp),
+                            ) {
+                                item {
+                                    SwitchWidget(
+                                        title = stringResource(R.string.conversation_grouping_include_official_unread),
+                                        description = stringResource(R.string.conversation_grouping_include_official_unread_description),
+                                        checked = countOfficialUnread,
+                                        onCheckedChange = { checked ->
+                                            includeOfficialUnread = checked
+                                            countOfficialUnread = checked
+                                            unreadRefreshVersion.update { it + 1 }
                                         },
                                     )
                                 }
@@ -1263,6 +1286,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         username.startsWith("gh_") || username == "officialaccounts" || username == "service_officialaccounts"
 
     private fun queryGroupUnreadCounts(groups: List<ChatGroup>): Map<String, ConversationUnreadState> {
+        val countOfficialUnread = includeOfficialUnread
         // Public-account feed entries own their read/consumed state. Their children may retain
         // unread counters after the feed dot disappears, so count the entry instead of its children.
         // Other containers retain the existing member-based totals, including folded chats.
@@ -1279,7 +1303,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
         val hidden = if (HideContacts.isEnabled) HideContacts.hiddenContacts else emptySet()
         val unreadByUsername = WeMessageApi.getConversationUnreadStates(usernames)
-            .filterKeys { it !in hidden }
+            .filterKeys { it !in hidden && (countOfficialUnread || !isOfficialConversation(it)) }
         return groups.associate { group ->
             val members = when {
                 isAllTab(group.id) -> unreadByUsername.keys
