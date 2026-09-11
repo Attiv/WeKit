@@ -98,7 +98,6 @@ exec cargo xtask "$@"
 | `./x dex-test` | 在桌面测试 DexKit 解析器 |
 | `./x dex-report-diff <report...>` | 离线比较版本报告中的方法和构造函数签名 |
 | `./x extensions` | 构建和管理按需下载的扩展包 |
-| `./x cloudflared-build` | 构建嵌入式 cloudflared bridge |
 
 使用 `./x --help` 或 `./x <命令> --help` 查看当前支持的参数。
 

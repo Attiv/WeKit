@@ -14,7 +14,6 @@ class ExtensionPacksRegistryTest {
         assertEquals(
             listOf(
                 "script-deps",
-                "cloudflared",
                 "python-runtime",
                 "archlinux-arm64",
                 "llama-native",

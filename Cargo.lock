@@ -3406,9 +3406,7 @@ dependencies = [
  "sha2",
  "silk-v3-sys",
  "symphonia",
- "tokio",
  "webm-iterable",
- "wekit-read-receipts-server",
 ]
 
 [[package]]
@@ -3423,7 +3421,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "subtle",
  "tokio",
  "tower 0.5.3",
  "tracing",

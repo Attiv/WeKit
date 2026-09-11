@@ -1,7 +1,6 @@
 //! JNI lifecycle controller for the exec-isolated inference child.
 //!
-//! Generation-guarded state machine in the shape of
-//! `wekit-native/src/read_receipts_server.rs`, adapted to the exec design:
+//! Generation-guarded state machine for the exec design:
 //! the "server thread" is a separate process, so every state transition is
 //! either a command executed on the one-shot `wekit-llama-ctl` control
 //! thread or a watchdog [`ChildEvent`] applied under the generation guard.

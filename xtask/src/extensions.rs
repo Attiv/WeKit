@@ -26,14 +26,12 @@ use zip::write::SimpleFileOptions;
 
 const PACK_SCRIPT_DEPS: &str = "script-deps";
 const PACK_PYTHON_RUNTIME: &str = "python-runtime";
-const PACK_CLOUDFLARED: &str = "cloudflared";
 const PACK_ARCHLINUX: &str = "archlinux-arm64";
 const PACK_LLAMA: &str = "llama-native";
 /// Static index entry for the externally hosted Qwen GGUF; no asset is built.
 const PACK_QWEN_MODEL: &str = "qwen3.8-4b-distill";
 const DIST_DIR: &str = "dist/extensions";
 const INDEX_FILE: &str = "manifest.json";
-const CLOUDFLARED_LIB: &str = "libwekit_cloudflared.so";
 const LLAMA_LIB: &str = "libwekit_llama.so";
 const LLAMA_LIB_OPENCL: &str = "libwekit_llama_opencl.so";
 const LLAMA_ABI: &str = "arm64-v8a";
@@ -46,7 +44,7 @@ pub struct ExtensionsArgs {
     pub command: ExtensionsCommand,
 
     /// Only process the given pack id (script-deps | python-runtime |
-    /// cloudflared | archlinux-arm64 | llama-native | qwen3.8-4b-distill). Skips writing the index.
+    /// archlinux-arm64 | llama-native | qwen3.8-4b-distill). Skips writing the index.
     #[arg(long, global = true)]
     pub only: Option<String>,
 }
@@ -192,9 +190,6 @@ pub fn run(root: &Path, args: &ExtensionsArgs) -> Result<()> {
     }
     if selected(PACK_PYTHON_RUNTIME) {
         entries.push(build_python_runtime(root, &dist)?);
-    }
-    if selected(PACK_CLOUDFLARED) {
-        entries.push(build_cloudflared_zip(root, &dist)?);
     }
     if selected(PACK_ARCHLINUX) {
         entries.push(build_archlinux_zip(root, &dist)?);
@@ -1102,52 +1097,6 @@ fn build_python_sdk_artifact(root: &Path, dist: &Path) -> Result<()> {
     Ok(())
 }
 
-fn build_cloudflared_zip(root: &Path, dist: &Path) -> Result<PackIndexEntry> {
-    let abis = ["arm64-v8a"];
-    crate::task_build_cloudflared(&abis.iter().map(|s| s.to_string()).collect::<Vec<_>>())?;
-
-    let mut inner: BTreeMap<String, String> = BTreeMap::new();
-    let mut so_paths: Vec<(String, PathBuf)> = Vec::new();
-    for abi in abis {
-        let so = root
-            .join("target/cloudflared")
-            .join(abi)
-            .join(CLOUDFLARED_LIB);
-        inner.insert(format!("{abi}/{CLOUDFLARED_LIB}"), sha256_file(&so)?);
-        so_paths.push((abi.to_string(), so));
-    }
-    let inner_manifest = serde_json::to_string_pretty(&serde_json::json!({ "files": inner }))?;
-
-    let zip_tmp = dist.join("cloudflared-unversioned.zip");
-    {
-        let file = File::create(&zip_tmp)?;
-        let mut zip = ZipWriter::new(file);
-        let options =
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        for (abi, so) in &so_paths {
-            zip.start_file(format!("{abi}/{CLOUDFLARED_LIB}"), options)?;
-            let mut bytes = Vec::new();
-            File::open(so)?.read_to_end(&mut bytes)?;
-            zip.write_all(&bytes)?;
-        }
-        zip.start_file("manifest.json", options)?;
-        zip.write_all(inner_manifest.as_bytes())?;
-        zip.finish()?;
-    }
-
-    let mut files = BTreeMap::new();
-    files.insert("cloudflared.zip".to_string(), sha256_file(&zip_tmp)?);
-    let version = derive_version(&content_hash(&files));
-    let entry = index_entry(PACK_CLOUDFLARED, &version, &files);
-
-    let asset = dist.join(&entry.asset);
-    fs::rename(&zip_tmp, &asset)?;
-    clean_stale(dist, "cloudflared-", &asset)?;
-
-    println!("cloudflared: {version}");
-    Ok(entry)
-}
-
 // ── llama-native pack ──────────────────────────────────────────────────────────
 
 /// Build both android variants of the llama native server and zip them.
@@ -1513,11 +1462,11 @@ mod tests {
         assert_eq!(entry.sha256, "00");
 
         let entry = index_entry(
-            "cloudflared",
+            "llama-native",
             "0123456789ab",
-            &files(&[("cloudflared.zip", "11")]),
+            &files(&[("llama-native.zip", "11")]),
         );
-        assert_eq!(entry.asset, "cloudflared-0123456789ab.zip");
+        assert_eq!(entry.asset, "llama-native-0123456789ab.zip");
         assert_eq!(entry.sha256, "11");
     }
 

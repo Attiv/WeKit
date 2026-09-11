@@ -452,13 +452,6 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: app/src/main/go/wekit-cloudflared/go.mod
-          cache: true
-          cache-dependency-path: app/src/main/go/wekit-cloudflared/go.sum
-
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.0.1
         with:
