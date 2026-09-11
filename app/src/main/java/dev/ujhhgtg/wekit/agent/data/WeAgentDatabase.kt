@@ -60,7 +60,7 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
         ExternalServiceEntity::class,
         BridgeToolAuditEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 9, to = 10), // adds external_services table
@@ -175,6 +175,24 @@ abstract class WeAgentDatabase : RoomDatabase() {
             "DELETE FROM model_providers WHERE id = 'local-llama' OR type = 'LOCAL_LLAMA'",
         )
 
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                migration16To17Sql.forEach(db::execSQL)
+            }
+        }
+
+        // Drop the retired environment type before Room decodes it. Keep conversation/audit
+        // history and the old rootfs files; only obsolete configuration and bindings are removed.
+        val migration16To17Sql = listOf(
+            "UPDATE sessions SET linuxEnvironmentId = NULL WHERE linuxEnvironmentId IN " +
+                    "(SELECT id FROM linux_environments WHERE type = 'CHROOT')",
+            "UPDATE sessions SET lastEffectiveLinuxEnvironmentId = NULL WHERE lastEffectiveLinuxEnvironmentId IN " +
+                    "(SELECT id FROM linux_environments WHERE type = 'CHROOT')",
+            "DELETE FROM settings WHERE `key` = 'default_linux_environment_id' AND value IN " +
+                    "(SELECT id FROM linux_environments WHERE type = 'CHROOT')",
+            "DELETE FROM linux_environments WHERE type = 'CHROOT'",
+        )
+
         private fun build(): WeAgentDatabase {
             val external = KnownPaths.moduleData.resolve("agent/weagent.db").toFile()
             val private = File(HostInfo.application.filesDir, "wekit-agent/weagent.db")
@@ -218,7 +236,7 @@ abstract class WeAgentDatabase : RoomDatabase() {
             // -shm/-wal sidecars that misbehave on FUSE-emulated external storage
             // (moduleData lives on /sdcard). Private storage always uses WAL.
             .setJournalMode(journalMode)
-            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
             // Destructive fallback is scoped to the pre-release schemas (1–8) only, which no
             // migration path was ever written for. From 9 onwards every step must have a
             // migration: a missing one then fails loudly at open time instead of silently

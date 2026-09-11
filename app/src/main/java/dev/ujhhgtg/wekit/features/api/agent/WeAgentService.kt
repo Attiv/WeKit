@@ -23,7 +23,6 @@ import dev.ujhhgtg.wekit.agent.bridge.ToolBridgeServer
 import dev.ujhhgtg.wekit.agent.environment.LinuxEnvironmentManager
 import dev.ujhhgtg.wekit.agent.environment.NATIVE_ENVIRONMENT_ID
 import dev.ujhhgtg.wekit.agent.environment.ProotEnvironmentCreationResult
-import dev.ujhhgtg.wekit.agent.environment.ChrootEnvironmentCreationResult
 import dev.ujhhgtg.wekit.agent.terminal.EnvironmentTerminalBackend
 import dev.ujhhgtg.wekit.agent.terminal.SshTerminalBackend
 import dev.ujhhgtg.wekit.agent.terminal.TerminalManager
@@ -83,18 +82,15 @@ object WeAgentService : TriggerManager.TriggerHost {
     // Visibility gating + session-level permission are unified outside the registry.
     private val registry = ToolRegistry(BuiltinToolProvider.all)
 
-    val linuxEnvironmentManager = LinuxEnvironmentManager(highRiskApproval = ::requestHighRiskApproval)
+    val linuxEnvironmentManager = LinuxEnvironmentManager()
 
     suspend fun createProotEnvironment(name: String): ProotEnvironmentCreationResult =
         linuxEnvironmentManager.createProotEnvironment(name)
-    suspend fun createChrootEnvironment(name: String): ChrootEnvironmentCreationResult =
-        linuxEnvironmentManager.createChrootEnvironment(name)
+
     val terminalManager = TerminalManager(EnvironmentTerminalBackend(
         ssh = SshTerminalBackend(linuxEnvironmentManager::sshConnection),
         acquireEnvironmentLease = linuxEnvironmentManager::acquirePersistentLease,
-        approveChrootStart = { environment ->
-        requestHighRiskApproval("start rooted chroot terminal", environment)
-    }))
+    ))
     val toolBridgeServer = ToolBridgeServer(
         registry = registry,
         executorFactory = { sessionId ->
@@ -970,17 +966,6 @@ object WeAgentService : TriggerManager.TriggerHost {
             // Whether resolved by the user, session switch cleanup, or cancellation — drop it.
             pendingApprovals.remove(sessionId, ui)
         }
-    }
-
-    private suspend fun requestHighRiskApproval(operation: String, environment: dev.ujhhgtg.wekit.agent.environment.EnvironmentSnapshot?): Boolean {
-        val target = environment?.let { "${it.displayName} (${it.id})" } ?: "new Arch instance"
-        val pending = PendingApproval(
-            toolName = "rooted_chroot_high_risk",
-            providerName = "WeAgent Security",
-            argumentsJson = "{\"operation\":${kotlinx.serialization.json.JsonPrimitive(operation)},\"target\":${kotlinx.serialization.json.JsonPrimitive(target)}}",
-            modelExplanation = "This operation grants a process device root and host mount namespace access.",
-        )
-        return manualApprovalHandler.requestApproval(pending) is ManualApprovalResult.Approved
     }
 
     private suspend fun resolveTurnConfig(sessionId: String): TurnConfig? {

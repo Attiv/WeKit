@@ -186,8 +186,6 @@
     <string name="agent_linux_environment_deleting">Deleting environment…</string>
     <string name="agent_linux_environment_trusting">Trusting host key and retrying…</string>
     <string name="agent_linux_environment_healthy">Connection healthy</string>
-    <string name="agent_linux_environment_chroot_confirm_title">Allow rooted chroot operation?</string>
-    <string name="agent_linux_environment_chroot_confirm_message">This operation runs with device root privileges and chroot is not a security boundary.</string>
     <string name="agent_overlay_mode_title">Floating overlay mode</string>
     <string name="agent_overlay_mode_disabled">Disabled</string>
     <string name="agent_overlay_mode_foreground_only">Only while WeChat is in the foreground</string>

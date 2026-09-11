@@ -170,8 +170,6 @@
     <string name="agent_linux_environment_deleting">正在刪除環境…</string>
     <string name="agent_linux_environment_trusting">正在信任主機金鑰並重試…</string>
     <string name="agent_linux_environment_healthy">連線正常</string>
-    <string name="agent_linux_environment_chroot_confirm_title">允許具有 root 權限的 chroot 操作？</string>
-    <string name="agent_linux_environment_chroot_confirm_message">此操作將以裝置 root 權限執行，且 chroot 不是安全邊界。</string>
     <string name="agent_overlay_mode_title">懸浮窗模式</string>
     <string name="agent_overlay_mode_disabled">禁用</string>
     <string name="agent_overlay_mode_foreground_only">僅在微信前臺時顯示</string>

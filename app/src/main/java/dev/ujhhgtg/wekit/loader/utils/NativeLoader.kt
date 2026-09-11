@@ -88,8 +88,6 @@ object NativeLoader {
 
     fun invokeToolExecutable(): File = bundledExecutable("invoke_tool")
 
-    fun chrootCleanupExecutable(): File = bundledExecutable("chroot_cleanup")
-
     // PRoot requires the installed APK's native directory; the Zygisk payload does not provide it.
     fun prootExecutable(): File = synchronized(nativeLoadLock) {
         installedNativeArtifact("proot").requireExecutable("proot")

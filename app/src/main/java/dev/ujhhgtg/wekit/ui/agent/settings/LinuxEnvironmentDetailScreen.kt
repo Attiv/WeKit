@@ -62,7 +62,6 @@ fun LinuxEnvironmentDetailScreen(environmentId: String?, onBack: () -> Unit) {
     var pendingHostKey by remember { mutableStateOf<SshHostKeyException?>(null) }
     var operation by remember { mutableStateOf<EnvironmentOperation?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
-    var pendingChrootOperation by remember { mutableStateOf<EnvironmentOperation?>(null) }
     val activity = LocalActivity.current ?: error("activity not provided")
     val privateKeyImporter = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -178,14 +177,10 @@ fun LinuxEnvironmentDetailScreen(environmentId: String?, onBack: () -> Unit) {
                         enabled = !busy,
                         onClick = {
                             if (busy) return@BaseWidget
-                            if (type == LinuxEnvironmentType.CHROOT && existing == null) {
-                                pendingChrootOperation = EnvironmentOperation.SAVE
-                                return@BaseWidget
-                            }
                             operation = EnvironmentOperation.SAVE
                             status = null
                             scope.launch {
-                                runCatching { saveOrCreate(environmentId, existing, name, type, workingDirectory, environmentVariablesJson, host, port, username, authenticationType, password, privateKey, passphrase, false) }
+                                runCatching { saveOrCreate(environmentId, existing, name, type, workingDirectory, environmentVariablesJson, host, port, username, authenticationType, password, privateKey, passphrase) }
                                     .onSuccess { created ->
                                         if (created) onBack()
                                     }.onFailure {
@@ -213,10 +208,6 @@ fun LinuxEnvironmentDetailScreen(environmentId: String?, onBack: () -> Unit) {
                             enabled = !busy,
                             onClick = {
                                 if (busy) return@BaseWidget
-                                if (type == LinuxEnvironmentType.CHROOT) {
-                                    pendingChrootOperation = EnvironmentOperation.TEST
-                                    return@BaseWidget
-                                }
                                 operation = EnvironmentOperation.TEST
                                 status = null
                                 scope.launch {
@@ -299,46 +290,13 @@ fun LinuxEnvironmentDetailScreen(environmentId: String?, onBack: () -> Unit) {
             onDismiss = { if (!busy) pendingHostKey = null },
         )
     }
-    if (pendingChrootOperation != null) {
-        AgentConfirmDialog(
-            true,
-            stringResource(R.string.agent_linux_environment_chroot_confirm_title),
-            stringResource(R.string.agent_linux_environment_chroot_confirm_message),
-            stringResource(android.R.string.ok),
-            stringResource(android.R.string.cancel),
-            destructive = true,
-            loading = busy,
-            onConfirm = {
-                val requested = pendingChrootOperation ?: return@AgentConfirmDialog
-                operation = requested
-                status = null
-                scope.launch {
-                    if (requested == EnvironmentOperation.SAVE) {
-                        runCatching { saveOrCreate(environmentId, existing, name, type, workingDirectory, environmentVariablesJson, host, port, username, authenticationType, password, privateKey, passphrase, true) }
-                            .onSuccess { if (it) onBack() }
-                            .onFailure {
-                                if (it is MissingArchPackException) ExtensionPackDialogs.requireArchLinux(activity)
-                                else error = it.message
-                            }
-                    } else {
-                        runCatching { WeAgentService.linuxEnvironmentManager.checkHealth(requireNotNull(environmentId), true) }
-                            .onSuccess { status = it.detail ?: healthyStatus }
-                            .onFailure { error = it.message }
-                    }
-                    operation = null
-                    pendingChrootOperation = null
-                }
-            },
-            onDismiss = { if (!busy) pendingChrootOperation = null },
-        )
-    }
 }
 
 private enum class EnvironmentOperation { SAVE, TEST, DELETE, TRUST }
 
 private class MissingArchPackException : IllegalStateException("Arch Linux extension pack is not installed")
 
-private suspend fun saveOrCreate(id: String?, existing: LinuxEnvironmentEntity?, name: String, type: LinuxEnvironmentType, workingDirectory: String, environmentVariablesJson: String, host: String, port: String, username: String, authenticationType: String, password: String, privateKey: String, passphrase: String, chrootApproved: Boolean): Boolean {
+private suspend fun saveOrCreate(id: String?, existing: LinuxEnvironmentEntity?, name: String, type: LinuxEnvironmentType, workingDirectory: String, environmentVariablesJson: String, host: String, port: String, username: String, authenticationType: String, password: String, privateKey: String, passphrase: String): Boolean {
     require(name.isNotBlank()) { "name is required" }
     val normalizedVariables = kotlinx.serialization.json.Json.parseToJsonElement(environmentVariablesJson).jsonObject
         .also { variables -> variables.forEach { (key, value) ->
@@ -379,17 +337,6 @@ private suspend fun saveOrCreate(id: String?, existing: LinuxEnvironmentEntity?,
         )) {
             is dev.ujhhgtg.wekit.agent.environment.ProotEnvironmentCreationResult.Created -> true
             is dev.ujhhgtg.wekit.agent.environment.ProotEnvironmentCreationResult.MissingPack -> throw MissingArchPackException()
-        }
-    }
-    if (type == LinuxEnvironmentType.CHROOT) {
-        return when (WeAgentService.linuxEnvironmentManager.createChrootEnvironment(
-            name,
-            workingDirectory = workingDirectory,
-            environmentVariablesJson = normalizedVariables,
-            highRiskApproved = chrootApproved,
-        )) {
-            is dev.ujhhgtg.wekit.agent.environment.ChrootEnvironmentCreationResult.Created -> true
-            is dev.ujhhgtg.wekit.agent.environment.ChrootEnvironmentCreationResult.MissingPack -> throw MissingArchPackException()
         }
     }
     require(type == LinuxEnvironmentType.SSH) { "unsupported environment type" }

@@ -119,6 +119,46 @@ class WeAgentDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun `migration 16 to 17 removes chroot configuration and keeps other environments and history`() {
+        for (keepDefault in listOf(false, true)) {
+            DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.execute("CREATE TABLE linux_environments (id TEXT NOT NULL PRIMARY KEY, type TEXT NOT NULL, rootfsPath TEXT, sshHost TEXT)")
+                    statement.execute("CREATE TABLE sessions (id TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, linuxEnvironmentId TEXT, lastEffectiveLinuxEnvironmentId TEXT)")
+                    statement.execute("CREATE TABLE settings (`key` TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
+                    statement.execute("CREATE TABLE messages (id TEXT NOT NULL PRIMARY KEY, sessionId TEXT NOT NULL, content TEXT NOT NULL)")
+                    statement.execute("CREATE TABLE tool_calls (id TEXT NOT NULL PRIMARY KEY, messageId TEXT NOT NULL, resultJson TEXT)")
+                    statement.execute("CREATE TABLE bridge_tool_audits (id TEXT NOT NULL PRIMARY KEY, sessionId TEXT NOT NULL, environmentId TEXT NOT NULL, result TEXT NOT NULL)")
+                    statement.execute("INSERT INTO linux_environments VALUES ('retired', 'CHROOT', '/old/rootfs', NULL), ('proot', 'PROOT', '/proot/rootfs', NULL), ('ssh', 'SSH', NULL, 'example.com')")
+                    statement.execute("INSERT INTO sessions VALUES ('old-session', 'Old history', 'retired', 'retired'), ('mixed-session', 'Mixed history', 'proot', 'retired'), ('remote-session', 'Remote history', 'ssh', 'ssh'), ('default-session', 'Default history', NULL, 'retired')")
+                    val defaultId = if (keepDefault) "proot" else "retired"
+                    statement.execute("INSERT INTO settings VALUES ('default_linux_environment_id', '$defaultId'), ('unrelated', 'retired')")
+                    statement.execute("INSERT INTO messages VALUES ('message', 'old-session', 'preserved history')")
+                    statement.execute("INSERT INTO tool_calls VALUES ('call', 'message', 'preserved result')")
+                    statement.execute("INSERT INTO bridge_tool_audits VALUES ('audit', 'old-session', 'retired', 'preserved audit')")
+
+                    WeAgentDatabase.migration16To17Sql.forEach(statement::execute)
+
+                    assertEquals(2, statement.count("linux_environments"))
+                    assertEquals(1, statement.count("linux_environments", "id = 'proot' AND type = 'PROOT' AND rootfsPath = '/proot/rootfs'"))
+                    assertEquals(1, statement.count("linux_environments", "id = 'ssh' AND type = 'SSH' AND sshHost = 'example.com'"))
+                    assertEquals(4, statement.count("sessions"))
+                    assertEquals(1, statement.count("sessions", "id = 'old-session' AND title = 'Old history' AND linuxEnvironmentId IS NULL AND lastEffectiveLinuxEnvironmentId IS NULL"))
+                    assertEquals(1, statement.count("sessions", "id = 'mixed-session' AND linuxEnvironmentId = 'proot' AND lastEffectiveLinuxEnvironmentId IS NULL"))
+                    assertEquals(1, statement.count("sessions", "id = 'remote-session' AND linuxEnvironmentId = 'ssh' AND lastEffectiveLinuxEnvironmentId = 'ssh'"))
+                    assertEquals(1, statement.count("sessions", "id = 'default-session' AND linuxEnvironmentId IS NULL AND lastEffectiveLinuxEnvironmentId IS NULL"))
+                    assertEquals(if (keepDefault) 1 else 0, statement.count("settings", "`key` = 'default_linux_environment_id' AND value = 'proot'"))
+                    assertEquals(0, statement.count("settings", "`key` = 'default_linux_environment_id' AND value = 'retired'"))
+                    assertEquals(1, statement.count("settings", "`key` = 'unrelated' AND value = 'retired'"))
+                    assertEquals(1, statement.count("messages", "sessionId = 'old-session' AND content = 'preserved history'"))
+                    assertEquals(1, statement.count("tool_calls", "messageId = 'message' AND resultJson = 'preserved result'"))
+                    assertEquals(1, statement.count("bridge_tool_audits", "environmentId = 'retired' AND result = 'preserved audit'"))
+                }
+            }
+        }
+    }
+
     private fun java.sql.Statement.count(table: String, where: String = "1"): Int =
         executeQuery("SELECT COUNT(*) FROM $table WHERE $where").use { rows -> rows.next(); rows.getInt(1) }
 

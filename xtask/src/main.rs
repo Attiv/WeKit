@@ -346,17 +346,6 @@ fn invoke_tool_artifact_paths(root: &Path, spec: &AbiSpec) -> (PathBuf, PathBuf)
     )
 }
 
-fn chroot_cleanup_artifact_paths(root: &Path, spec: &AbiSpec) -> (PathBuf, PathBuf) {
-    (
-        root.join("target")
-            .join(spec.cargo_triple)
-            .join("release/chroot_cleanup"),
-        jni_libs_dir(root)
-            .join(spec.android_name)
-            .join("libchroot_cleanup.so"),
-    )
-}
-
 fn zygisk_dir(root: &Path) -> PathBuf {
     root.join("wekit-zygisk")
 }
@@ -828,15 +817,6 @@ fn task_build_native(abi_args: &[String]) -> Result<()> {
             )
         })?;
 
-        let (cleanup_src, cleanup_dst) = chroot_cleanup_artifact_paths(&root, spec);
-        copy_if_changed(&cleanup_src, &cleanup_dst).with_context(|| {
-            format!(
-                "could not copy chroot_cleanup PIE {} → {}",
-                cleanup_src.display(),
-                cleanup_dst.display()
-            )
-        })?;
-
         println!(
             "build(native):  {} → {}",
             so_src.display(),
@@ -846,11 +826,6 @@ fn task_build_native(abi_args: &[String]) -> Result<()> {
             "build(native):  {} → {}",
             invoke_tool_src.display(),
             invoke_tool_dst.display()
-        );
-        println!(
-            "build(native):  {} → {}",
-            cleanup_src.display(),
-            cleanup_dst.display()
         );
     }
 
@@ -1369,20 +1344,6 @@ mod tests {
         assert_eq!(
             destination,
             root.join("app/src/main/jniLibs/arm64-v8a/libinvoke_tool.so")
-        );
-    }
-
-    #[test]
-    fn chroot_cleanup_is_packaged_as_an_abi_native_artifact() {
-        let root = Path::new("/workspace");
-        let (source, destination) = chroot_cleanup_artifact_paths(root, &ABI_TABLE[0]);
-        assert_eq!(
-            source,
-            root.join("target/aarch64-linux-android/release/chroot_cleanup")
-        );
-        assert_eq!(
-            destination,
-            root.join("app/src/main/jniLibs/arm64-v8a/libchroot_cleanup.so")
         );
     }
 

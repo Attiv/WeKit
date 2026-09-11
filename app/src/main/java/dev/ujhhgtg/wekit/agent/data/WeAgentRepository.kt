@@ -1,6 +1,5 @@
 package dev.ujhhgtg.wekit.agent.data
 
-import dev.ujhhgtg.wekit.utils.fs.asPath
 import androidx.room.withTransaction
 import dev.ujhhgtg.wekit.agent.data.entity.ConditionalPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ExternalServiceEntity
@@ -899,14 +898,9 @@ object WeAgentRepository {
             (environment.sshCredentialCiphertext == null) == (environment.sshCredentialIv == null)
         ) { "encrypted SSH credentials require both ciphertext and IV" }
         when (environment.type) {
-            LinuxEnvironmentType.PROOT, LinuxEnvironmentType.CHROOT -> {
+            LinuxEnvironmentType.PROOT -> {
                 require(!environment.rootfsPath.isNullOrBlank()) { "local environments require a rootfs path" }
                 require(environment.sshHost == null) { "local environments cannot contain SSH configuration" }
-                if (environment.type == LinuxEnvironmentType.CHROOT) {
-                    dev.ujhhgtg.wekit.agent.environment.ArchLinuxInstanceLayout.validatePublishedRootfs(
-                        environment.rootfsPath.asPath
-                    )
-                }
             }
             LinuxEnvironmentType.SSH -> {
                 require(environment.rootfsPath == null) { "SSH environments cannot contain a rootfs path" }
