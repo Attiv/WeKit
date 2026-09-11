@@ -31,7 +31,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -57,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -1188,8 +1188,16 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 .padding(horizontal = groupTabHorizontalPadding, vertical = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
-            BadgedBox(
-                badge = {
+            Layout(
+                content = {
+                    Text(
+                        text = label,
+                        color = if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     if (unread.normalCount > 0) {
                         Badge(containerColor = Color(0xFFFF3B30)) {
                             Text(
@@ -1203,15 +1211,16 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                         Badge(containerColor = Color(0xFFFF3B30))
                     }
                 },
-            ) {
-                Text(
-                    text = label,
-                    color = if (selected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            ) { measurables, constraints ->
+                val text = measurables[0].measure(constraints)
+                val badge = measurables.getOrNull(1)?.measure(
+                    constraints.copy(minWidth = 0, minHeight = 0),
                 )
+                // Only the label determines content size. Center the badge on its top-right corner.
+                layout(text.width, text.height) {
+                    text.place(0, 0)
+                    badge?.place(text.width - badge.width / 2, -badge.height / 2)
+                }
             }
         }
     }
