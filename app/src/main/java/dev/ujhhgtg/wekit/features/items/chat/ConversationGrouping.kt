@@ -662,9 +662,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     private fun refreshConversations() {
         // The paged Recycler adapter must rebuild through its own data source so count, item,
-        // bind, click and incremental-update positions stay on the same real list. Legacy
-        // ListView adapters keep the original cached-position refresh path.
-        if (!refreshRecyclerData()) WeConversationListViewApi.refresh()
+        // bind, click and incremental-update positions stay on the same real list.
+        // A new ListView group starts with the recent mini-program header fully collapsed.
+        if (!refreshRecyclerData()) WeConversationListViewApi.refresh(resetListViewPosition = true)
     }
 
     private const val TAG = "ConversationGrouping"

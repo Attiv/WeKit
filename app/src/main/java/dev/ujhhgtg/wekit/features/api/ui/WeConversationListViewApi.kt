@@ -102,6 +102,15 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
         }
     }
 
+    private val methodListViewCheckEmptyFooter by dexMethod {
+        matcher {
+            declaredClass = "com.tencent.mm.ui.conversation.ConversationListView"
+            paramCount = 0
+            returnType = "void"
+            usingEqStrings("[checkEmptyFooter] isRealFull:", "[checkEmptyFooter] setSelection")
+        }
+    }
+
     /** Common host interface implemented by both the ListView and RecyclerView adapters. */
     val classConversationAdapter by dexClass()
 
@@ -350,7 +359,7 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
         positionProviders.remove(provider)
     }
 
-    fun refresh() {
+    fun refresh(resetListViewPosition: Boolean = false) {
         runOnUiThread {
             val adapter = latestAdapter?.get() ?: return@runOnUiThread
             when (latestBackend) {
@@ -364,6 +373,13 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
                     }
                     dividerCoordinator.applyListView(listView)
                     (adapter as BaseAdapter).notifyDataSetChanged()
+                    if (resetListViewPosition && listView != null) {
+                        // Shorter datasets need their filler height before ListView lays out;
+                        // otherwise bottom alignment can pull the recent mini-program header down.
+                        methodListViewCheckEmptyFooter.method.invoke(listView)
+                        // WeChat's override chooses the first visible banner and its native offset.
+                        listView.setSelection(0)
+                    }
                 }
 
                 Backend.RECYCLER_VIEW -> {
