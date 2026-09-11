@@ -504,9 +504,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         return when (group.type) {
             GroupType.PRESET_UNREAD -> adapterItemUnread(item) > 0
             GroupType.PRESET_GROUPS -> username.endsWith("@chatroom")
-            GroupType.PRESET_FRIENDS -> !username.endsWith("@chatroom") && !username.startsWith("gh_")
+            GroupType.PRESET_FRIENDS -> !username.endsWith("@chatroom") && !isOfficialConversation(username)
             GroupType.MANUAL, GroupType.SQL -> activeAdapterMembers.contains(username)
-            GroupType.PRESET_OFFICIALS -> username.startsWith("gh_")
+            GroupType.PRESET_OFFICIALS -> isOfficialConversation(username)
         }
     }
 
@@ -1225,11 +1225,26 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
     }
 
+    private fun isOfficialConversation(username: String): Boolean =
+        username.startsWith("gh_") || username == "officialaccounts" || username == "service_officialaccounts"
+
     private fun queryGroupUnreadCounts(groups: List<ChatGroup>): Map<String, ConversationUnreadState> {
-        // Count member conversations independently of the active tab and adapter cache, including
-        // folded chats. Skip container summaries to avoid counting their children's unread twice.
+        // Public-account feed entries own their read/consumed state. Their children may retain
+        // unread counters after the feed dot disappears, so count the entry instead of its children.
+        // Other containers retain the existing member-based totals, including folded chats.
+        val usernames = WeDatabaseApi.rawQuery(
+            "SELECT c.username FROM rconversation c " +
+                "WHERE (c.unReadCount > 0 OR c.unReadMuteCount > 0) " +
+                "AND (c.parentRef IS NULL OR c.parentRef NOT IN ('officialaccounts', 'service_officialaccounts')) " +
+                "AND (c.username IN ('officialaccounts', 'service_officialaccounts') " +
+                "OR NOT EXISTS (SELECT 1 FROM rconversation child WHERE child.parentRef = c.username))"
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+        }
         val hidden = if (HideContacts.isEnabled) HideContacts.hiddenContacts else emptySet()
-        val unreadByUsername = WeMessageApi.getConversationUnreadStates(excludeContainers = true)
+        val unreadByUsername = WeMessageApi.getConversationUnreadStates(usernames)
             .filterKeys { it !in hidden }
         return groups.associate { group ->
             val members = when {
@@ -1240,8 +1255,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                     when (group.type) {
                         GroupType.PRESET_UNREAD -> true
                         GroupType.PRESET_GROUPS -> username.endsWith("@chatroom")
-                        GroupType.PRESET_FRIENDS -> !username.endsWith("@chatroom") && !username.startsWith("gh_")
-                        GroupType.PRESET_OFFICIALS -> username.startsWith("gh_")
+                        GroupType.PRESET_FRIENDS -> !username.endsWith("@chatroom") && !isOfficialConversation(username)
+                        GroupType.PRESET_OFFICIALS -> isOfficialConversation(username)
                     }
                 }
             }
@@ -1577,7 +1592,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             GroupType.PRESET_FRIENDS -> {
                 runCatching {
                     val result = WeDatabaseApi.executeQuery(
-                        "SELECT r.username FROM rcontact r WHERE r.username NOT LIKE '%@chatroom' AND r.username NOT LIKE 'gh_%'"
+                        "SELECT r.username FROM rcontact r WHERE r.username NOT LIKE '%@chatroom' " +
+                            "AND r.username NOT LIKE 'gh_%' AND r.username NOT IN ('officialaccounts', 'service_officialaccounts')"
                     )
                     result.mapNotNull { it["username"]?.toString() }
                 }.getOrElse {
@@ -1589,7 +1605,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             GroupType.PRESET_OFFICIALS -> {
                 runCatching {
                     val result = WeDatabaseApi.executeQuery(
-                        "SELECT r.username FROM rcontact r WHERE r.username LIKE 'gh_%'"
+                        "SELECT r.username FROM rcontact r WHERE r.username LIKE 'gh_%' " +
+                            "OR r.username IN ('officialaccounts', 'service_officialaccounts')"
                     )
                     result.mapNotNull { it["username"]?.toString() }
                 }.getOrElse {

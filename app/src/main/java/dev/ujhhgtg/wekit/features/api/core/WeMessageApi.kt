@@ -725,7 +725,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
                 " AND NOT EXISTS (SELECT 1 FROM rconversation child WHERE child.parentRef = c.username)"
             else ""
             WeDatabaseApi.rawQuery(
-                "SELECT c.username, c.unReadCount, c.unReadMuteCount, r.type, r.lvbuff " +
+                "SELECT c.username, c.unReadCount, c.unReadMuteCount, r.type, r.lvbuff, c.attrflag " +
                     "FROM rconversation c LEFT JOIN rcontact r ON r.username = c.username " +
                     "WHERE (c.unReadCount > 0 OR c.unReadMuteCount > 0)$talkerClause$containerClause",
                 batch?.toTypedArray<Any>(),
@@ -741,10 +741,27 @@ object WeMessageApi : ApiFeature(), IResolveDex {
                         cursor.getInt(3) and 512 != 0
                     }
                     val unreadCount = cursor.getLong(1).coerceAtLeast(0)
-                    states[username] = ConversationUnreadState(
-                        normalCount = if (muted) 0 else unreadCount,
-                        hasMutedUnread = cursor.getLong(2) > 0 || muted && unreadCount > 0,
-                    )
+                    val muteCount = cursor.getLong(2)
+                    val state = if (username == "officialaccounts" || username == "service_officialaccounts") {
+                        // ConversationUnreadHelper (8.0.65 q3.a / 8.0.76 w3.b): these entries
+                        // display dots, and consuming the hint need not clear unReadCount.
+                        val flags = cursor.getInt(5)
+                        val showDot = when {
+                            unreadCount == 0L -> muteCount > 0 && flags and (8388608 or 2097152) != 0
+                            username == "officialaccounts" ->
+                                flags and (16 or 64) != 0 && !(flags and 64 != 0 && flags and 2048 != 0)
+                            else -> flags and (512 or 1024 or 32768) != 0
+                        }
+                        ConversationUnreadState(hasMutedUnread = showDot)
+                    } else {
+                        ConversationUnreadState(
+                            normalCount = if (muted) 0 else unreadCount,
+                            hasMutedUnread = muteCount > 0 || muted && unreadCount > 0,
+                        )
+                    }
+                    if (uniqueTalkers != null || state.normalCount > 0 || state.hasMutedUnread) {
+                        states[username] = state
+                    }
                 }
             }
         }
