@@ -107,12 +107,14 @@ jobs:
           sudo apt-get update && sudo apt-get install -y gcc-multilib
           python3 -m venv "$RUNNER_TEMP/zygisk-build-tools"
           "$RUNNER_TEMP/zygisk-build-tools/bin/pip" install cmake==3.31.6 ninja==1.11.1.4
+          "$RUNNER_TEMP/zygisk-build-tools/bin/pip" install -r wekit-zygisk/native/tests/requirements-arm64.txt
           echo "$RUNNER_TEMP/zygisk-build-tools/bin" >> "$GITHUB_PATH"
 
       - name: Validate build tools, DEX reader, and i18n catalogs
         run: |
           cargo test -p xtask --bin xtask
           cargo test -p wekit-zygisk --lib
+          python wekit-zygisk/native/tests/arm64_relocation.py
           ./x i18n-check
 
       - name: Decode keystore

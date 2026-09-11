@@ -34,7 +34,6 @@ fn main() {
         manifest.join("CMakeLists.txt"),
         manifest.join("cpp"),
         root.join("third_party/lsplant/lsplant/src/main/jni"),
-        root.join("third_party/dobby"),
     ] {
         println!("cargo:rerun-if-changed={}", source.display());
     }
@@ -73,7 +72,7 @@ fn main() {
         "wekit_lsplant_bridge",
         "lsplant_static",
         "dex_builder_static",
-        "dobby",
+        "wekit_compiler_rt",
     ] {
         println!("cargo:rustc-link-lib=static={library}");
     }

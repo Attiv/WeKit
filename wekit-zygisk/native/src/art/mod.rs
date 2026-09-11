@@ -4,6 +4,9 @@
 
 #[cfg(any(target_os = "android", test))]
 mod elf;
+#[cfg(any(target_os = "android", test))]
+#[cfg_attr(test, allow(dead_code))]
+mod inline_hook;
 
 use crate::{loge, logi};
 use jni::sys::{JNI_FALSE, JNIEnv as RawJNIEnv, jclass, jobject};
@@ -17,7 +20,12 @@ mod ffi {
     pub type SymbolResolver = unsafe extern "C" fn(*const c_char, usize, bool) -> *mut c_void;
 
     unsafe extern "C" {
-        pub fn wekit_lsplant_init(env: *mut RawJNIEnv, resolver: SymbolResolver) -> bool;
+        pub fn wekit_lsplant_init(
+            env: *mut RawJNIEnv,
+            resolver: SymbolResolver,
+            hook: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
+            unhook: unsafe extern "C" fn(*mut c_void) -> bool,
+        ) -> bool;
         pub fn wekit_lsplant_hook(
             env: *mut RawJNIEnv,
             target: jobject,
@@ -67,7 +75,9 @@ pub fn init(env: *mut RawJNIEnv) -> bool {
                 return false;
             };
             let _ = ART_SYMBOLS.set(symbols);
-            let ok = unsafe { ffi::wekit_lsplant_init(env, resolve_symbol) };
+            let ok = unsafe {
+                ffi::wekit_lsplant_init(env, resolve_symbol, inline_hook::hook, inline_hook::unhook)
+            };
             if ok {
                 logi!("Zygisk: LSPlant initialized");
             } else {

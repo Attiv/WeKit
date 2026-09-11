@@ -73,8 +73,8 @@ Run `./x build --help` or `./x run --help` for options.
 - Android NDK pinned in `gradle/libs.versions.toml`
 - CMake 3.28 or newer and Ninja (CI uses CMake 3.31.6 and Ninja 1.11.1.4)
 
-`./x build` initializes the pinned LSPlant and Dobby sources and LSPlant's
-runtime dependencies. LSPlant's unrelated test/documentation submodules are
+`./x build` initializes the pinned LSPlant sources and their runtime dependencies.
+LSPlant's unrelated test/documentation submodules are
 not required. `./x configure` writes the selected NDK and API level into the
 Cargo configuration; direct Android Cargo builds also need this configuration
 and the initialized native dependencies. Desktop Rust tests do not build LSPlant.
@@ -83,13 +83,57 @@ and the initialized native dependencies. Desktop Rust tests do not build LSPlant
 
 The Zygisk lifecycle, companion IPC, payload loading, JNI registration and ART
 symbol resolution remain in Rust. A small C ABI bridge statically links
-[LSPlant](https://github.com/LSPosed/LSPlant) and
-[Dobby](https://github.com/LSPosed/Dobby), including the C++ runtime, into the
-existing `libwekit_zygisk.so`. No additional loader-side shared library is needed.
-The gitlinks pin LSPlant to `d8b5d1dbb664abc606644036822e4bb64547edf6` and Dobby to
-`edb2af1216313cf6c0d6771be2b279c1db573faf` (the source used by LSPlant's Dobby 1.2
-test dependency); their upstream license files remain in
-the submodules (LSPlant: LGPL-3.0, Dobby: Apache-2.0).
+[LSPlant](https://github.com/LSPosed/LSPlant), including the C++ runtime, into the
+existing `libwekit_zygisk.so`. LSPlant calls Rust function pointers for native
+inline hook installation and removal; Dobby is no longer a build dependency.
+The LSPlant gitlink remains pinned to `d8b5d1dbb664abc606644036822e4bb64547edf6`;
+its LGPL-3.0 license remains in the submodule.
+
+The ARM64 backend is in `native/src/art/inline_hook/`. It provides executable
+original-function backups, near entry veneers with an absolute-branch fallback,
+PC-relative instruction relocation (ADR/ADRP, integer/SIMD literal loads, PRFM,
+B/BL, conditional/compare/test branches), and internal branch destination mapping.
+Branch relays preserve x17 when a relocated intra-function jump is out of range.
+Literals overlapping the patched entry are copied before publication; other
+literal loads still read live memory. Existing absolute veneers with embedded
+address data are supported. PAC prologue instructions execute in the backup;
+guarded entry points retain a BTI landing pad. Memory protection changes preserve
+BTI/MTE mapping attributes and the device's page size, including 16 KiB pages.
+
+Install/remove operations are serialized by a Rust mutex. They run in the existing
+LSPlant initialization path, before module Java code. This is an initialization
+hook backend, not an arbitrary concurrent hot-patching API: other host threads
+are not suspended, a multi-instruction patch is not atomic, and an early callback
+can race LSPlant's publication of its backup pointer. These are the same timing
+constraints as the former Dobby integration. No signal handlers are installed.
+
+All allocation, relocation and generated-code cache synchronization finish before
+the target is changed. A stale/foreign entry patch is rejected. Failure before
+publication leaves the target unchanged. If restoring page permissions fails
+*after* publication, the error is logged and the installed hook retains its valid
+backup; returning failure and freeing that code would be unsafe. Native unhook
+restores the saved entry bytes, and retired backups/relays remain mapped until
+process exit. This native unhook operation is separate from removing Java callbacks.
+
+The emitter was developed with reference to
+[Dobby's ARM64 relocation](https://github.com/LSPosed/Dobby/blob/c1da0315d7a2069bde2ab432e45d4ab6df91237a/source/InstructionRelocation/arm64/InstructionRelocationARM64.cc)
+and [Arm's code synchronization guidance](https://developer.arm.com/community/arm-community-blogs/b/architectures-and-processors-blog/posts/caches-self-modifying-code-working-with-threads).
+
+Desktop validation:
+
+```sh
+cargo test -p wekit-zygisk --lib
+python3 -m venv /tmp/wekit-arm64-tests
+/tmp/wekit-arm64-tests/bin/pip install -r wekit-zygisk/native/tests/requirements-arm64.txt
+/tmp/wekit-arm64-tests/bin/python wekit-zygisk/native/tests/arm64_relocation.py
+```
+
+The Unicorn suite compiles the production Rust emitter, executes original and
+relocated functions, and compares general/SIMD registers, SP and NZCV for near
+and far allocations. It also tests poisoned original entries, embedded literals,
+existing veneers, function calls and both branch outcomes. It does not establish
+Android cache coherency, hardware PAC/BTI enforcement or real ART compatibility;
+those require device validation.
 
 LSPlant initializes during native `postAppSpecialize`, before entering module
 Java code, and trusts the module's in-memory DEX files. Kotlin retains the

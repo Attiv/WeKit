@@ -1,53 +1,17 @@
 #include <android/log.h>
-#include <dobby.h>
 #include <jni.h>
 #include <lsplant.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <exception>
 #include <string_view>
-#include <sys/mman.h>
-#include <unistd.h>
 
 using ArtSymbolResolver = void *(*)(const char *, std::size_t, bool);
 
+using InlineHook = void *(*)(void *, void *);
+using InlineUnhook = bool (*)(void *);
+
 namespace {
-
-// The pinned Dobby's POSIX CodePatch only protects the first page. Its arm64
-// target trampoline is at most 16 bytes (LDR + BR + address); cover both pages
-// when that prologue straddles a boundary, for installation and restoration.
-// Use the device's page size, including on 16 KiB Android devices.
-class WritableArtCode {
-public:
-    explicit WritableArtCode(void *target) {
-        const long page_size = sysconf(_SC_PAGESIZE);
-        if (!target || page_size <= 0) return;
-        const auto address = reinterpret_cast<std::uintptr_t>(target);
-        const auto page = static_cast<std::uintptr_t>(page_size);
-        const auto start = address / page * page;
-        const auto end = (address + 15) / page * page + page;
-        start_ = reinterpret_cast<void *>(start);
-        size_ = end - start;
-        writable_ = mprotect(start_, size_, PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
-        if (!writable_) {
-            __android_log_print(ANDROID_LOG_ERROR, "WeKit", "Cannot make ART code writable: %p", target);
-        }
-    }
-
-    ~WritableArtCode() {
-        if (writable_ && mprotect(start_, size_, PROT_READ | PROT_EXEC) != 0) {
-            __android_log_print(ANDROID_LOG_ERROR, "WeKit", "Cannot restore ART code permissions: %p", start_);
-        }
-    }
-
-    explicit operator bool() const { return writable_; }
-
-private:
-    void *start_ = nullptr;
-    std::size_t size_ = 0;
-    bool writable_ = false;
-};
 
 void report_exception(JNIEnv *env, const char *operation, const char *message) noexcept {
     __android_log_print(ANDROID_LOG_ERROR, "WeKit", "LSPlant %s: %s", operation, message);
@@ -74,19 +38,12 @@ Result guarded(JNIEnv *env, const char *operation, Result failure, Function func
 } // namespace
 
 // Rust owns initialization serialization and the ART symbol resolver's lifetime.
-extern "C" bool wekit_lsplant_init(JNIEnv *env, ArtSymbolResolver resolver) noexcept {
+extern "C" bool wekit_lsplant_init(JNIEnv *env, ArtSymbolResolver resolver,
+                                    InlineHook hook, InlineUnhook unhook) noexcept {
     return guarded(env, "Init", false, [&] {
         lsplant::InitInfo info{
-            .inline_hooker = [](void *target, void *replacement) -> void * {
-                WritableArtCode code(target);
-                if (!code) return nullptr;
-                void *backup = nullptr;
-                return DobbyHook(target, replacement, &backup) == 0 ? backup : nullptr;
-            },
-            .inline_unhooker = [](void *target) {
-                WritableArtCode code(target);
-                return code && DobbyDestroy(target) == 0;
-            },
+            .inline_hooker = hook,
+            .inline_unhooker = unhook,
             .art_symbol_resolver = [resolver](std::string_view name) {
                 return resolver(name.data(), name.size(), false);
             },

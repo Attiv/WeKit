@@ -1061,7 +1061,6 @@ fn build_zygisk_native(root: &Path, abi_names: &[String], save_symbols: bool) ->
             "--init",
             "--",
             "third_party/lsplant",
-            "third_party/dobby",
         ],
         root,
     )?;
