@@ -1,7 +1,8 @@
 # WeKit Zygisk Module
 
 WeKit can be loaded through Zygisk on a per-Android-user, per-package basis.
-The module is disabled for every process immediately after installation.
+On a fresh installation, injection is disabled for every target until enabled in
+the WebUI. Updates retain existing target switches.
 
 ## KernelSU WebUI
 
@@ -23,17 +24,27 @@ updates retain it; uninstall removes it without touching app data.
 
 ## Installation and updates
 
-Every WeKit APK is also a Zygisk module ZIP. Rename `.apk` to `.zip`, install it
+Every standard/legacy, debug/release WeKit APK is also an ARM64 Zygisk module ZIP.
+Rename `.apk` to `.zip`, install it
 from your root manager, select the target instances in the WebUI, and restart as
 required by the manager. APK installation and module installation update their
 respective deployments separately. Do not enable both injection modes for the
 same WeChat instance.
+
+Only change the extension; the file contents must stay identical. When downloading
+the `wekit-apk` GitHub Actions artifact, extract its outer archive first and select
+an APK. Do not flash that outer archive or unpack/repack the APK. Installation
+must run from a root manager app; recovery installation is not supported.
 
 The installer stores the original signed package as `$MODPATH/module.apk` and
 extracts its loader into `zygisk/arm64-v8a.so`. DEX stays inside the APK. The native
 loader copies that APK into the host's private directory under a content hash,
 then reads its DEX into memory. Resources, native libraries and child processes
 use the same APK version.
+
+`preAppSpecialize` retains the module directory FD; `postAppSpecialize` opens
+`module.apk` through that directory and prepares the private APK copy and in-memory
+DEX. The current lifecycle does not require `exemptFd`.
 
 The installer retains `MODULE_HOT_INSTALL_REQUEST=true` for compatible root
 managers. This is not a guarantee that native loader updates can take effect
@@ -64,6 +75,8 @@ The APK and loader follow the manager's module activation lifecycle together.
 APKs are in `app/build/outputs/apk/<flavor>/<type>/`. No separate module ZIP is
 built or published. The device-side `.zip` used by `run --zygisk` has exactly the
 APK's bytes. Symbols are in `target/zygisk-symbols/`.
+Module resources are added by `GenerateZygiskResourcesTask` before AGP signs each
+APK; never append files to or repack the signed output.
 Run `./x build --help` or `./x run --help` for options.
 
 ## Development environment
