@@ -2,6 +2,7 @@
 name = "wekit-zygisk"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [lib]
 name = "wekit_zygisk"
