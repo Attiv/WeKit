@@ -26,10 +26,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -65,6 +67,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Add
@@ -76,12 +79,15 @@ import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.data
-import dev.ujhhgtg.wekit.dexkit.resolution.DexResolutionContext
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexField
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
+import dev.ujhhgtg.wekit.dexkit.resolution.DexResolutionContext
 import dev.ujhhgtg.wekit.features.api.core.WeConversationApi
 import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
+import dev.ujhhgtg.wekit.features.api.core.WeDatabaseListenerApi
+import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
+import dev.ujhhgtg.wekit.features.api.core.WeMessageApi.ConversationUnreadState
 import dev.ujhhgtg.wekit.features.api.ui.WeConversationListViewApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
@@ -104,12 +110,16 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.luckypray.dexkit.DexKitBridge
 import java.lang.reflect.Field
 import java.lang.reflect.Method
-import java.lang.reflect.Modifier as ReflectModifier
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
@@ -117,6 +127,8 @@ import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
+import kotlin.time.Duration.Companion.milliseconds
+import java.lang.reflect.Modifier as ReflectModifier
 
 object ConversationGrouping : ClickableFeature(), IResolveDex {
 
@@ -129,28 +141,10 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     // The fixed "全部" tab. It behaves like a group for ordering purposes — it can be dragged to any
     // position and that position is persisted alongside the real groups — but it can never be
-    // edited or deleted, and selecting it applies no filter (null predicate). It's stored as an
+    // edited or deleted, and selecting it applies no filter. It's stored as an
     // ordinary ChatGroup entry (identified solely by this id) so the list order is enough to
     // remember where it sits.
     private const val ALL_TAB_ID = "${GROUP_PREFIX}all"
-
-    private enum class GroupingBackend(val value: String) {
-        ADAPTER_FILTER("adapter_filter"),
-        QUERY_REWRITE("query_rewrite");
-
-        companion object {
-            fun from(value: String): GroupingBackend =
-                entries.firstOrNull { it.value == value } ?: ADAPTER_FILTER
-        }
-    }
-
-    private var groupingBackendValue by WePrefs.prefOption(
-        "conversation_grouping_backend",
-        GroupingBackend.ADAPTER_FILTER.value,
-    )
-
-    private val groupingBackend: GroupingBackend
-        get() = GroupingBackend.from(groupingBackendValue)
 
     private var equalWidthTabs by WePrefs.prefOption("conversation_grouping_equal_width_tabs", false)
     private val equalWidthTabsState by lazy { mutableStateOf(equalWidthTabs) }
@@ -160,13 +154,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private fun isAllTab(id: String?): Boolean = id == ALL_TAB_ID
 
     private fun allTab(): ChatGroup = ChatGroup(id = ALL_TAB_ID)
-
-    // The SQL predicate for the currently selected tab, injected into WeChat's homepage
-    // conversation-list query. null = "全部" (no filtering). We resolve the predicate once, when the
-    // tab is tapped (on the main thread), so the query hook itself never runs nested DB reads while
-    // WeChat is mid-query. Switching tabs then just asks WeChat to reload the cursor.
-    @Volatile
-    private var activePredicate: String? = null
 
     @Volatile
     private var activeAdapterGroup: ChatGroup = allTab()
@@ -208,13 +195,25 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private var groupsCache: List<ChatGroup>? = null
 
     private val groupMembersCache = ConcurrentHashMap<String, List<String>>()
+    private val unreadRefreshVersion = MutableStateFlow(0L)
+    private val contactUnreadListener = WeDatabaseListenerApi.IUpdateListener { table, values, _, _, _ ->
+        // Changing mute settings need not change rconversation's unread counters.
+        if (table == "rcontact" && (values.containsKey("type") || values.containsKey("lvbuff"))) {
+            unreadRefreshVersion.update { it + 1 }
+        }
+    }
+
+    private val noUnread = ConversationUnreadState()
 
     override fun onEnable() {
-        if (groupingBackend == GroupingBackend.QUERY_REWRITE) {
-            hookConversationListQuery()
-        } else {
-            hookConversationListAdapter()
+        WeDatabaseListenerApi.addListener(contactUnreadListener)
+        WeConversationApi.methodNotifyConversationChanged.hookAfter {
+            // This method belongs to the shared storage base; ignore other storage instances.
+            if (WeConversationApi.classConversationStorage.clazz.isInstance(thisObject)) {
+                unreadRefreshVersion.update { it + 1 }
+            }
         }
+        hookConversationListAdapter()
 
         methodOnTabCreate.hookAfter {
             val mainUi = thisObject!!
@@ -297,12 +296,11 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             }
             WeConversationListViewApi.addHeaderView(mainUi, composeView)
         }
-        if (groupingBackend == GroupingBackend.ADAPTER_FILTER) {
-            WeConversationListViewApi.addPositionProvider(adapterPositionProvider)
-        }
+        WeConversationListViewApi.addPositionProvider(adapterPositionProvider)
     }
 
     override fun onDisable() {
+        WeDatabaseListenerApi.removeListener(contactUnreadListener)
         WeConversationListViewApi.removePositionProvider(adapterPositionProvider)
         bindingAdapter.remove()
         synchronized(recyclerLists) { recyclerLists.clear() }
@@ -340,7 +338,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
         adapterMethods.forEach { methods ->
             methods.getCount.hookAfter {
-                if (groupingBackend != GroupingBackend.ADAPTER_FILTER) return@hookAfter
                 if (isAllTab(activeAdapterGroup.id)) return@hookAfter
                 val adapter = thisObject!!
                 // The inherited count method is also called by unrelated adapters.
@@ -357,7 +354,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 rebuildAdapterCache(adapter, result as Int)?.let { result = it.visiblePositions.size }
             }
             methods.getView.hookBefore(priority = 100) {
-                if (groupingBackend != GroupingBackend.ADAPTER_FILTER) return@hookBefore
                 if (isAllTab(activeAdapterGroup.id)) return@hookBefore
                 val adapter = thisObject!!
                 val position = args[0] as Int
@@ -411,7 +407,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     }
 
     private fun filterRecyclerRows(rows: MutableList<Any>) {
-        if (groupingBackend != GroupingBackend.ADAPTER_FILTER) return
         val group = activeAdapterGroup
         if (isAllTab(group.id)) return
         rows.removeAll { row ->
@@ -548,7 +543,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {
-            var selected by remember { mutableStateOf(groupingBackend) }
             AlertDialogContent(
                 title = { Text(stringResource(R.string.feature_conversation_grouping_name)) },
                 textTopSpacing = 0.dp,
@@ -584,38 +578,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 }
                             }
                         }
-                        item {
-                            SegmentedColumn(
-                                title = stringResource(R.string.conversation_grouping_backend_title),
-                                contentPadding = PaddingValues(0.dp),
-                                titlePadding = PaddingValues(start = 16.dp, top = 8.dp, bottom = 8.dp),
-                            ) {
-                                item(key = GroupingBackend.ADAPTER_FILTER.value) {
-                                    RadioButtonWidget(
-                                        iconPlaceholder = false,
-                                        title = stringResource(R.string.conversation_grouping_backend_adapter),
-                                        description = stringResource(R.string.conversation_grouping_backend_adapter_description),
-                                        selected = selected == GroupingBackend.ADAPTER_FILTER,
-                                        onClick = {
-                                            selected = GroupingBackend.ADAPTER_FILTER
-                                            selectGroupingBackend(GroupingBackend.ADAPTER_FILTER)
-                                        },
-                                    )
-                                }
-                                item(key = GroupingBackend.QUERY_REWRITE.value) {
-                                    RadioButtonWidget(
-                                        iconPlaceholder = false,
-                                        title = stringResource(R.string.conversation_grouping_backend_query),
-                                        description = stringResource(R.string.conversation_grouping_backend_query_description),
-                                        selected = selected == GroupingBackend.QUERY_REWRITE,
-                                        onClick = {
-                                            selected = GroupingBackend.QUERY_REWRITE
-                                            selectGroupingBackend(GroupingBackend.QUERY_REWRITE)
-                                        },
-                                    )
-                                }
-                            }
-                        }
                     }
                 },
                 dismissButton = {
@@ -625,30 +587,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
     }
 
-    private fun selectGroupingBackend(backend: GroupingBackend) {
-        if (groupingBackend == backend) return
-        groupingBackendValue = backend.value
-        activePredicate = if (backend == GroupingBackend.QUERY_REWRITE &&
-            !isAllTab(activeAdapterGroup.id)
-        ) {
-            buildGroupPredicate(activeAdapterGroup)
-        } else {
-            null
-        }
-        clearAdapterCaches()
-        if (isActive) disable()
-        if (isEnabled) {
-            enable()
-            if (!isActive) return
-            refreshConversations(backend)
-        }
-    }
-
     private fun selectTab(groupId: String?) {
-        // Resolve the predicate here, on the main thread, NOT inside the query hook: preset/SQL
-        // groups need a DB read to materialize their member list, and doing that while WeChat is
-        // already running the list query would nest reads on the same path.
-        // The "全部" tab (or a null id) applies no filter.
+        // Resolve manual / SQL members once per selection, outside adapter binding.
         activeAdapterGroup = if (groupId == null || isAllTab(groupId)) {
             allTab()
         } else {
@@ -659,111 +599,15 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 getGroupMembers(activeAdapterGroup).toSet()
             else -> emptySet()
         }
-        activePredicate = if (groupingBackend == GroupingBackend.QUERY_REWRITE &&
-            groupId != null && !isAllTab(groupId)
-        ) {
-            buildGroupPredicate(activeAdapterGroup)
-        } else {
-            null
-        }
         clearAdapterCaches()
-        refreshConversations(groupingBackend)
+        refreshConversations()
     }
 
-    private fun refreshConversations(backend: GroupingBackend) {
-        if (backend == GroupingBackend.ADAPTER_FILTER) {
-            // The paged Recycler adapter must rebuild through its own data source so count, item,
-            // bind, click and incremental-update positions stay on the same real list. Legacy
-            // ListView adapters keep the original cached-position refresh path.
-            if (!refreshRecyclerData()) WeConversationListViewApi.refresh()
-        } else {
-            // Query Rewrite needs a fresh host query so the new SQL predicate is applied.
-            WeConversationApi.reloadConversations()
-        }
-    }
-
-    /**
-     * Translates a group definition into a SQL predicate over rconversation. Preset groups use a
-     * live LIKE so newly-arrived chats appear without re-selecting the tab; manual / SQL groups
-     * resolve to an explicit username set. A missing group or an empty member set yields "0" (match
-     * nothing) rather than null, so an empty group shows an empty list instead of everything.
-     */
-    private fun buildGroupPredicate(group: ChatGroup?): String {
-        group ?: return "0"
-        return when (group.type) {
-            GroupType.PRESET_UNREAD -> "rconversation.unReadCount>0 OR rconversation.unReadMuteCount>0"
-            GroupType.PRESET_GROUPS -> "rconversation.username LIKE '%@chatroom'"
-            GroupType.PRESET_FRIENDS ->
-                "rconversation.username NOT LIKE '%@chatroom' AND rconversation.username NOT LIKE 'gh_%'"
-            GroupType.PRESET_OFFICIALS -> "rconversation.username LIKE 'gh_%'"
-            GroupType.MANUAL -> membersInClause(group.members)
-            GroupType.SQL -> membersInClause(resolveGroupMembers(group))
-        }
-    }
-
-    private fun membersInClause(members: List<String>): String {
-        val cleaned = members.filter { it.isNotBlank() }.distinct()
-        if (cleaned.isEmpty()) return "0"
-        val list = cleaned.joinToString(",") { "'${it.replace("'", "''")}'" }
-        return "rconversation.username IN ($list)"
-    }
-
-    // The homepage conversation-list cursor does NOT flow through the standard
-    // SQLiteDatabase.rawQuery path that WeDatabaseListenerApi hooks; WeChat builds it through its
-    // own SQLite wrapper (n3 -> i0.a(sql, args, int)). We hook that wrapper directly, the same
-    // chokepoint AggregateChats uses, and append our tab predicate to the SQL before it runs.
-    private fun hookConversationListQuery() {
-        if (WeDatabaseApi.methodSqliteWrapperRawQuery.isPlaceholder) {
-            WeLogger.w(TAG, "SQLite wrapper query method not resolved; tab filtering disabled")
-            return
-        }
-        WeDatabaseApi.methodSqliteWrapperRawQuery.hookBefore {
-            val sql = args.firstOrNull() as? String ?: return@hookBefore
-            rewriteConversationListSql(sql)?.let { args[0] = it }
-        }
-    }
-
-    // Returns the rewritten SQL, or null to leave it untouched (all non-list queries and "全部").
-    private fun rewriteConversationListSql(sql: String): String? {
-        val predicate = activePredicate ?: return null
-        if (!looksLikeConversationListQuery(sql)) return null
-
-        val hidden = if (HideContacts.isEnabled) HideContacts.hiddenContacts else emptySet()
-        val hiddenClause = if (hidden.isEmpty()) {
-            ""
-        } else {
-            " AND rconversation.username NOT IN (" +
-                    hidden.joinToString(",") { "'${it.replace("'", "''")}'" } + ")"
-        }
-
-        return injectCondition(sql, "($predicate)$hiddenClause")
-    }
-
-    private fun looksLikeConversationListQuery(sql: String): Boolean {
-        val lower = sql.lowercase()
-        if (!lower.contains("select")) return false
-        if (!lower.contains("from rconversation")) return false
-        // Don't touch AggregateChats folder-container queries (scoped to a wekit_folder_ parentRef)
-        // or WeChat's own conversation-box container; the tabs only apply to the homepage list.
-        if (lower.contains("wekit_folder_") || lower.contains("conversationboxservice")) return false
-        // The homepage list query is the one carrying per-conversation display columns; ignore
-        // aggregate/count/single-row lookups so we don't corrupt unrelated reads.
-        return lower.contains("conversationtime") &&
-                lower.contains("unreadcount") &&
-                lower.contains("digestuser")
-    }
-
-    // Insert an extra WHERE predicate before any ORDER BY / GROUP BY / LIMIT tail, joining with the
-    // existing WHERE when present. Mirrors AggregateChats.appendParentRefFilter.
-    private fun injectCondition(sql: String, condition: String): String {
-        val insertionPoint = listOf(" order by ", " group by ", " limit ")
-            .map { sql.indexOf(it, ignoreCase = true) }
-            .filter { it >= 0 }
-            .minOrNull() ?: sql.length
-        val head = sql.substring(0, insertionPoint)
-        val tail = sql.substring(insertionPoint)
-        val connector = if (head.contains(" where ", ignoreCase = true)) " AND " else " WHERE "
-        return "$head$connector$condition$tail"
+    private fun refreshConversations() {
+        // The paged Recycler adapter must rebuild through its own data source so count, item,
+        // bind, click and incremental-update positions stay on the same real list. Legacy
+        // ListView adapters keep the original cached-position refresh path.
+        if (!refreshRecyclerData()) WeConversationListViewApi.refresh()
     }
 
     private const val TAG = "ConversationGrouping"
@@ -898,8 +742,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
     }
 
-    // WeChat's SQLite wrapper query: i0.a(String sql, String[] args, int) -> Cursor. Same anchor
-    // AggregateChats uses to intercept the homepage/folder list queries.
     // ----------------------------------------------------------------------------------------------
     // Tab bar UI
     // ----------------------------------------------------------------------------------------------
@@ -918,6 +760,21 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         containerColor: Color = if (isSystemInDarkTheme()) Color(0xFF111111) else Color(0xFFEDEDED),
     ) {
         val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
+        var unreadCounts by remember { mutableStateOf<Map<String, ConversationUnreadState>>(emptyMap()) }
+        LaunchedEffect(groups) {
+            unreadRefreshVersion.collect {
+                // Coalesce bursts without postponing updates indefinitely during message sync.
+                delay(150.milliseconds)
+                if (WeDatabaseApi.isReady) {
+                    val counts = withContext(Dispatchers.IO) {
+                        runCatching { queryGroupUnreadCounts(groups) }
+                            .onFailure { WeLogger.e(TAG, "failed to refresh group unread counts", it) }
+                            .getOrNull()
+                    }
+                    if (counts != null) unreadCounts = counts
+                }
+            }
+        }
         var menuForGroupId by remember { mutableStateOf<String?>(null) }
         // Sort (edit) mode: long-press a tab to drag-reorder.
         var sortMode by remember { mutableStateOf(false) }
@@ -943,6 +800,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             if (sortMode) {
                 SortableTabsRow(
                     groups = orderedGroups,
+                    unreadCounts = unreadCounts,
                     selectedGroupId = selectedGroupId,
                     onMove = { from, to ->
                         order = order.toMutableList().apply { add(to, removeAt(from)) }
@@ -957,6 +815,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             Box {
                                 GroupTab(
                                     label = label,
+                                    unread = unreadCounts[group.id] ?: noUnread,
                                     selected = selectedGroupId == group.id,
                                     onClick = { onTabSelected(group.id) },
                                     onLongClick = { menuForGroupId = group.id }
@@ -1139,6 +998,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     @Composable
     private fun SortableTabsRow(
         groups: List<ChatGroup>,
+        unreadCounts: Map<String, ConversationUnreadState>,
         selectedGroupId: String,
         onMove: (from: Int, to: Int) -> Unit,
     ) {
@@ -1249,6 +1109,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                     )
                     GroupTabContent(
                         label = groupDisplayName(group),
+                        unread = unreadCounts[group.id] ?: noUnread,
                         selected = selectedGroupId == group.id,
                         modifier = Modifier
                             .then(
@@ -1294,12 +1155,14 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     @Composable
     private fun GroupTab(
         label: String,
+        unread: ConversationUnreadState,
         selected: Boolean,
         onClick: () -> Unit,
         onLongClick: () -> Unit,
     ) {
         GroupTabContent(
             label = label,
+            unread = unread,
             selected = selected,
             modifier = Modifier
                 .fillMaxWidth()
@@ -1315,6 +1178,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     @Composable
     private fun GroupTabContent(
         label: String,
+        unread: ConversationUnreadState,
         selected: Boolean,
         modifier: Modifier = Modifier,
     ) {
@@ -1324,14 +1188,62 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 .padding(horizontal = groupTabHorizontalPadding, vertical = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = label,
-                color = if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            BadgedBox(
+                badge = {
+                    if (unread.normalCount > 0) {
+                        Badge(containerColor = Color(0xFFFF3B30)) {
+                            Text(
+                                text = if (unread.normalCount <= 99) unread.normalCount.toString()
+                                    else stringResource(R.string.badge_count_overflow),
+                                color = Color.White,
+                                fontSize = 10.sp,
+                            )
+                        }
+                    } else if (unread.hasMutedUnread) {
+                        Badge(containerColor = Color(0xFFFF3B30))
+                    }
+                },
+            ) {
+                Text(
+                    text = label,
+                    color = if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+
+    private fun queryGroupUnreadCounts(groups: List<ChatGroup>): Map<String, ConversationUnreadState> {
+        // Count member conversations independently of the active tab and adapter cache, including
+        // folded chats. Skip container summaries to avoid counting their children's unread twice.
+        val hidden = if (HideContacts.isEnabled) HideContacts.hiddenContacts else emptySet()
+        val unreadByUsername = WeMessageApi.getConversationUnreadStates(excludeContainers = true)
+            .filterKeys { it !in hidden }
+        return groups.associate { group ->
+            val members = when {
+                isAllTab(group.id) -> unreadByUsername.keys
+                group.type == GroupType.MANUAL -> group.members.toSet()
+                group.type == GroupType.SQL -> resolveGroupMembers(group).toSet()
+                else -> unreadByUsername.keys.filter { username ->
+                    when (group.type) {
+                        GroupType.PRESET_UNREAD -> true
+                        GroupType.PRESET_GROUPS -> username.endsWith("@chatroom")
+                        GroupType.PRESET_FRIENDS -> !username.endsWith("@chatroom") && !username.startsWith("gh_")
+                        GroupType.PRESET_OFFICIALS -> username.startsWith("gh_")
+                    }
+                }
+            }
+            var normalCount = 0L
+            var hasMutedUnread = false
+            for (username in members) {
+                val unread = unreadByUsername[username] ?: continue
+                normalCount += unread.normalCount
+                hasMutedUnread = hasMutedUnread || unread.hasMutedUnread
+            }
+            group.id to ConversationUnreadState(normalCount, hasMutedUnread)
         }
     }
 

@@ -1348,11 +1348,6 @@
     <string name="conversation_grouping_tab_layout_content_description">Center tabs when they fit; scroll horizontally when they overflow</string>
     <string name="conversation_grouping_tab_layout_equal">Equal width</string>
     <string name="conversation_grouping_tab_layout_equal_description">Distribute tabs evenly across the entire row</string>
-    <string name="conversation_grouping_backend_title">Conversation grouping backend</string>
-    <string name="conversation_grouping_backend_query">Query Rewrite</string>
-    <string name="conversation_grouping_backend_query_description">Filter conversations in the WeChat database query</string>
-    <string name="conversation_grouping_backend_adapter">Adapter Filter</string>
-    <string name="conversation_grouping_backend_adapter_description">Filter the conversation adapter in memory</string>
     <string name="fab_default_scan">Scan</string>
     <string name="fab_default_moments">Moments</string>
     <string name="fab_default_wallet">Wallet</string>

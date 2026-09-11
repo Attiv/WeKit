@@ -1309,11 +1309,6 @@
     <string name="conversation_grouping_tab_layout_content_description">未占满时居中，超出一行时靠左并可横向滚动</string>
     <string name="conversation_grouping_tab_layout_equal">等宽铺满</string>
     <string name="conversation_grouping_tab_layout_equal_description">所有标签等宽分配，占满整行</string>
-    <string name="conversation_grouping_backend_title">对话分组实现方式</string>
-    <string name="conversation_grouping_backend_query">查询改写</string>
-    <string name="conversation_grouping_backend_query_description">在微信数据库查询层过滤对话</string>
-    <string name="conversation_grouping_backend_adapter">适配器过滤</string>
-    <string name="conversation_grouping_backend_adapter_description">在内存中对话适配器中过滤</string>
     <string name="fab_default_scan">扫一扫</string>
     <string name="fab_default_moments">朋友圈</string>
     <string name="fab_default_wallet">钱包</string>

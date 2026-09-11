@@ -1306,11 +1306,6 @@
     <string name="conversation_grouping_tab_layout_content_description">未佔滿時置中，超出一行時靠左並可橫向捲動</string>
     <string name="conversation_grouping_tab_layout_equal">等寬鋪滿</string>
     <string name="conversation_grouping_tab_layout_equal_description">所有標籤等寬分配，佔滿整行</string>
-    <string name="conversation_grouping_backend_title">對話分組實現方式</string>
-    <string name="conversation_grouping_backend_query">查詢改寫</string>
-    <string name="conversation_grouping_backend_query_description">在微信數據庫查詢層過濾對話</string>
-    <string name="conversation_grouping_backend_adapter">適配器過濾</string>
-    <string name="conversation_grouping_backend_adapter_description">在內存中的對話適配器中過濾</string>
     <string name="fab_default_scan">掃一掃</string>
     <string name="fab_default_moments">朋友圈</string>
     <string name="fab_default_wallet">錢包</string>
