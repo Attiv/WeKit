@@ -656,7 +656,7 @@
     <string name="feature_conversation_aggregation_name">Conversation aggregation</string>
     <string name="feature_conversation_aggregation_description">Gather multiple conversations into one folder\nTo set a conversation avatar, you need to enable "Customize friend local avatar" at the same time</string>
     <string name="feature_conversation_grouping_name">Conversation grouping</string>
-    <string name="feature_conversation_grouping_description">Add a Tab bar to the top of the homepage to group conversations\nIt is recommended to also enable "Interface Beautification/Hide the "Recent" Page on the Homepage"</string>
+    <string name="feature_conversation_grouping_description">Add a Tab bar to the top of the homepage to group conversations</string>
     <string name="feature_custom_chat_input_bar_placeholder_text_name">Custom input box placeholder text</string>
     <string name="feature_custom_chat_input_bar_placeholder_text_description">Customize the placeholder text displayed in the chat input box\nStatistics are automatically cleared every day</string>
     <string name="feature_disable_chat_background_dimming_name">Disable chat background dimming</string>
@@ -1344,6 +1344,8 @@
     <string name="conversation_group_sql_help" formatted="false">Data sources: rcontact r, img_flag i, rconversation c\nExample: c.unReadCount &gt; 0 AND r.username LIKE \'%@chatroom\'</string>
     <string name="conversation_group_saved">Saved</string>
     <string name="conversation_grouping_tab_layout_title">Tab layout</string>
+    <string name="conversation_grouping_pin_tabs">Pin group tabs</string>
+    <string name="conversation_grouping_pin_tabs_description">Keep group tabs below the title bar when scrolling up</string>
     <string name="conversation_grouping_tab_layout_content">Content width</string>
     <string name="conversation_grouping_tab_layout_content_description">Center tabs when they fit; scroll horizontally when they overflow</string>
     <string name="conversation_grouping_tab_layout_equal">Equal width</string>

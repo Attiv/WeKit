@@ -111,6 +111,18 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
         }
     }
 
+    private val fieldListViewActionBar by dexField {
+        matcher {
+            declaredClass = "com.tencent.mm.ui.conversation.ConversationListView"
+            type = "android.view.View"
+            addReadMethod {
+                paramCount = 0
+                returnType = "void"
+                usingEqStrings("resetActionBarView")
+            }
+        }
+    }
+
     /** Common host interface implemented by both the ListView and RecyclerView adapters. */
     val classConversationAdapter by dexClass()
 
@@ -174,6 +186,8 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
 
     val methodRecyclerOnScrollStateChanged by dexMethod()
 
+    private val fieldRecyclerActionBar by dexField()
+
     override fun resolveDex(dexKit: DexKitBridge) {
         if (classConversationListHost.isPlaceholder) {
             val reason = "common conversation list host is absent"
@@ -219,6 +233,7 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
             methodRecyclerFirstVisiblePosition.setPlaceholderDescriptor(true, reason)
             methodRecyclerOnScrolled.setPlaceholderDescriptor(true, reason)
             methodRecyclerOnScrollStateChanged.setPlaceholderDescriptor(true, reason)
+            fieldRecyclerActionBar.setPlaceholderDescriptor(true, reason)
             return
         }
 
@@ -278,6 +293,17 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
                     "MicroMsg.ConversationRecyclerView",
                     "[flushPendingHeaders] flushing %d headers",
                 )
+            }
+        }
+        fieldRecyclerActionBar.find(dexKit) {
+            matcher {
+                declaredClass(classConversationRecyclerView.data.name)
+                type = "android.view.View"
+                addReadMethod {
+                    paramCount = 0
+                    returnType = "void"
+                    usingEqStrings($$"resetActionBarView$app_release")
+                }
             }
         }
         methodRecyclerAddHeaderView.find(dexKit) {
@@ -418,6 +444,22 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
         }
         val host = fieldMainUiListHost.field.get(mainUi)!!
         methodListHostAddHeaderView.method.invoke(host, header)
+    }
+
+    fun actionBarView(hostView: View): View? =
+        (if (hostView is ListView) fieldListViewActionBar else fieldRecyclerActionBar)
+            .field.get(hostView) as View?
+
+    fun headerCount(hostView: View): Int = if (hostView is ListView) {
+        hostView.headerViewsCount
+    } else {
+        hostView.reflekt().firstMethod { name = "getHeaderViewsCount"; parameters() }.invoke() as Int
+    }
+
+    fun firstVisiblePosition(hostView: View): Int = if (hostView is ListView) {
+        hostView.firstVisiblePosition
+    } else {
+        methodRecyclerFirstVisiblePosition.method.invoke(hostView) as Int
     }
 
     fun setDividerHidden(owner: Any, hidden: Boolean) {

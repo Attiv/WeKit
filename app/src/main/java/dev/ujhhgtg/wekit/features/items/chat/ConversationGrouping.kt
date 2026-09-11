@@ -2,6 +2,7 @@ package dev.ujhhgtg.wekit.features.items.chat
 
 import android.content.Context
 import android.view.View
+import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.HeaderViewListAdapter
 import android.widget.ListView
@@ -153,7 +154,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     private var equalWidthTabs by WePrefs.prefOption("conversation_grouping_equal_width_tabs", false)
     private val equalWidthTabsState by lazy { mutableStateOf(equalWidthTabs) }
+    private var pinTabs by WePrefs.prefOption("conversation_grouping_pin_tabs", true)
     private var includeOfficialUnread by WePrefs.prefOption("conversation_grouping_include_official_unread", true)
+    private val tabHosts = Collections.newSetFromMap(WeakHashMap<ConversationGroupTabsHost, Boolean>())
 
     private val groupTabHorizontalPadding = 16.dp
 
@@ -302,12 +305,16 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                     }
                 }
             }
-            WeConversationListViewApi.addHeaderView(mainUi, composeView)
+            val tabHost = ConversationGroupTabsHost(conversationHostView as ViewGroup, composeView, pinTabs)
+            tabHost.install(mainUi)
+            tabHosts.add(tabHost)
         }
         WeConversationListViewApi.addPositionProvider(adapterPositionProvider)
     }
 
     override fun onDisable() {
+        tabHosts.forEach { it.setPinned(false) }
+        tabHosts.clear()
         WeDatabaseListenerApi.removeListener(contactUnreadListener)
         WeConversationListViewApi.removePositionProvider(adapterPositionProvider)
         bindingAdapter.remove()
@@ -579,6 +586,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {
+            var pinTabsEnabled by remember { mutableStateOf(pinTabs) }
             var countOfficialUnread by remember { mutableStateOf(includeOfficialUnread) }
             AlertDialogContent(
                 title = { Text(stringResource(R.string.feature_conversation_grouping_name)) },
@@ -591,6 +599,18 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 contentPadding = PaddingValues(0.dp),
                                 titlePadding = PaddingValues(start = 16.dp, top = 8.dp, bottom = 8.dp),
                             ) {
+                                item {
+                                    SwitchWidget(
+                                        title = stringResource(R.string.conversation_grouping_pin_tabs),
+                                        description = stringResource(R.string.conversation_grouping_pin_tabs_description),
+                                        checked = pinTabsEnabled,
+                                        onCheckedChange = { checked ->
+                                            pinTabs = checked
+                                            pinTabsEnabled = checked
+                                            tabHosts.forEach { it.setPinned(checked) }
+                                        },
+                                    )
+                                }
                                 item {
                                     RadioButtonWidget(
                                         title = stringResource(R.string.conversation_grouping_tab_layout_content),

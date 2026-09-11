@@ -617,7 +617,7 @@
     <string name="feature_conversation_aggregation_name">對話歸攏</string>
     <string name="feature_conversation_aggregation_description">將多個對話歸攏在一個文件夾內\n設置對話頭像需同時啓用「自定義好友本地頭像」</string>
     <string name="feature_conversation_grouping_name">對話分組</string>
-    <string name="feature_conversation_grouping_description">向主頁頂部添加 Tab 欄, 將對話分組\n建議同時啓用「界面美化/隱藏主頁下滑「最近」頁」</string>
+    <string name="feature_conversation_grouping_description">向主頁頂部添加 Tab 欄, 將對話分組</string>
     <string name="feature_custom_chat_input_bar_placeholder_text_name">自定義輸入框佔位符文本</string>
     <string name="feature_custom_chat_input_bar_placeholder_text_description">自定義聊天輸入框中顯示的佔位符文本\n統計信息每天自動清除</string>
     <string name="feature_disable_chat_background_dimming_name">禁用聊天背景壓暗</string>
@@ -1302,6 +1302,8 @@
     <string name="conversation_group_sql_help" formatted="false">數據源自 rcontact r、img_flag i、rconversation c\n示例：c.unReadCount &gt; 0 AND r.username LIKE \'%@chatroom\'</string>
     <string name="conversation_group_saved">已保存</string>
     <string name="conversation_grouping_tab_layout_title">標籤佈局</string>
+    <string name="conversation_grouping_pin_tabs">固定分組標籤</string>
+    <string name="conversation_grouping_pin_tabs_description">向上捲動時將分組標籤固定在標題列下方</string>
     <string name="conversation_grouping_tab_layout_content">內容寬度</string>
     <string name="conversation_grouping_tab_layout_content_description">未佔滿時置中，超出一行時靠左並可橫向捲動</string>
     <string name="conversation_grouping_tab_layout_equal">等寬鋪滿</string>
