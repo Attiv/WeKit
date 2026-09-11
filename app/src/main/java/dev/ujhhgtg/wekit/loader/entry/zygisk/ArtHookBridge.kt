@@ -94,11 +94,9 @@ class ArtHookBridge : IHookBridge {
     }
 
     override fun <T> newInstanceOrigin(constructor: Constructor<T?>, vararg args: Any): T {
-        val entry = ArtHookBridgeRuntime.getEntry(constructor)
-        if (entry == null) {
-            @Suppress("UNCHECKED_CAST")
+        @Suppress("UNCHECKED_CAST")
+        val entry = ArtHookBridgeRuntime.getEntry(constructor) ?:
             return constructor.newInstance(*args) as T
-        }
 
         // Constructor.newInstance() would re-enter even a logically unhooked
         // constructor. Allocate without initialization, then invoke its backup.
