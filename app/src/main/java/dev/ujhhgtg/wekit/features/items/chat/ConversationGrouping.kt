@@ -1,6 +1,10 @@
 package dev.ujhhgtg.wekit.features.items.chat
 
 import android.content.Context
+import android.view.View
+import android.widget.AdapterView
+import android.widget.HeaderViewListAdapter
+import android.widget.ListView
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.animation.core.Animatable
@@ -178,6 +182,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     private val adapterCaches = WeakHashMap<Any, AdapterCache>()
     private var adapterMethods: List<AdapterMethods> = emptyList()
+    private val hookedListClickMethods = mutableSetOf<Method>()
     private val adapterSnapshotReader = ConversationAdapterSnapshotReader()
     private val adapterItemFields = ConcurrentHashMap<Class<*>, AdapterItemFields>()
     private val snapshotFailuresLogged = ConcurrentHashMap.newKeySet<Class<*>>()
@@ -218,6 +223,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         methodOnTabCreate.hookAfter {
             val mainUi = thisObject!!
             val conversationHostView = WeConversationListViewApi.hostView(mainUi)
+            if (conversationHostView is ListView) hookListViewFooterClicks(conversationHostView)
 
             val composeView = ComposeView(conversationHostView.context).apply {
                 val lifecycleOwner = LifecycleOwnerProvider.lifecycleOwner
@@ -305,6 +311,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         bindingAdapter.remove()
         synchronized(recyclerLists) { recyclerLists.clear() }
         clearAdapterCaches()
+        hookedListClickMethods.clear()
         snapshotFailuresLogged.clear()
     }
 
@@ -371,6 +378,33 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         if (!WeConversationListViewApi.classConversationRecyclerAdapter.isPlaceholder) {
             hookRecyclerDataSource()
         }
+    }
+
+    private fun hookListViewFooterClicks(listView: ListView) {
+        val clickMethod = listView.onItemClickListener!!.javaClass.reflekt().firstMethod {
+            name = "onItemClick"
+            parameters(AdapterView::class, View::class, Int::class, Long::class)
+        }.self
+        if (clickMethod in hookedListClickMethods) return
+        clickMethod.hookBefore {
+            if (isAllTab(activeAdapterGroup.id)) return@hookBefore
+            val clickedListView = args[0] as ListView
+            val adapter = clickedListView.adapter as? HeaderViewListAdapter ?: return@hookBefore
+            if (adapterMethods.none { it.getView.declaringClass.isInstance(adapter.wrappedAdapter) }) {
+                return@hookBefore
+            }
+
+            // Filtering moves the empty footer into the raw conversation index range. Stop its
+            // click before WeChat pairs that tagless view with a real conversation. Host row
+            // callbacks may pass raw positions, so locate the clicked view in the visible list.
+            val position = clickedListView.getPositionForView(args[1] as View)
+            if (position >= adapter.headersCount &&
+                adapter.getItemViewType(position) == AdapterView.ITEM_VIEW_TYPE_HEADER_OR_FOOTER
+            ) {
+                result = null
+            }
+        }
+        hookedListClickMethods += clickMethod
     }
 
     private fun hookRecyclerDataSource() {
