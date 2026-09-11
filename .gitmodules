@@ -30,3 +30,6 @@
 	# xtask initializes only DexBuilder and its dependencies. The upstream test
 	# submodules use SSH and are not needed to build the runtime.
 	update = none
+[submodule "third_party/xz-embedded"]
+	path = third_party/xz-embedded
+	url = https://github.com/tukaani-project/xz-embedded.git

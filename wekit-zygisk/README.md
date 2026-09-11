@@ -91,11 +91,12 @@ Run `./x build --help` or `./x run --help` for options.
 - Android NDK pinned in `gradle/libs.versions.toml`
 - CMake 3.28 or newer and Ninja (CI uses CMake 3.31.6 and Ninja 1.11.1.4)
 
-`./x build` initializes the pinned LSPlant sources and their runtime dependencies.
+`./x build` initializes the pinned LSPlant and XZ Embedded sources.
 LSPlant's unrelated test/documentation submodules are
 not required. `./x configure` writes the selected NDK and API level into the
 Cargo configuration; direct Android Cargo builds also need this configuration
-and the initialized native dependencies. Desktop Rust tests do not build LSPlant.
+and the initialized native dependencies. Desktop Rust tests build XZ Embedded,
+not LSPlant; initialize it with `git submodule update --init third_party/xz-embedded`.
 
 ## ART hooks
 
@@ -106,6 +107,9 @@ existing `libwekit_zygisk.so`. LSPlant calls Rust function pointers for native
 inline hook installation and removal; Dobby is no longer a build dependency.
 The LSPlant gitlink remains pinned to `d8b5d1dbb664abc606644036822e4bb64547edf6`;
 its LGPL-3.0 license remains in the submodule.
+
+ART mini debug symbols use statically linked XZ Embedded (0BSD), with the existing
+64 MiB output limit. No system `liblzma.so` is required.
 
 The ARM64 backend is in `native/src/art/inline_hook/`. It provides executable
 original-function backups, near entry veneers with an absolute-branch fallback,

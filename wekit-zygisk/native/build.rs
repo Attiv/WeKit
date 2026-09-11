@@ -13,27 +13,14 @@ fn main() {
     println!("cargo:rerun-if-env-changed=WEKIT_ANDROID_NDK");
     println!("cargo:rerun-if-env-changed=WEKIT_ANDROID_API");
     println!("cargo:rerun-if-env-changed=CMAKE");
-    // APK/protocol unit tests run on the desktop without Android or a JVM.
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("android") {
-        return;
-    }
-    assert_eq!(
-        env::var("TARGET").unwrap(),
-        "aarch64-linux-android",
-        "the Zygisk loader currently supports arm64-v8a only"
-    );
-
+    let android = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android");
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let root = manifest.parent().unwrap().parent().unwrap();
-    let ndk = PathBuf::from(
-        env::var_os("WEKIT_ANDROID_NDK")
-            .expect("run ./x configure to select the pinned Android NDK"),
-    );
-    let api = env::var("WEKIT_ANDROID_API").expect("run ./x configure to select the Android API");
     for source in [
         manifest.join("CMakeLists.txt"),
         manifest.join("cpp"),
-        root.join("third_party/lsplant/lsplant/src/main/jni"),
+        root.join("third_party/xz-embedded/linux"),
+        root.join("third_party/xz-embedded/userspace"),
     ] {
         println!("cargo:rerun-if-changed={}", source.display());
     }
@@ -42,25 +29,52 @@ fn main() {
     let build = out.join("cmake");
     let install = out.join("native");
     let cmake = env::var_os("CMAKE").unwrap_or_else(|| "cmake".into());
-    run(Command::new(&cmake)
+    let mut configure = Command::new(&cmake);
+    configure
         .arg("-S")
         .arg(&manifest)
         .arg("-B")
         .arg(&build)
         .args(["-G", "Ninja"])
-        .arg(format!(
-            "-DCMAKE_TOOLCHAIN_FILE={}",
-            ndk.join("build/cmake/android.toolchain.cmake").display()
-        ))
-        .arg("-DANDROID_ABI=arm64-v8a")
-        .arg(format!("-DANDROID_PLATFORM=android-{api}"))
-        .arg("-DANDROID_STL=c++_static")
         .arg("-DCMAKE_BUILD_TYPE=RelWithDebInfo")
-        .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install.display())));
-    run(Command::new(&cmake)
+        .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install.display()));
+    if android {
+        assert_eq!(
+            env::var("TARGET").unwrap(),
+            "aarch64-linux-android",
+            "the Zygisk loader currently supports arm64-v8a only"
+        );
+        let ndk = PathBuf::from(
+            env::var_os("WEKIT_ANDROID_NDK")
+                .expect("run ./x configure to select the pinned Android NDK"),
+        );
+        let api =
+            env::var("WEKIT_ANDROID_API").expect("run ./x configure to select the Android API");
+        configure
+            .arg(format!(
+                "-DCMAKE_TOOLCHAIN_FILE={}",
+                ndk.join("build/cmake/android.toolchain.cmake").display()
+            ))
+            .arg("-DANDROID_ABI=arm64-v8a")
+            .arg(format!("-DANDROID_PLATFORM=android-{api}"))
+            .arg("-DANDROID_STL=c++_static");
+        let lsplant = root.join("third_party/lsplant");
+        println!(
+            "cargo:rerun-if-changed={}",
+            lsplant.join("lsplant/src/main/jni").display()
+        );
+    }
+    run(&mut configure);
+    let mut compile = Command::new(&cmake);
+    compile
         .arg("--build")
         .arg(&build)
-        .args(["--target", "wekit_lsplant_bridge", "--parallel"])
+        .args(["--target", "wekit_xz"]);
+    if android {
+        compile.arg("wekit_lsplant_bridge");
+    }
+    run(compile
+        .arg("--parallel")
         .arg(env::var("NUM_JOBS").unwrap_or_else(|_| "1".into())));
     run(Command::new(&cmake).arg("--install").arg(&build));
 
@@ -68,6 +82,10 @@ fn main() {
         "cargo:rustc-link-search=native={}",
         install.join("lib").display()
     );
+    println!("cargo:rustc-link-lib=static=wekit_xz");
+    if !android {
+        return;
+    }
     for library in [
         "wekit_lsplant_bridge",
         "lsplant_static",

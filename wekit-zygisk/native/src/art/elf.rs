@@ -6,7 +6,7 @@ use crate::loge;
 use libc::c_int;
 use std::{
     ffi::{CStr, c_void},
-    sync::OnceLock,
+    sync::{Once, OnceLock},
 };
 
 #[cfg(target_pointer_width = "64")]
@@ -337,74 +337,67 @@ fn find_art_library() -> Option<ArtLibrary> {
     result
 }
 
-// Optional XZ decompression using the same system liblzma dependency as before.
-// If the loader namespace cannot expose liblzma, mini debug symbols are absent.
-type LzmaDecodeFn = unsafe extern "C" fn(
-    memlimit: *mut u64,
-    flags: u32,
-    allocator: *const c_void,
+// ABI from the pinned XZ Embedded xz.h.
+#[repr(C)]
+struct XzBuffer {
     input: *const u8,
-    in_pos: *mut usize,
+    in_pos: usize,
     in_size: usize,
     output: *mut u8,
-    out_pos: *mut usize,
+    out_pos: usize,
     out_size: usize,
-) -> u32;
+}
 
-fn load_lzma() -> Option<LzmaDecodeFn> {
-    static DECODE: OnceLock<Option<LzmaDecodeFn>> = OnceLock::new();
-    *DECODE.get_or_init(|| unsafe {
-        let handle = libc::dlopen(c"liblzma.so".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
-        if handle.is_null() {
-            loge!("Zygisk: liblzma unavailable; ART mini debug symbols cannot be read");
-            return None;
-        }
-        let symbol = libc::dlsym(handle, c"lzma_stream_buffer_decode".as_ptr());
-        if symbol.is_null() {
-            libc::dlclose(handle);
-            loge!("Zygisk: lzma_stream_buffer_decode unavailable");
-            return None;
-        }
-        // Keep a successfully opened handle for the function pointer's lifetime.
-        Some(std::mem::transmute::<*mut c_void, LzmaDecodeFn>(symbol))
-    })
+unsafe extern "C" {
+    fn xz_crc32_init();
+    fn xz_crc64_init();
+    fn xz_dec_init(mode: c_int, dict_max: u32) -> *mut c_void;
+    fn xz_dec_run(decoder: *mut c_void, buffer: *mut XzBuffer) -> c_int;
+    fn xz_dec_end(decoder: *mut c_void);
 }
 
 fn decompress_xz(input: &[u8]) -> Option<Vec<u8>> {
-    let decode = load_lzma()?;
+    static CRC_TABLES: Once = Once::new();
+    CRC_TABLES.call_once(|| unsafe {
+        xz_crc32_init();
+        xz_crc64_init();
+    });
+    // XZ_SINGLE uses the output buffer as its dictionary and resets on each
+    // call, so the existing bounded retry loop needs no streaming state.
+    const XZ_SINGLE: c_int = 0;
+    const XZ_STREAM_END: c_int = 1;
+    const XZ_BUF_ERROR: c_int = 8;
+    let decoder = unsafe { xz_dec_init(XZ_SINGLE, 0) };
+    if decoder.is_null() {
+        loge!("Zygisk: XZ decoder allocation failed");
+        return None;
+    }
     const MAX_SIZE: usize = 64 * 1024 * 1024;
     let mut size = input.len().saturating_mul(4).clamp(65536, MAX_SIZE);
-    loop {
+    let decoded = loop {
         let mut output = vec![0u8; size];
-        let mut memlimit = 256 * 1024 * 1024u64;
-        let mut in_pos = 0usize;
-        let mut out_pos = 0usize;
-        const LZMA_OK: u32 = 0;
-        const LZMA_BUF_ERROR: u32 = 10;
-        let result = unsafe {
-            decode(
-                &mut memlimit,
-                0,
-                std::ptr::null(),
-                input.as_ptr(),
-                &mut in_pos,
-                input.len(),
-                output.as_mut_ptr(),
-                &mut out_pos,
-                size,
-            )
+        let mut buffer = XzBuffer {
+            input: input.as_ptr(),
+            in_pos: 0,
+            in_size: input.len(),
+            output: output.as_mut_ptr(),
+            out_pos: 0,
+            out_size: output.len(),
         };
-        if result == LZMA_OK && in_pos == input.len() && out_pos <= output.len() {
-            output.truncate(out_pos);
-            return Some(output);
+        let result = unsafe { xz_dec_run(decoder, &mut buffer) };
+        if result == XZ_STREAM_END && buffer.in_pos == input.len() {
+            output.truncate(buffer.out_pos);
+            break Some(output);
         }
-        if result == LZMA_BUF_ERROR && size < MAX_SIZE {
+        if result == XZ_BUF_ERROR && size < MAX_SIZE {
             size = (size * 2).min(MAX_SIZE);
             continue;
         }
         loge!("Zygisk: XZ decompress error {result}");
-        return None;
-    }
+        break None;
+    };
+    unsafe { xz_dec_end(decoder) };
+    decoded
 }
 
 #[cfg(test)]
