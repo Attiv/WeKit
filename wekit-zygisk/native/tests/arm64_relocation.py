@@ -127,6 +127,23 @@ class RelocationTests(unittest.TestCase):
     def test_backward_internal_loop(self):
         self.compare(words(0xF1000400, 0x54FFFFE1, 0x91000821, RET), 3, registers={0: 4})
 
+    def test_always_taken_branch_skips_inline_data(self):
+        for condition in [0xE, 0xF]:  # AL and NV are both always taken in A64.
+            for prefix in [(), (0xD503245F,)]:
+                with self.subTest(condition=condition, landing_pad=bool(prefix)):
+                    code = words(*prefix, 0x54000000 | (2 << 5) | condition,
+                                 0, 0xD2800540, RET)
+                    self.compare(code, 4 + len(prefix))
+
+    def test_always_taken_branch_preserves_other_incoming_paths(self):
+        for condition in [0xE, 0xF]:
+            # CBZ can still reach the instruction after the always-taken branch.
+            code = words(0xB4000000 | (2 << 5),
+                         0x54000000 | (3 << 5) | condition,
+                         0x91000821, branch(SOURCE + 12, SOURCE + 16), RET)
+            for value in [0, 1]:
+                self.compare(code, 5, registers={0: value})
+
     def test_external_branch_preserves_ip_registers(self):
         self.compare(words(branch(SOURCE, CALLEE), NOP, RET), 1,
                      [(CALLEE, words(0x91000821, RET))])

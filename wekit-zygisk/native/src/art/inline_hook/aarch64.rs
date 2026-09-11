@@ -126,7 +126,11 @@ fn reachable_instructions(original: &[u32], source: u64) -> [bool; 5] {
                 pending.push(((target - source) / 4) as usize);
             }
         }
-        let branch = word & 0xfc00_0000 == 0x1400_0000;
+        // A64 AL/NV conditions are both always true, for B.cond and BC.cond.
+        // Keep following their target, but do not interpret skipped inline data
+        // as fallthrough code. Other incoming edges can still reach that code.
+        let branch = word & 0xfc00_0000 == 0x1400_0000
+            || (word & 0xff00_0000 == 0x5400_0000 && word & 0xe == 0xe);
         let register_branch = word & 0xfe00_0000 == 0xd600_0000;
         let register_call = matches!((word >> 21) & 15, 1 | 9); // BLR / BLRAA / BLRAB
         if !branch && (!register_branch || register_call) {
