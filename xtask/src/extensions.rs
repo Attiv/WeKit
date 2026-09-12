@@ -382,9 +382,7 @@ fn build_python_runtime(root: &Path, dist: &Path) -> Result<PackIndexEntry> {
     };
     let catalog: toml::Value =
         toml::from_str(&fs::read_to_string(root.join("gradle/libs.versions.toml"))?)?;
-    let api_version = catalog["versions"]["pythonRuntimeApiVersion"]
-        .as_str()
-        .context("missing pythonRuntimeApiVersion in version catalog")?;
+    let api_version = "1.0.0";
     let python_version = catalog["versions"]["pythonRuntimePython"]
         .as_str()
         .context("missing pythonRuntimePython in version catalog")?;
@@ -525,9 +523,9 @@ fn build_python_native_wheels(
     let python_version = versions["pythonRuntimePython"]
         .as_str()
         .context("missing pythonRuntimePython in version catalog")?;
-    let ndk_version = versions["pythonRuntimeNdk"]
+    let ndk_version = versions["ndk"]
         .as_str()
-        .context("missing pythonRuntimeNdk in version catalog")?;
+        .context("missing ndk in version catalog")?;
     let target_version = versions["pythonRuntimeChaquopyTarget"]
         .as_str()
         .context("missing pythonRuntimeChaquopyTarget in version catalog")?;
@@ -682,9 +680,9 @@ fn build_patched_chaquopy_bridge(root: &Path, catalog: &toml::Value) -> Result<P
     let target_version = versions["pythonRuntimeChaquopyTarget"]
         .as_str()
         .context("missing pythonRuntimeChaquopyTarget in version catalog")?;
-    let ndk_version = versions["pythonRuntimeNdk"]
+    let ndk_version = versions["ndk"]
         .as_str()
-        .context("missing pythonRuntimeNdk in version catalog")?;
+        .context("missing ndk in version catalog")?;
     let min_sdk = versions["minSdk"]
         .as_str()
         .context("missing minSdk in version catalog")?;
