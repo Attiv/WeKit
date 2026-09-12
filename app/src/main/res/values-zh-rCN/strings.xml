@@ -1297,8 +1297,10 @@
     <string name="conversation_grouping_tab_layout_title">标签布局</string>
     <string name="conversation_grouping_pin_tabs">固定分组标签</string>
     <string name="conversation_grouping_pin_tabs_description">向上滚动时将分组标签固定在标题栏下方</string>
-    <string name="conversation_grouping_take_over_horizontal_scroll">接管横向滚动</string>
-    <string name="conversation_grouping_take_over_horizontal_scroll_description">横滑切换相邻分组，向边界外滑动时交回微信页面或侧栏。保留「左划对话菜单」，两者共用手势，可自行选择是否同时启用。</string>
+    <string name="conversation_grouping_take_over_horizontal_scroll">接管横向滑动</string>
+    <string name="conversation_grouping_take_over_horizontal_scroll_description">横滑切换相邻分组，向边界外滑动时交回微信页面或侧栏</string>
+    <string name="conversation_grouping_remember_scroll_state">记忆滑动状态</string>
+    <string name="conversation_grouping_remember_scroll_state_description">切换分组时记忆并恢复各分组的纵向滑动位置</string>
     <string name="conversation_grouping_swipe_prepare_failed">暂时无法切换分组，请重试</string>
     <string name="conversation_grouping_unread_title">未读提示</string>
     <string name="conversation_grouping_show_unread">显示未读</string>

@@ -4,8 +4,6 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.graphics.Rect
-import android.os.Parcelable
-import android.util.SparseArray
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -35,6 +33,8 @@ class ConversationGroupSwipeSession(
     private val groupIds: () -> List<String>,
     private val selectedGroupId: () -> String,
     private val enabled: () -> Boolean,
+    private val swipeEnabled: () -> Boolean,
+    private val rememberScrollState: () -> Boolean,
     private val canStart: () -> Boolean,
     private val prepareGroup: (String, (Boolean) -> Unit) -> Unit,
     private val cancelPreparation: () -> Unit,
@@ -55,17 +55,20 @@ class ConversationGroupSwipeSession(
     private var phase = Phase.IDLE
     private var transition: ConversationGroupTransitionView? = null
     private var animator: ValueAnimator? = null
-    private var originalHierarchy: SparseArray<Parcelable>? = null
+    private var originalPosition: ConversationGroupScrollPosition? = null
+    private val scrollPositions = mutableMapOf<String, ConversationGroupScrollPosition>()
     private var originGroupId: String? = null
     private var targetGroupId: String? = null
     private var downGroupIds: List<String> = emptyList()
     private var direction = ConversationGroupSwipeState.Direction.NEXT
     private var progress = 0f
     private var pendingSettlement: Boolean? = null
+    private var animateTransition = true
     private var preparationInFlight = false
     private var preparationSequence = 0
     private var restoreObserver: ViewTreeObserver? = null
     private var restoreListener: ViewTreeObserver.OnPreDrawListener? = null
+    private var restoreScrollTask: Runnable? = null
     private var cancellingHost = false
     private var immediateAbort = false
     private var disposed = false
@@ -144,7 +147,7 @@ class ConversationGroupSwipeSession(
             handleOwnedEvent(event)
             return true
         }
-        if (disposed || !enabled()) {
+        if (disposed || !enabled() || !swipeEnabled()) {
             gesture.onCancel()
             return false
         }
@@ -176,7 +179,7 @@ class ConversationGroupSwipeSession(
         if (cancellingHost) return false
         if (discardTouchStream || !replayingEvents && deferredEvents.isNotEmpty()) return true
         if (phase != Phase.IDLE) return !immediateAbort
-        if (disposed || !enabled()) {
+        if (disposed || !enabled() || !swipeEnabled()) {
             gesture.onCancel()
             return false
         }
@@ -218,6 +221,32 @@ class ConversationGroupSwipeSession(
         if (phase != Phase.IDLE && !isFullyVisibleHome()) abortImmediately()
     }
 
+    /** Clicking a tab uses the same native preparation and cancellation path as a finger swipe. */
+    fun selectGroup(groupId: String, animate: Boolean): Boolean {
+        if (phase != Phase.IDLE || deferredEvents.isNotEmpty()) return true
+        if (disposed || !enabled() || !canStart() || !isFullyVisibleHome() ||
+            !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        ) return false
+        val ids = groupIds()
+        val origin = selectedGroupId()
+        val from = ids.indexOf(origin)
+        val to = ids.indexOf(groupId)
+        if (from < 0 || to < 0) return false
+        if (from == to) return true
+        gesture.onCancel()
+        downGroupIds = ids.toList()
+        originGroupId = origin
+        return beginTransition(
+            groupId,
+            if (to > from) ConversationGroupSwipeState.Direction.NEXT
+            else ConversationGroupSwipeState.Direction.PREVIOUS,
+            animate,
+            cancelHost = null,
+        )
+    }
+
+    fun forgetScrollPositions() = scrollPositions.clear()
+
     private fun isFullyVisibleHome(): Boolean {
         if (!sourceView.getGlobalVisibleRect(sourceBounds) || !pager.getGlobalVisibleRect(pagerBounds)) {
             return false
@@ -251,6 +280,15 @@ class ConversationGroupSwipeSession(
         val originIndex = downGroupIds.indexOf(origin)
         val targetIndex = originIndex + if (candidate == ConversationGroupSwipeState.Direction.NEXT) 1 else -1
         val target = downGroupIds.getOrNull(targetIndex) ?: return false
+        return beginTransition(target, candidate, animate = true, cancelHost)
+    }
+
+    private fun beginTransition(
+        target: String,
+        candidate: ConversationGroupSwipeState.Direction,
+        animate: Boolean,
+        cancelHost: (() -> Unit)?,
+    ): Boolean {
         val parent = sourceView.parent as? ViewGroup
         if (parent == null || tabHost.parent !== parent) {
             gesture.onCancel()
@@ -263,14 +301,16 @@ class ConversationGroupSwipeSession(
             is ViewGroup.MarginLayoutParams -> ViewGroup.MarginLayoutParams(original)
             else -> ViewGroup.LayoutParams(original)
         }
-        val hierarchy = SparseArray<Parcelable>()
+        val position: ConversationGroupScrollPosition?
         try {
-            sourceView.saveHierarchyState(hierarchy)
+            // A floating tab is a sibling of the list: its DOWN did not stop the list's fling.
+            ConversationGroupScrollPosition.stopScrolling(sourceView)
+            position = ConversationGroupScrollPosition.capture(sourceView)
             sourceView.isPressed = false
             sourceView.cancelLongPress()
             sourceView.jumpDrawablesToCurrentState()
             parent.addView(overlay, parent.indexOfChild(sourceView) + 1, params)
-        } catch (error: RuntimeException) {
+        } catch (error: Exception) {
             (overlay.parent as? ViewGroup)?.removeView(overlay)
             gesture.onCancel()
             reportFailure(error)
@@ -290,18 +330,23 @@ class ConversationGroupSwipeSession(
                 return false
             }
         }
-        if (!gesture.claimGroup()) {
+        if (cancelHost != null && !gesture.claimGroup()) {
             overlay.dispose()
             parent.removeView(overlay)
             return false
         }
 
         transition = overlay
-        originalHierarchy = hierarchy
+        originalPosition = position
+        if (rememberScrollState()) {
+            scrollPositions.keys.retainAll(downGroupIds.toSet())
+            if (position != null) scrollPositions[originGroupId!!] = position
+        } else scrollPositions.clear()
         targetGroupId = target
         direction = candidate
-        progress = gesture.progress
-        pendingSettlement = null
+        progress = if (cancelHost != null) gesture.progress else 0f
+        pendingSettlement = if (cancelHost != null) null else true
+        animateTransition = animate
         immediateAbort = false
         failureReported = false
         phase = Phase.PREPARING
@@ -315,7 +360,7 @@ class ConversationGroupSwipeSession(
         publishVisual(0f)
         cancellingHost = true
         try {
-            cancelHost()
+            cancelHost?.invoke()
         } catch (error: RuntimeException) {
             abortImmediately()
             reportFailure(error)
@@ -336,10 +381,16 @@ class ConversationGroupSwipeSession(
             if (immediateAbort || pendingSettlement == false || !ready) {
                 restoreOrigin()
             } else {
-                phase = Phase.DRAGGING
-                transition!!.setIncomingReady(true)
-                publishVisual(progress)
-                pendingSettlement?.let(::settle)
+                restoreScrollPosition(if (rememberScrollState()) scrollPositions[target] else null) {
+                    if (!enabled() || groupIds() != downGroupIds || pendingSettlement == false) {
+                        restoreOrigin()
+                    } else {
+                        phase = Phase.DRAGGING
+                        transition!!.setIncomingReady(true)
+                        publishVisual(progress)
+                        pendingSettlement?.let(::settle)
+                    }
+                }
             }
         }
         return true
@@ -391,7 +442,9 @@ class ConversationGroupSwipeSession(
         phase = Phase.SETTLING
         val target = if (commit) 1f else 0f
         val from = progress
-        if (from == target || deferredEvents.firstOrNull()?.actionMasked == MotionEvent.ACTION_DOWN) {
+        if (!animateTransition || from == target ||
+            deferredEvents.firstOrNull()?.actionMasked == MotionEvent.ACTION_DOWN
+        ) {
             finishSettlement(commit)
             return
         }
@@ -462,20 +515,9 @@ class ConversationGroupSwipeSession(
                 finishSession()
                 return@requestPreparation
             }
-            try {
-                if (restoreGroup == origin) originalHierarchy?.let(sourceView::restoreHierarchyState)
-                else commitGroup(restoreGroup)
-            } catch (error: RuntimeException) {
-                reportFailure(error)
+            restoreScrollPosition(if (restoreGroup == origin) originalPosition else null) {
+                if (restoreGroup != origin) commitGroup(restoreGroup)
                 finishSession()
-                return@requestPreparation
-            }
-            if (immediateAbort || disposed || !sourceView.isAttachedToWindow ||
-                !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-            ) {
-                finishSession()
-            } else {
-                finishAfterRestoredLayout()
             }
         }
     }
@@ -505,19 +547,44 @@ class ConversationGroupSwipeSession(
         }
     }
 
-    private fun finishAfterRestoredLayout() {
+    private fun restoreScrollPosition(position: ConversationGroupScrollPosition?, completed: () -> Unit) {
         removeRestoreListener()
-        val observer = sourceView.viewTreeObserver
-        val listener = ViewTreeObserver.OnPreDrawListener {
-            removeRestoreListener()
-            finishSession()
-            true
+        val expectedPhase = phase
+        val applyPosition = Runnable {
+            restoreScrollTask = null
+            if (phase != expectedPhase || disposed) return@Runnable
+            try {
+                if (position == null) ConversationGroupScrollPosition.reset(sourceView)
+                else position.restore(sourceView)
+                if (immediateAbort || !sourceView.isAttachedToWindow ||
+                    !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                ) {
+                    completed()
+                } else {
+                    val observer = sourceView.viewTreeObserver
+                    val listener = ViewTreeObserver.OnPreDrawListener {
+                        removeRestoreListener()
+                        if (phase == expectedPhase) completed()
+                        true
+                    }
+                    restoreObserver = observer
+                    restoreListener = listener
+                    observer.addOnPreDrawListener(listener)
+                    sourceView.requestLayout()
+                    sourceView.invalidate()
+                }
+            } catch (error: Exception) {
+                reportFailure(error)
+                if (phase == Phase.RESTORING) finishSession() else abortImmediately()
+            }
         }
-        restoreObserver = observer
-        restoreListener = listener
-        observer.addOnPreDrawListener(listener)
-        sourceView.requestLayout()
-        sourceView.invalidate()
+        if (immediateAbort || !sourceView.isAttachedToWindow) applyPosition.run()
+        else {
+            // Native Recycler footer handling can schedule its own reset during the same pre-draw
+            // that reports the target ready. Restore after it, then wait for our viewport layout.
+            restoreScrollTask = applyPosition
+            sourceView.post(applyPosition)
+        }
     }
 
     private fun abortImmediately() {
@@ -549,6 +616,8 @@ class ConversationGroupSwipeSession(
     }
 
     private fun removeRestoreListener() {
+        restoreScrollTask?.let(sourceView::removeCallbacks)
+        restoreScrollTask = null
         val listener = restoreListener ?: return
         val observer = restoreObserver
         (if (observer != null && observer.isAlive) observer else sourceView.viewTreeObserver)
@@ -574,7 +643,7 @@ class ConversationGroupSwipeSession(
         stopAnimator()
         removeRestoreListener()
         gesture.onCancel()
-        originalHierarchy = null
+        originalPosition = null
         originGroupId = null
         targetGroupId = null
         downGroupIds = emptyList()
@@ -675,6 +744,7 @@ class ConversationGroupSwipeSession(
     fun dispose() {
         if (disposed) return
         disposed = true
+        scrollPositions.clear()
         sourceView.removeOnLayoutChangeListener(layoutListener)
         pager.removeOnLayoutChangeListener(layoutListener)
         sourceView.removeOnAttachStateChangeListener(attachListener)

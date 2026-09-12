@@ -1335,8 +1335,10 @@
     <string name="conversation_grouping_tab_layout_title">Tab layout</string>
     <string name="conversation_grouping_pin_tabs">Pin group tabs</string>
     <string name="conversation_grouping_pin_tabs_description">Keep group tabs below the title bar when scrolling up</string>
-    <string name="conversation_grouping_take_over_horizontal_scroll">Take over horizontal scrolling</string>
-    <string name="conversation_grouping_take_over_horizontal_scroll_description">Swipe between adjacent groups; outward swipes at either end go to WeChat pages or the side panel. Swipe conversation actions remain available and share this gesture; choose whether to enable both.</string>
+    <string name="conversation_grouping_take_over_horizontal_scroll">Take over horizontal swiping</string>
+    <string name="conversation_grouping_take_over_horizontal_scroll_description">Swipe between adjacent groups; outward swipes at either end go to WeChat pages or the side panel</string>
+    <string name="conversation_grouping_remember_scroll_state">Remember scroll position</string>
+    <string name="conversation_grouping_remember_scroll_state_description">Remember and restore each group’s vertical scroll position when switching groups</string>
     <string name="conversation_grouping_swipe_prepare_failed">Unable to switch groups right now. Please try again.</string>
     <string name="conversation_grouping_unread_title">Unread indicators</string>
     <string name="conversation_grouping_show_unread">Show unread</string>

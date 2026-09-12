@@ -186,7 +186,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private const val ALL_TAB_ID = "${GROUP_PREFIX}all"
 
     private var pinTabs by WePrefs.prefOption("conversation_grouping_pin_tabs", true)
-    private var takeOverHorizontalScroll by WePrefs.prefOption("conversation_grouping_take_over_horizontal_scroll", false)
+    private var takeOverHorizontalScroll by WePrefs.prefOption("conversation_grouping_take_over_horizontal_scroll", true)
+    private var rememberScrollState by WePrefs.prefOption("conversation_grouping_remember_scroll_state", false)
     private var swipeHooksInstalled = false
     private val swipeSessions = WeakHashMap<ViewGroup, WeakReference<ConversationGroupSwipeSession>>()
     private var showUnread by WePrefs.prefOption("conversation_grouping_show_unread", true)
@@ -329,7 +330,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             }
         }
         hookConversationListAdapter()
-        if (takeOverHorizontalScroll) ensureSwipeHooks()
+        if (takeOverHorizontalScroll || rememberScrollState) ensureSwipeHooks()
 
         methodOnTabCreate.hookAfter {
             val mainUi = thisObject!!
@@ -344,6 +345,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             val groupSortModeState = mutableStateOf(false)
             val activity = conversationHostView.context.baseActivity!! as LauncherUI
             val lifecycleOwner = LifecycleOwnerProvider.getOrCreate(activity)
+            var swipeSession: ConversationGroupSwipeSession? = null
             val composeView = ComposeView(conversationHostView.context).apply {
                 setLifecycleOwner(lifecycleOwner)
 
@@ -366,8 +368,12 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             groups = groups,
                             selectedGroupId = selectedGroupId,
                             onTabSelected = { groupId ->
-                                selectedGroupId = groupId
-                                selectTab(groupId)
+                                val handled = (takeOverHorizontalScroll || rememberScrollState) &&
+                                    swipeSession?.selectGroup(groupId, animate = takeOverHorizontalScroll) == true
+                                if (!handled) {
+                                    selectedGroupId = groupId
+                                    selectTab(groupId)
+                                }
                             },
                             onCreateGroup = {
                                 showCreateGroupDialog(context) {
@@ -440,7 +446,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                     lifecycleOwner = lifecycleOwner,
                     groupIds = { groupsState.value.map { it.id } },
                     selectedGroupId = { selectedGroupIdState.value },
-                    enabled = { isEnabled && takeOverHorizontalScroll },
+                    enabled = { isEnabled },
+                    swipeEnabled = { takeOverHorizontalScroll },
+                    rememberScrollState = { rememberScrollState },
                     canStart = {
                         activity.currentFragmet == null && !groupSortModeState.value &&
                             !HomeSidePanel.blocksConversationGroupSwipe(pager) &&
@@ -463,6 +471,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                         showToast(HostLocalizedStrings.get(R.string.conversation_grouping_swipe_prepare_failed))
                     },
                 )
+                swipeSession = session
                 swipeSessions[pager] = WeakReference(session)
             }
         }
@@ -857,6 +866,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         showComposeDialog(context) {
             var pinTabsEnabled by remember { mutableStateOf(pinTabs) }
             var takeOverScroll by remember { mutableStateOf(takeOverHorizontalScroll) }
+            var rememberScrollStateEnabled by remember { mutableStateOf(rememberScrollState) }
             var countOfficialUnread by remember { mutableStateOf(includeOfficialUnread) }
             AlertDialogContent(
                 title = { Text(stringResource(R.string.feature_conversation_grouping_name)) },
@@ -891,6 +901,20 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                             takeOverHorizontalScroll = checked
                                             if (checked) ensureSwipeHooks()
                                             else swipeSessions.values.mapNotNull { it.get() }.forEach { it.cancelImmediately() }
+                                        },
+                                    )
+                                }
+                                item {
+                                    SwitchWidget(
+                                        title = stringResource(R.string.conversation_grouping_remember_scroll_state),
+                                        description = stringResource(R.string.conversation_grouping_remember_scroll_state_description),
+                                        checked = rememberScrollStateEnabled,
+                                        onCheckedChange = { checked ->
+                                            rememberScrollState = checked
+                                            rememberScrollStateEnabled = checked
+                                            if (checked) ensureSwipeHooks()
+                                            else swipeSessions.values.mapNotNull { it.get() }
+                                                .forEach { it.forgetScrollPositions() }
                                         },
                                     )
                                 }

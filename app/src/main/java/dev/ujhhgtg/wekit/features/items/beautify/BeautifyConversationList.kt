@@ -12,6 +12,7 @@ import android.graphics.drawable.RippleDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.Text
@@ -29,6 +30,7 @@ import dev.ujhhgtg.wekit.features.api.ui.WeConversationListViewApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.items.chat.ConversationGrouping
+import dev.ujhhgtg.wekit.features.items.chat.SwipeConversationOperations
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.TextButton
@@ -59,6 +61,18 @@ object BeautifyConversationList : ClickableFeature() {
     val isLayoutBeautificationEnabled: Boolean
         get() = isEnabled && layoutEnabled
 
+    /** Surface geometry in row coordinates, also used to clip the swipe menu's child views. */
+    data class IslandShape(
+        val horizontalInset: Int,
+        val topInset: Int,
+        val radius: Float,
+        val first: Boolean,
+        val last: Boolean,
+    )
+
+    fun islandShape(row: View): IslandShape? =
+        if (isLayoutBeautificationEnabled) rows[row]?.island?.shape else null
+
     private class BackgroundState(var original: Drawable?, val applied: Drawable)
 
     private class RowState(row: View) {
@@ -66,6 +80,7 @@ object BeautifyConversationList : ClickableFeature() {
         val paddingTop = row.paddingTop
         val paddingRight = row.paddingRight
         val paddingBottom = row.paddingBottom
+        var gapTop = 0
         var island: IslandBackground? = null
     }
 
@@ -88,6 +103,24 @@ object BeautifyConversationList : ClickableFeature() {
     }
 
     override fun onEnable() {
+        LinearLayout::class.reflekt().firstMethod {
+            name = "onMeasure"
+            parameters(Int::class, Int::class)
+        }.hookBefore {
+            val state = rows[thisObject as View] ?: return@hookBefore
+            val gap = state.gapTop
+            if (gap == 0) return@hookBefore
+            val heightSpec = args[1] as Int
+            val height = View.MeasureSpec.getSize(heightSpec)
+            if (height > 0 && View.MeasureSpec.getMode(heightSpec) == View.MeasureSpec.EXACTLY) {
+                // ConversationFolderItemView replaces its incoming height with the holder's
+                // fixed height before calling this superclass. Add the gap here so the native
+                // children still receive their full height after subtracting our extra padding.
+                args[1] = View.MeasureSpec.makeMeasureSpec(
+                    height + gap, View.MeasureSpec.EXACTLY,
+                )
+            }
+        }
         // WeChat also replaces row backgrounds after its click animation, outside adapter binding.
         // Keep our surface installed while remembering the host's latest background for restoration.
         View::class.reflekt().firstMethod {
@@ -201,23 +234,24 @@ object BeautifyConversationList : ClickableFeature() {
         val pinned = isPinned(conversation)
         val gapBefore = context.previousConversation?.let { isPinned(it) != pinned } == true
         val gapAfter = context.nextConversation?.let { isPinned(it) != pinned } == true
+        state.gapTop = if (gapBefore) island.islandGap else 0
         island.update(
             dark = row.context.isDarkMode,
             first = context.position == 0 || gapBefore,
             last = context.position == context.itemCount - 1 || gapAfter,
             gapBefore = gapBefore,
-            gapAfter = gapAfter,
             unread = unread,
             hideDivider = hideDividersEnabled,
         )
         replaceBackground(row, island.drawable)
         val inset = 12.dpToPx(row.context)
-        // ConversationFolderItemView fixes its own height. Only inset the horizontal content;
-        // leave host measurement, holder tags, child order and click handling intact.
+        // The background's inter-island gap occupies added row space, not the content's height.
+        // Recycled boundary rows reset both their padding and measurement compensation on bind.
         row.setPadding(
-            state.paddingLeft + inset, state.paddingTop,
+            state.paddingLeft + inset, state.paddingTop + state.gapTop,
             state.paddingRight + inset, state.paddingBottom,
         )
+        SwipeConversationOperations.refreshIslandShape(row)
 
         val content = row as ViewGroup
         for (index in 0 until content.childCount) {
@@ -277,10 +311,12 @@ object BeautifyConversationList : ClickableFeature() {
         val snapshots = backgrounds.entries.map { it.key to it.value.original }
         backgrounds.clear()
         snapshots.forEach { (view, background) -> view.background = background }
-        rows.forEach { (view, state) ->
-            view.setPadding(state.paddingLeft, state.paddingTop, state.paddingRight, state.paddingBottom)
-        }
+        val rowSnapshots = rows.entries.map { it.key to it.value }
         rows.clear()
+        rowSnapshots.forEach { (view, state) ->
+            view.setPadding(state.paddingLeft, state.paddingTop, state.paddingRight, state.paddingBottom)
+            SwipeConversationOperations.refreshIslandShape(view)
+        }
     }
 
     /** Pinned and ordinary conversations form separate islands in the visible adapter order. */
@@ -291,9 +327,10 @@ object BeautifyConversationList : ClickableFeature() {
         private val page = ColorDrawable()
         private val radius = 20.dpToPx(context).toFloat()
         private val horizontalInset = 12.dpToPx(context)
-        private val halfIslandGap = 4.dpToPx(context)
+        val islandGap = 8.dpToPx(context)
         private var hasGapBefore = false
-        private var hasGapAfter = false
+        var shape: IslandShape? = null
+            private set
         private val surfaceLayers = LayerDrawable(arrayOf(surface, divider)).apply {
             setLayerHeight(1, 1)
             setLayerGravity(1, Gravity.BOTTOM or Gravity.FILL_HORIZONTAL)
@@ -311,20 +348,19 @@ object BeautifyConversationList : ClickableFeature() {
             first: Boolean,
             last: Boolean,
             gapBefore: Boolean,
-            gapAfter: Boolean,
             unread: Boolean,
             hideDivider: Boolean,
         ) {
-            if (hasGapBefore != gapBefore || hasGapAfter != gapAfter) {
-                // Split the gap across the neighboring backgrounds, keeping the host's fixed
-                // row height and content padding. Rebinding a recycled row resets these insets.
+            shape = IslandShape(horizontalInset, if (gapBefore) islandGap else 0, radius, first, last)
+            if (hasGapBefore != gapBefore) {
+                // Put the full gap before the new island. The preceding pinned row keeps its
+                // native height, which WeChat also uses as the start of its collapse animation.
                 drawable.setDrawable(1, InsetDrawable(
                     ripple,
-                    horizontalInset, if (gapBefore) halfIslandGap else 0,
-                    horizontalInset, if (gapAfter) halfIslandGap else 0,
+                    horizontalInset, if (gapBefore) islandGap else 0,
+                    horizontalInset, 0,
                 ))
                 hasGapBefore = gapBefore
-                hasGapAfter = gapAfter
             }
             val top = if (first) radius else 0f
             val bottom = if (last) radius else 0f
