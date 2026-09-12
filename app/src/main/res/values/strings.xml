@@ -584,7 +584,7 @@
     <string name="feature_beautify_activity_transition_animation_name">Customize activity transitions</string>
     <string name="feature_beautify_activity_transition_animation_description">Replace some active transition animations with default transitions or element-level shared animations (not finished yet)</string>
     <string name="feature_beautify_conversation_list_name">Customize conversation list</string>
-    <string name="feature_beautify_conversation_list_description">Provides card layout, unread highlighting and divider settings for home page conversation list</string>
+    <string name="feature_beautify_conversation_list_description">Provides an island layout, linked capsule groups, unread highlighting and divider settings for the conversation list</string>
     <string name="feature_beautify_view_press_effect_name">Customize press effects</string>
     <string name="feature_beautify_view_press_effect_description">Replace the background of View with RippleDrawable (not finished yet)</string>
     <string name="feature_center_profile_card_name">Center profile card</string>
@@ -1335,10 +1335,6 @@
     <string name="conversation_grouping_tab_layout_title">Tab layout</string>
     <string name="conversation_grouping_pin_tabs">Pin group tabs</string>
     <string name="conversation_grouping_pin_tabs_description">Keep group tabs below the title bar when scrolling up</string>
-    <string name="conversation_grouping_tab_layout_content">Content width</string>
-    <string name="conversation_grouping_tab_layout_content_description">Center tabs when they fit; scroll horizontally when they overflow</string>
-    <string name="conversation_grouping_tab_layout_equal">Equal width</string>
-    <string name="conversation_grouping_tab_layout_equal_description">Distribute tabs evenly across the entire row</string>
     <string name="conversation_grouping_unread_title">Unread indicators</string>
     <string name="conversation_grouping_show_unread">Show unread</string>
     <string name="conversation_grouping_show_unread_description">Show unread counts and dots on group tabs</string>
@@ -2747,12 +2743,8 @@
     <string name="beautify_global_background_status_bar">Transparent status bar background</string>
     <string name="beautify_global_background_status_bar_summary">Make the status bar background transparent</string>
     <string name="beautify_conversation_list_title">Beautify conversation list</string>
-    <string name="beautify_conversation_preset">Card layout</string>
-    <string name="beautify_conversation_no_layout">Do not change card layout</string>
-    <string name="beautify_conversation_comfort_card">Comfortable cards</string>
-    <string name="beautify_conversation_pinned_grouped">Grouped pinned cards</string>
-    <string name="beautify_conversation_compact_rounded">Compact rounded</string>
-    <string name="beautify_conversation_minimal">Minimal list</string>
+    <string name="beautify_conversation_layout">Beautify layout</string>
+    <string name="beautify_conversation_layout_summary">Place pinned and other conversations in separate rounded islands, with floating capsule groups</string>
     <string name="beautify_conversation_highlight_unread">Highlight unread conversations</string>
     <string name="beautify_conversation_hide_dividers">Hide dividers</string>
     <string name="beautify_profile_card_title">Center profile card</string>

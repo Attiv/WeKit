@@ -9,6 +9,8 @@ import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import android.widget.ListView
 import dev.ujhhgtg.wekit.features.api.ui.WeConversationListViewApi
+import dev.ujhhgtg.wekit.features.items.beautify.BeautifyConversationList
+import dev.ujhhgtg.wekit.ui.utils.dpToPx
 import kotlin.math.abs
 
 /** One interactive tab bar, with a same-height header preserving the host's list geometry. */
@@ -16,6 +18,7 @@ class ConversationGroupTabsHost(
     private val conversationView: ViewGroup,
     content: View,
     private var pinned: Boolean,
+    private val onContentOverlapChanged: (Boolean) -> Unit = {},
 ) : FrameLayout(conversationView.context), ViewTreeObserver.OnPreDrawListener {
     private val spacer = View(context)
     private val header = FrameLayout(context).apply {
@@ -32,6 +35,8 @@ class ConversationGroupTabsHost(
     private val touchLocation = IntArray(2)
     private val visibleBounds = Rect()
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val capsuleVerticalInset = ConversationGrouping.CAPSULE_VERTICAL_INSET_DP.dpToPx(context)
+    private var contentOverlap = false
     private var downEvent: MotionEvent? = null
     private var horizontalGesture = false
     private var childOwnsGesture = false
@@ -55,6 +60,7 @@ class ConversationGroupTabsHost(
 
     fun setPinned(enabled: Boolean) {
         pinned = enabled
+        if (!enabled) updateContentOverlap(false)
         // This overlay may be INVISIBLE while unpinned; invalidate the visible list instead.
         conversationView.invalidate()
     }
@@ -70,6 +76,7 @@ class ConversationGroupTabsHost(
         downEvent?.recycle()
         downEvent = null
         forwardingScroll = false
+        updateContentOverlap(false)
         super.onDetachedFromWindow()
     }
 
@@ -127,10 +134,28 @@ class ConversationGroupTabsHost(
         clipBounds = visibleBounds
         alpha = actionBar.alpha
         visibility = VISIBLE
+        // The header reserves this overlay's full height. Its transparent bottom inset must
+        // scroll away before the visible capsule actually overlaps the conversations below.
+        val capsuleBottom = minOf(height - capsuleVerticalInset, clipBottom)
+        val overlapsConversations = if (headerAttached) {
+            top + capsuleBottom > headerTop + height
+        } else {
+            scrolledPastHeader
+        }
+        updateContentOverlap(
+            pinned && capsuleBottom > maxOf(capsuleVerticalInset, clipTop) && overlapsConversations,
+        )
         return true
     }
 
+    private fun updateContentOverlap(overlaps: Boolean) {
+        if (contentOverlap == overlaps) return
+        contentOverlap = overlaps
+        onContentOverlapChanged(overlaps)
+    }
+
     private fun hideTabs() {
+        updateContentOverlap(false)
         if (forwardingScroll) {
             // Keep the active touch target until UP/CANCEL, even when pulling the recent page
             // moves the tabs out of view. Changing visibility would cancel that native drag.
@@ -152,6 +177,18 @@ class ConversationGroupTabsHost(
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             if (!visibleBounds.contains(event.x.toInt(), event.y.toInt())) return false
+            if (BeautifyConversationList.isLayoutBeautificationEnabled) {
+                val left = ConversationGrouping.CAPSULE_HORIZONTAL_INSET_DP.dpToPx(context).toFloat()
+                val top = ConversationGrouping.CAPSULE_VERTICAL_INSET_DP.dpToPx(context).toFloat()
+                val right = width - left
+                val bottom = height - top
+                if (event.x < left || event.x > right || event.y < top || event.y > bottom) return false
+                val radius = minOf(right - left, bottom - top) / 2f
+                val dx = event.x - event.x.coerceIn(left + radius, right - radius)
+                val dy = event.y - event.y.coerceIn(top + radius, bottom - radius)
+                // The corners and outer margins are transparent: let the parent hit the list below.
+                if (dx * dx + dy * dy > radius * radius) return false
+            }
             downEvent?.recycle()
             downEvent = MotionEvent.obtain(event)
             horizontalGesture = false

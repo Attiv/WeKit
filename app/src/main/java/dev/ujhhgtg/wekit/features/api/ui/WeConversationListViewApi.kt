@@ -427,6 +427,29 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
 
     fun currentAdapter(): Any? = latestAdapter?.get()
 
+    fun currentContainer(): View? = latestContainer?.get()
+
+    /** Empty spacer footers, including RecyclerView's fixed footer before it is attached. */
+    fun emptyFooterViews(container: View): List<ViewGroup> {
+        val candidates = if (container is ListView) {
+            val adapter = container.adapter as? HeaderViewListAdapter ?: return emptyList()
+            val count = adapter.count
+            // These positions return stored FixedViewInfo views without binding conversation rows.
+            (count - adapter.footersCount until count).map { position ->
+                adapter.getView(position, null, container)
+            }
+        } else {
+            // ConversationRecyclerView creates and retains its empty footer in its constructor.
+            // Inspect only its own View fields; no adapter-position lookup or attach polling is needed.
+            container.reflekt().fields { type = View::class }.mapNotNull { it.get() as View? }
+        }
+        return candidates.mapNotNull { view ->
+            (view as? ViewGroup)?.takeIf {
+                it.childCount == 1 && it.getChildAt(0).javaClass == View::class.java
+            }
+        }
+    }
+
     fun hostView(mainUi: Any): View {
         if (classConversationListHost.isPlaceholder) {
             return mainUi.reflekt().firstField {

@@ -546,7 +546,7 @@
     <string name="feature_beautify_activity_transition_animation_name">美化活動過渡動畫</string>
     <string name="feature_beautify_activity_transition_animation_description">將部分活動過渡動畫替換爲默認過渡或元素級共享動畫 (沒做完)</string>
     <string name="feature_beautify_conversation_list_name">美化對話列表</string>
-    <string name="feature_beautify_conversation_list_description">爲主頁會話列表提供卡片佈局、未讀突出和分隔線設置</string>
+    <string name="feature_beautify_conversation_list_description">爲會話列表提供島式佈局、聯動膠囊分組、未讀突出和分隔線設置</string>
     <string name="feature_beautify_view_press_effect_name">美化組件按下效果</string>
     <string name="feature_beautify_view_press_effect_description">將 View 的背景替換爲 RippleDrawable (沒寫完)</string>
     <string name="feature_center_profile_card_name">資料卡居中</string>
@@ -1294,10 +1294,6 @@
     <string name="conversation_grouping_tab_layout_title">標籤佈局</string>
     <string name="conversation_grouping_pin_tabs">固定分組標籤</string>
     <string name="conversation_grouping_pin_tabs_description">向上捲動時將分組標籤固定在標題列下方</string>
-    <string name="conversation_grouping_tab_layout_content">內容寬度</string>
-    <string name="conversation_grouping_tab_layout_content_description">未佔滿時置中，超出一行時靠左並可橫向捲動</string>
-    <string name="conversation_grouping_tab_layout_equal">等寬鋪滿</string>
-    <string name="conversation_grouping_tab_layout_equal_description">所有標籤等寬分配，佔滿整行</string>
     <string name="conversation_grouping_unread_title">未讀提示</string>
     <string name="conversation_grouping_show_unread">顯示未讀</string>
     <string name="conversation_grouping_show_unread_description">在分組標籤上顯示未讀數字和紅點</string>
@@ -2781,12 +2777,8 @@
     <string name="beautify_global_background_status_bar">狀態欄背景透明</string>
     <string name="beautify_global_background_status_bar_summary">設置狀態欄背景爲透明</string>
     <string name="beautify_conversation_list_title">美化對話列表</string>
-    <string name="beautify_conversation_preset">卡片佈局</string>
-    <string name="beautify_conversation_no_layout">不修改卡片佈局</string>
-    <string name="beautify_conversation_comfort_card">舒適卡片</string>
-    <string name="beautify_conversation_pinned_grouped">置頂分組卡片</string>
-    <string name="beautify_conversation_compact_rounded">緊湊圓角</string>
-    <string name="beautify_conversation_minimal">簡潔列表</string>
+    <string name="beautify_conversation_layout">美化佈局</string>
+    <string name="beautify_conversation_layout_summary">置頂與非置頂會話分別顯示爲圓角島，並聯動浮動膠囊分組欄</string>
     <string name="beautify_conversation_highlight_unread">突出未讀會話</string>
     <string name="beautify_conversation_hide_dividers">隱藏分隔線</string>
     <string name="beautify_profile_card_title">資料卡居中</string>

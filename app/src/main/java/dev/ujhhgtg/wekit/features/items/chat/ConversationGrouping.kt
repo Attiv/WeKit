@@ -9,11 +9,15 @@ import android.widget.ListView
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -30,7 +34,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -42,7 +45,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryScrollableTabRow
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.TabIndicatorScope
+import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -58,8 +62,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.dropShadow
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.ComposeView
@@ -71,9 +79,12 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.LifecycleOwner
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Add
 import com.composables.icons.materialsymbols.outlined.Check
@@ -96,6 +107,7 @@ import dev.ujhhgtg.wekit.features.api.core.WeMessageApi.ConversationUnreadState
 import dev.ujhhgtg.wekit.features.api.ui.WeConversationListViewApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
+import dev.ujhhgtg.wekit.features.items.beautify.BeautifyConversationList
 import dev.ujhhgtg.wekit.features.items.contacts.HideContacts
 import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
 import dev.ujhhgtg.wekit.preferences.WePrefs
@@ -105,14 +117,15 @@ import dev.ujhhgtg.wekit.ui.content.ContactsSelector
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.IconButton
 import dev.ujhhgtg.wekit.ui.content.TextButton
-import dev.ujhhgtg.wekit.ui.content.m3.RadioButtonWidget
 import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.content.m3.SwitchWidget
+import dev.ujhhgtg.wekit.ui.content.rememberViewBackdrop
 import dev.ujhhgtg.wekit.ui.utils.LifecycleOwnerProvider
 import dev.ujhhgtg.wekit.ui.utils.setLifecycleOwner
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.ui.utils.theme.InjectedUiTheme
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.utils.android.baseActivity
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
@@ -124,6 +137,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.luckypray.dexkit.DexKitBridge
+import top.yukonga.miuix.kmp.blur.blur
+import top.yukonga.miuix.kmp.blur.drawBackdrop
+import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.util.Collections
@@ -144,6 +160,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     override val descriptionRes = R.string.feature_conversation_grouping_description
 
     const val GROUP_PREFIX = "wekit_group_"
+    // Shared with the native overlay's hit region so transparent margins pass through to the list.
+    const val CAPSULE_HORIZONTAL_INSET_DP = 12
+    const val CAPSULE_VERTICAL_INSET_DP = 6
 
     // The fixed "全部" tab. It behaves like a group for ordering purposes — it can be dragged to any
     // position and that position is persisted alongside the real groups. Only its name can be
@@ -152,15 +171,21 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     // remember where it sits.
     private const val ALL_TAB_ID = "${GROUP_PREFIX}all"
 
-    private var equalWidthTabs by WePrefs.prefOption("conversation_grouping_equal_width_tabs", false)
-    private val equalWidthTabsState by lazy { mutableStateOf(equalWidthTabs) }
     private var pinTabs by WePrefs.prefOption("conversation_grouping_pin_tabs", true)
     private var showUnread by WePrefs.prefOption("conversation_grouping_show_unread", true)
     private val showUnreadState by lazy { mutableStateOf(showUnread) }
     private var includeOfficialUnread by WePrefs.prefOption("conversation_grouping_include_official_unread", false)
     private val tabHosts = Collections.newSetFromMap(WeakHashMap<ConversationGroupTabsHost, Boolean>())
+    private val layoutBeautificationState by lazy {
+        mutableStateOf(BeautifyConversationList.isLayoutBeautificationEnabled)
+    }
 
     private val groupTabHorizontalPadding = 16.dp
+    private val selectionPillEasing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
+
+    fun refreshLayoutStyle() {
+        layoutBeautificationState.value = BeautifyConversationList.isLayoutBeautificationEnabled
+    }
 
     private fun isAllTab(id: String?): Boolean = id == ALL_TAB_ID
 
@@ -232,8 +257,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             val conversationHostView = WeConversationListViewApi.hostView(mainUi)
             if (conversationHostView is ListView) hookListViewFooterClicks(conversationHostView)
 
+            val contentOverlapState = mutableStateOf(false)
             val composeView = ComposeView(conversationHostView.context).apply {
-                val lifecycleOwner = LifecycleOwnerProvider.lifecycleOwner
+                val lifecycleOwner = LifecycleOwnerProvider.getOrCreate(conversationHostView.context.baseActivity!!)
                 setLifecycleOwner(lifecycleOwner)
 
                 val context = conversationHostView.context
@@ -249,6 +275,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                         var groups by groupsState
 
                         ConversationTabs(
+                            sourceView = conversationHostView,
+                            lifecycleOwner = lifecycleOwner,
+                            hasContentBehind = contentOverlapState.value,
                             groups = groups,
                             selectedGroupId = selectedGroupId,
                             onTabSelected = { groupId ->
@@ -307,7 +336,12 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                     }
                 }
             }
-            val tabHost = ConversationGroupTabsHost(conversationHostView as ViewGroup, composeView, pinTabs)
+            val tabHost = ConversationGroupTabsHost(
+                conversationHostView as ViewGroup,
+                composeView,
+                pinTabs,
+                onContentOverlapChanged = { contentOverlapState.value = it },
+            )
             tabHost.install(mainUi)
             tabHosts.add(tabHost)
         }
@@ -613,28 +647,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                         },
                                     )
                                 }
-                                item {
-                                    RadioButtonWidget(
-                                        title = stringResource(R.string.conversation_grouping_tab_layout_content),
-                                        description = stringResource(R.string.conversation_grouping_tab_layout_content_description),
-                                        selected = !equalWidthTabsState.value,
-                                        onClick = {
-                                            equalWidthTabs = false
-                                            equalWidthTabsState.value = false
-                                        },
-                                    )
-                                }
-                                item {
-                                    RadioButtonWidget(
-                                        title = stringResource(R.string.conversation_grouping_tab_layout_equal),
-                                        description = stringResource(R.string.conversation_grouping_tab_layout_equal_description),
-                                        selected = equalWidthTabsState.value,
-                                        onClick = {
-                                            equalWidthTabs = true
-                                            equalWidthTabsState.value = true
-                                        },
-                                    )
-                                }
                             }
                         }
                         item {
@@ -840,6 +852,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     @OptIn(ExperimentalFoundationApi::class)
     @Composable
     private fun ConversationTabs(
+        sourceView: View,
+        lifecycleOwner: LifecycleOwner,
+        hasContentBehind: Boolean,
         groups: List<ChatGroup>,
         selectedGroupId: String,
         onTabSelected: (String) -> Unit,
@@ -851,6 +866,32 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         containerColor: Color = if (isSystemInDarkTheme()) Color(0xFF111111) else Color(0xFFEDEDED),
     ) {
         val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
+        val capsuleStyle = layoutBeautificationState.value
+        val darkTheme = isSystemInDarkTheme()
+        val shadowProgress by animateFloatAsState(
+            targetValue = if (capsuleStyle && hasContentBehind) 1f else 0f,
+            animationSpec = tween(durationMillis = 180),
+            label = "groupIslandShadow",
+        )
+        val tabContainerColor = if (capsuleStyle) Color.Transparent else containerColor
+        // The native list is a sibling of this overlay, so its capture contains the conversations
+        // behind the bar without sampling the bar itself. Dispose the capture when layout styling is off.
+        val backdrop = if (capsuleStyle && isRuntimeShaderSupported()) {
+            rememberViewBackdrop(sourceView, lifecycleOwner)
+        } else null
+        val glassTint = if (darkTheme) Color(0xFF1C1C1E).copy(alpha = 0.55f)
+            else Color.White.copy(alpha = 0.58f)
+        val glassSurface = if (backdrop != null) {
+            Modifier.drawBackdrop(
+                backdrop = backdrop,
+                shape = { CircleShape },
+                effects = { blur(18.dp.toPx(), 18.dp.toPx()) },
+                onDrawSurface = { drawRect(glassTint) },
+            )
+        } else {
+            // Older Android releases retain translucency without requiring RuntimeShader.
+            Modifier.background(glassTint, CircleShape)
+        }
         var unreadCounts by remember { mutableStateOf<Map<String, ConversationUnreadState>>(emptyMap()) }
         val showUnreadEnabled = showUnreadState.value
         LaunchedEffect(groups, showUnreadEnabled) {
@@ -891,137 +932,176 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         Box(
             modifier = modifier
                 .fillMaxWidth()
-                .background(containerColor)
+                .then(
+                    if (capsuleStyle) {
+                        Modifier
+                            .padding(
+                                horizontal = CAPSULE_HORIZONTAL_INSET_DP.dp,
+                                vertical = CAPSULE_VERTICAL_INSET_DP.dp,
+                            )
+                            .then(
+                                if (backdrop != null) {
+                                    // Fit the soft and contact shadows inside the transparent margins.
+                                    Modifier
+                                        .dropShadow(
+                                            CircleShape,
+                                            Shadow(
+                                                radius = 4.dp,
+                                                offset = DpOffset(0.dp, 1.dp),
+                                                color = Color.Black,
+                                                alpha = (if (darkTheme) 0.32f else 0.16f) * shadowProgress,
+                                            ),
+                                        )
+                                        .dropShadow(
+                                            CircleShape,
+                                            Shadow(
+                                                radius = 1.dp,
+                                                offset = DpOffset(0.dp, 1.dp),
+                                                color = Color.Black,
+                                                alpha = (if (darkTheme) 0.16f else 0.08f) * shadowProgress,
+                                            ),
+                                        )
+                                } else {
+                                    // Platform elevation leaves the translucent interior clear when
+                                    // there is no captured backdrop to cover a filled shadow mask.
+                                    Modifier.shadow(4.dp * shadowProgress, CircleShape, clip = false)
+                                },
+                            )
+                            .clip(CircleShape)
+                            .then(glassSurface)
+                            .border(
+                                0.5.dp,
+                                Color.White.copy(alpha = if (darkTheme) 0.10f else 0.35f),
+                                CircleShape,
+                            )
+                            .padding(3.dp)
+                    } else {
+                        Modifier.background(containerColor)
+                    }
+                )
         ) {
             if (sortMode) {
                 SortableTabsRow(
                     groups = orderedGroups,
                     unreadCounts = unreadCounts,
                     selectedGroupId = selectedGroupId,
+                    capsuleStyle = capsuleStyle,
                     onMove = { from, to ->
                         order = order.toMutableList().apply { add(to, removeAt(from)) }
                     }
                 )
             } else {
-                val tabs: @Composable () -> Unit = {
-                    orderedGroups.forEach { group ->
-                        key(group.id) {
-                            val allTab = isAllTab(group.id)
-                            val label = groupDisplayName(group)
-                            Box {
-                                GroupTab(
-                                    label = label,
-                                    unread = unreadCounts[group.id] ?: noUnread,
-                                    selected = selectedGroupId == group.id,
-                                    onClick = { onTabSelected(group.id) },
-                                    onLongClick = { menuForGroupId = group.id }
-                                )
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val tabWidths = groupTabWidths(orderedGroups, maxWidth, capsuleStyle)
+                    val tabs: @Composable () -> Unit = {
+                        orderedGroups.forEachIndexed { index, group ->
+                            key(group.id) {
+                                val allTab = isAllTab(group.id)
+                                val label = groupDisplayName(group)
+                                Box(Modifier.width(tabWidths[index])) {
+                                    GroupTab(
+                                        label = label,
+                                        unread = unreadCounts[group.id] ?: noUnread,
+                                        selected = selectedGroupId == group.id,
+                                        capsuleStyle = capsuleStyle,
+                                        onClick = { onTabSelected(group.id) },
+                                        onLongClick = { menuForGroupId = group.id }
+                                    )
 
-                                DropdownMenu(
-                                    expanded = menuForGroupId == group.id,
-                                    onDismissRequest = { menuForGroupId = null }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.conversation_group_action_new)) },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = MaterialSymbols.Outlined.Add,
-                                                contentDescription = stringResource(R.string.conversation_group_new_description),
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        },
-                                        onClick = {
-                                            menuForGroupId = null
-                                            onCreateGroup()
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.conversation_group_action_edit)) },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = MaterialSymbols.Outlined.Edit,
-                                                contentDescription = stringResource(R.string.conversation_group_action_edit),
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        },
-                                        onClick = {
-                                            menuForGroupId = null
-                                            onEditGroup(group)
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.conversation_group_action_reorder)) },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = MaterialSymbols.Outlined.Swap_vert,
-                                                contentDescription = stringResource(R.string.conversation_group_action_reorder),
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        },
-                                        onClick = {
-                                            menuForGroupId = null
-                                            order = groups.map { it.id }
-                                            sortMode = true
-                                        }
-                                    )
-                                    if (!allTab) {
+                                    DropdownMenu(
+                                        expanded = menuForGroupId == group.id,
+                                        onDismissRequest = { menuForGroupId = null }
+                                    ) {
                                         DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.conversation_group_action_delete)) },
+                                            text = { Text(stringResource(R.string.conversation_group_action_new)) },
                                             leadingIcon = {
                                                 Icon(
-                                                    imageVector = MaterialSymbols.Outlined.Delete,
-                                                    contentDescription = stringResource(R.string.conversation_group_action_delete),
+                                                    imageVector = MaterialSymbols.Outlined.Add,
+                                                    contentDescription = stringResource(R.string.conversation_group_new_description),
                                                     modifier = Modifier.size(20.dp)
                                                 )
                                             },
                                             onClick = {
                                                 menuForGroupId = null
-                                                onDeleteGroup(group)
+                                                onCreateGroup()
                                             }
                                         )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.conversation_group_action_edit)) },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = MaterialSymbols.Outlined.Edit,
+                                                    contentDescription = stringResource(R.string.conversation_group_action_edit),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            },
+                                            onClick = {
+                                                menuForGroupId = null
+                                                onEditGroup(group)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.conversation_group_action_reorder)) },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = MaterialSymbols.Outlined.Swap_vert,
+                                                    contentDescription = stringResource(R.string.conversation_group_action_reorder),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            },
+                                            onClick = {
+                                                menuForGroupId = null
+                                                order = groups.map { it.id }
+                                                sortMode = true
+                                            }
+                                        )
+                                        if (!allTab) {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.conversation_group_action_delete)) },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        imageVector = MaterialSymbols.Outlined.Delete,
+                                                        contentDescription = stringResource(R.string.conversation_group_action_delete),
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                },
+                                                onClick = {
+                                                    menuForGroupId = null
+                                                    onDeleteGroup(group)
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
-                val selectedTabIndex = orderedGroups.indexOfFirst { it.id == selectedGroupId }
-                    .coerceAtLeast(0)
-                if (equalWidthTabsState.value) {
-                    PrimaryTabRow(
+                    val selectedTabIndex = orderedGroups.indexOfFirst { it.id == selectedGroupId }
+                        .coerceAtLeast(0)
+                    val indicator: @Composable TabIndicatorScope.() -> Unit = {
+                        if (capsuleStyle) {
+                            AnimatedGroupSelectionPill(tabWidths, selectedTabIndex)
+                        } else {
+                            TabRowDefaults.PrimaryIndicator(
+                                modifier = Modifier.tabIndicatorOffset(selectedTabIndex, matchContentSize = true),
+                                width = Dp.Unspecified,
+                            )
+                        }
+                    }
+                    // Plain tabs keep their natural width. Capsules use the assigned proportional
+                    // widths when they fit, and retain natural widths with scrolling when they overflow.
+                    PrimaryScrollableTabRow(
                         selectedTabIndex = selectedTabIndex,
-                        modifier = Modifier.fillMaxWidth(),
-                        containerColor = containerColor,
+                        containerColor = tabContainerColor,
+                        edgePadding = if (capsuleStyle) 0.dp else {
+                            ((maxWidth - tabWidths.fold(0.dp) { total, width -> total + width }) / 2)
+                                .coerceAtLeast(12.dp)
+                        },
+                        minTabWidth = 48.dp,
+                        indicator = indicator,
                         divider = {},
                         tabs = tabs,
                     )
-                } else {
-                    val textMeasurer = rememberTextMeasurer()
-                    val density = LocalDensity.current
-                    val textStyle = MaterialTheme.typography.titleSmall
-                    val tabsWidth = orderedGroups.fold(0.dp) { width, group ->
-                        val textWidth = textMeasurer.measure(
-                            text = groupDisplayName(group),
-                            style = textStyle,
-                            maxLines = 1,
-                            softWrap = false,
-                        ).size.width
-                        width + with(density) {
-                            (textWidth + groupTabHorizontalPadding.roundToPx() * 2)
-                                .coerceAtLeast(48.dp.roundToPx()).toDp()
-                        }
-                    }
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
-                        // Center short rows; retain only the edge inset once tabs overflow.
-                        PrimaryScrollableTabRow(
-                            selectedTabIndex = selectedTabIndex,
-                            containerColor = containerColor,
-                            edgePadding = ((maxWidth - tabsWidth) / 2).coerceAtLeast(12.dp),
-                            minTabWidth = 48.dp,
-                            divider = {},
-                            tabs = tabs,
-                        )
-                    }
                 }
             }
 
@@ -1031,10 +1111,11 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .padding(end = 12.dp)
-                        .background(containerColor, CircleShape)
+                        .padding(end = if (capsuleStyle) 0.dp else 12.dp)
+                        .background(if (capsuleStyle) glassTint else tabContainerColor, CircleShape)
                 ) {
                     IconButton(
+                        modifier = Modifier.size(if (capsuleStyle) 36.dp else 48.dp),
                         onClick = {
                             onReorder(order)
                             sortMode = false
@@ -1087,6 +1168,45 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private fun groupDisplayName(group: ChatGroup): String =
         localizedGroupName(LocalWeKitLocalizedContext.current, group)
 
+    /** Widths include the label and its existing side padding, which also houses the badge. */
+    @Composable
+    private fun groupTabWidths(
+        groups: List<ChatGroup>,
+        availableWidth: Dp,
+        capsuleStyle: Boolean,
+    ): List<Dp> {
+        val textMeasurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val textStyle = MaterialTheme.typography.titleSmall
+        val naturalWidths = groups.map { group ->
+            val textWidth = textMeasurer.measure(
+                text = groupDisplayName(group),
+                style = textStyle,
+                maxLines = 1,
+                softWrap = false,
+            ).size.width
+            with(density) {
+                (textWidth + groupTabHorizontalPadding.roundToPx() * 2)
+                    .coerceAtLeast(48.dp.roundToPx())
+            }
+        }
+        val totalWidth = naturalWidths.sum()
+        val availablePixels = with(density) { availableWidth.roundToPx() }
+        val expand = capsuleStyle && totalWidth in 1 until availablePixels
+        var contentEnd = 0L
+        var previousEnd = 0
+        return naturalWidths.map { width ->
+            // Cumulative pixel boundaries preserve the proportions and fill the row exactly,
+            // without rounding each tab into an extra sliver of horizontal scroll.
+            contentEnd += width
+            val end = if (expand) (contentEnd * availablePixels / totalWidth).toInt()
+                else contentEnd.toInt()
+            val assignedWidth = end - previousEnd
+            previousEnd = end
+            with(density) { assignedWidth.toDp() }
+        }
+    }
+
     /**
      * Long-press a tab to drag it into a new position. The working order is persisted only when
      * the check button is tapped.
@@ -1097,6 +1217,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         groups: List<ChatGroup>,
         unreadCounts: Map<String, ConversationUnreadState>,
         selectedGroupId: String,
+        capsuleStyle: Boolean,
         onMove: (from: Int, to: Int) -> Unit,
     ) {
         val listState = rememberLazyListState()
@@ -1126,7 +1247,10 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
 
         // Reserve space for the save button outside the scrolling and drag-hit-test area.
-        BoxWithConstraints(Modifier.fillMaxWidth().padding(end = 56.dp)) {
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().padding(end = if (capsuleStyle) 44.dp else 56.dp),
+        ) {
+            val tabWidths = groupTabWidths(groups, maxWidth, capsuleStyle)
             LazyRow(
                 state = listState,
                 // Keep normal horizontal scrolling while nothing is picked up, so an overflowing tab
@@ -1187,7 +1311,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             }
                         )
                     },
-                contentPadding = PaddingValues(horizontal = if (equalWidthTabsState.value) 0.dp else 12.dp),
+                contentPadding = PaddingValues(
+                    horizontal = if (capsuleStyle) 0.dp else 12.dp,
+                ),
                 horizontalArrangement = Arrangement.spacedBy(0.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1204,15 +1330,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                         ),
                         label = "dragScale",
                     )
-                    GroupTabContent(
-                        label = groupDisplayName(group),
-                        unread = unreadCounts[group.id] ?: noUnread,
-                        selected = selectedGroupId == group.id,
+                    Box(
                         modifier = Modifier
-                            .then(
-                                if (equalWidthTabsState.value) Modifier.width(maxWidth / groups.size)
-                                else Modifier.widthIn(min = 48.dp)
-                            )
+                            .width(tabWidths[index])
                             .zIndex(if (dragging || settling) 1f else 0f)
                             .graphicsLayer {
                                 translationX = when {
@@ -1224,7 +1344,20 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 scaleY = scale
                             }
                             .then(if (dragging || settling) Modifier else Modifier.animateItem()),
-                    )
+                    ) {
+                        // Sorting keeps the same active group. Its sole pill shares the keyed
+                        // item's drag, placement and settle transforms so they cannot drift apart.
+                        if (capsuleStyle && selectedGroupId == group.id) {
+                            GroupSelectionPill(Modifier.matchParentSize())
+                        }
+                        GroupTabContent(
+                            label = groupDisplayName(group),
+                            unread = unreadCounts[group.id] ?: noUnread,
+                            selected = selectedGroupId == group.id,
+                            capsuleStyle = capsuleStyle,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }
@@ -1248,12 +1381,49 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
     }
 
+    @Composable
+    private fun GroupSelectionPill(modifier: Modifier) {
+        Box(modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), CircleShape))
+    }
+
+    @Composable
+    private fun TabIndicatorScope.AnimatedGroupSelectionPill(widths: List<Dp>, selectedIndex: Int) {
+        val targetLeft = widths.take(selectedIndex).fold(0.dp) { left, width -> left + width }
+        val left = animateDpAsState(
+            targetValue = targetLeft,
+            animationSpec = tween(durationMillis = 320, easing = selectionPillEasing),
+            label = "groupSelectionLeft",
+        )
+        val width = animateDpAsState(
+            targetValue = widths[selectedIndex],
+            animationSpec = tween(durationMillis = 320, easing = selectionPillEasing),
+            label = "groupSelectionWidth",
+        )
+        GroupSelectionPill(
+            Modifier
+                .zIndex(-1f)
+                .tabIndicatorLayout { measurable, constraints, positions ->
+                    val animatedWidth = width.value.roundToPx()
+                    val pill = measurable.measure(
+                        constraints.copy(minWidth = animatedWidth, maxWidth = animatedWidth),
+                    )
+                    // Report the target tab width, not the animated width: ScrollableTabRow's
+                    // centering compensation must not shift the pill while its width animates.
+                    layout(positions[selectedIndex].width.roundToPx(), pill.height) {
+                        pill.placeRelative(left.value.roundToPx(), 0)
+                    }
+                }
+                .fillMaxHeight(),
+        )
+    }
+
     @OptIn(ExperimentalFoundationApi::class)
     @Composable
     private fun GroupTab(
         label: String,
         unread: ConversationUnreadState,
         selected: Boolean,
+        capsuleStyle: Boolean,
         onClick: () -> Unit,
         onLongClick: () -> Unit,
     ) {
@@ -1261,8 +1431,10 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             label = label,
             unread = unread,
             selected = selected,
+            capsuleStyle = capsuleStyle,
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (capsuleStyle) Modifier.clip(CircleShape) else Modifier)
                 .semantics { this.selected = selected }
                 .combinedClickable(
                     role = Role.Tab,
@@ -1277,12 +1449,16 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         label: String,
         unread: ConversationUnreadState,
         selected: Boolean,
+        capsuleStyle: Boolean,
         modifier: Modifier = Modifier,
     ) {
         Box(
             modifier = modifier
-                .heightIn(min = 48.dp)
-                .padding(horizontal = groupTabHorizontalPadding, vertical = 12.dp),
+                .heightIn(min = if (capsuleStyle) 36.dp else 48.dp)
+                .padding(
+                    horizontal = groupTabHorizontalPadding,
+                    vertical = if (capsuleStyle) 8.dp else 12.dp,
+                ),
             contentAlignment = Alignment.Center,
         ) {
             Layout(
