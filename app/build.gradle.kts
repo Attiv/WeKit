@@ -144,6 +144,7 @@ android {
             "**.bin",
             "kotlin-tooling-metadata.json",
             "META-INF/INDEX.LIST",
+            "META-INF/LICENSE.md",
             // Monet reads host resource tables with default framework loading disabled.
             "frameworks/android/**",
             // Monet signs with RSA; Picnic's post-quantum lookup tables are unused.
@@ -188,6 +189,7 @@ androidComponents {
         val generateZygiskResources = tasks.register<GenerateZygiskResourcesTask>(
             "generate${variant.name.replaceFirstChar { it.uppercase() }}ZygiskResources"
         ) {
+            description = "Generate Zygisk module Resources"
             templateDir.set(rootProject.layout.projectDirectory.dir("wekit-zygisk/template"))
             versionCode.set(variant.outputs.single().versionCode)
             versionName.set(variant.outputs.single().versionName)
@@ -264,6 +266,7 @@ val arsclibSource = configurations.create("arsclibSource") {
 // program classes, even AttributeSet::class in host constructor queries gets
 // rewritten to the bundled (obfuscated) copy and no longer matches Android.
 val prepareAndroidArsclib = tasks.register<Jar>("prepareAndroidArsclib") {
+    description = "Prepare Android ARSCLib"
     from(provider { arsclibSource.map { zipTree(it) } })
     exclude("android/**", "org/xmlpull/v1/**")
     archiveFileName.set("arsclib-android.jar")
