@@ -584,7 +584,7 @@
     <string name="feature_beautify_activity_transition_animation_name">Customize activity transitions</string>
     <string name="feature_beautify_activity_transition_animation_description">Replace some active transition animations with default transitions or element-level shared animations (not finished yet)</string>
     <string name="feature_beautify_conversation_list_name">Customize conversation list</string>
-    <string name="feature_beautify_conversation_list_description">Provides an island layout, linked capsule groups, unread highlighting and divider settings for the conversation list</string>
+    <string name="feature_beautify_conversation_list_description">Provides an island layout, unread highlighting and divider settings for the conversation list</string>
     <string name="feature_beautify_view_press_effect_name">Customize press effects</string>
     <string name="feature_beautify_view_press_effect_description">Replace the background of View with RippleDrawable (not finished yet)</string>
     <string name="feature_center_profile_card_name">Center profile card</string>
@@ -1333,6 +1333,11 @@
     <string name="conversation_group_sql_help" formatted="false">Data sources: rcontact r, img_flag i, rconversation c\nExample: c.unReadCount &gt; 0 AND r.username LIKE \'%@chatroom\'</string>
     <string name="conversation_group_saved">Saved</string>
     <string name="conversation_grouping_tab_layout_title">Tab layout</string>
+    <string name="conversation_grouping_tab_style_full_width">Full-width tab bar</string>
+    <string name="conversation_grouping_tab_style_floating">Floating island</string>
+    <string name="conversation_grouping_floating_recommend_title">Try a floating island</string>
+    <string name="conversation_grouping_floating_recommend_message">Conversation list beautification is now enabled. We recommend a floating island for the group tabs to match. Switch now?</string>
+    <string name="conversation_grouping_floating_recommend_confirm">Switch to floating island</string>
     <string name="conversation_grouping_pin_tabs">Pin group tabs</string>
     <string name="conversation_grouping_pin_tabs_description">Keep group tabs below the title bar when scrolling up</string>
     <string name="conversation_grouping_take_over_horizontal_scroll">Take over horizontal swiping</string>
@@ -2749,7 +2754,7 @@
     <string name="beautify_global_background_status_bar_summary">Make the status bar background transparent</string>
     <string name="beautify_conversation_list_title">Beautify conversation list</string>
     <string name="beautify_conversation_layout">Beautify layout</string>
-    <string name="beautify_conversation_layout_summary">Place pinned and other conversations in separate rounded islands, with floating capsule groups</string>
+    <string name="beautify_conversation_layout_summary">Place pinned and other conversations in separate rounded islands</string>
     <string name="beautify_conversation_highlight_unread">Highlight unread conversations</string>
     <string name="beautify_conversation_hide_dividers">Hide dividers</string>
     <string name="beautify_profile_card_title">Center profile card</string>

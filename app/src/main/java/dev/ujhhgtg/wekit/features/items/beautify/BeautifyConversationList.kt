@@ -54,9 +54,9 @@ object BeautifyConversationList : ClickableFeature() {
     private const val TAG = "BeautifyConversationList"
     private const val PLACED_TOP_BIT = 0x4000000000000000L
 
-    private var layoutEnabled by prefOption("beautify_conversation_list_layout_enabled", false)
+    private var layoutEnabled by prefOption("beautify_conversation_list_layout_enabled", true)
     private var highlightUnreadEnabled by prefOption("beautify_conversation_list_highlight_unread", false)
-    private var hideDividersEnabled by prefOption("beautify_conversation_list_hide_dividers", false)
+    private var hideDividersEnabled by prefOption("beautify_conversation_list_hide_dividers", true)
 
     val isLayoutBeautificationEnabled: Boolean
         get() = isEnabled && layoutEnabled
@@ -142,8 +142,12 @@ object BeautifyConversationList : ClickableFeature() {
         runOnUiThread {
             restoreAppearance()
             WeConversationListViewApi.removeDividerOwner(this)
-            ConversationGrouping.refreshLayoutStyle()
         }
+    }
+
+    override fun onBeforeToggle(newState: Boolean, context: Context): Boolean {
+        if (newState && layoutEnabled) ConversationGrouping.showFloatingTabsRecommendation(context)
+        return true
     }
 
     override fun onClick(context: ComponentActivity) {
@@ -165,6 +169,7 @@ object BeautifyConversationList : ClickableFeature() {
                                     layout = it
                                     layoutEnabled = it
                                     refreshAppearance()
+                                    if (it && isEnabled) ConversationGrouping.showFloatingTabsRecommendation(context)
                                 },
                             )
                         }
@@ -207,7 +212,6 @@ object BeautifyConversationList : ClickableFeature() {
             WeConversationListViewApi.setDividerHidden(
                 this, isEnabled && (layoutEnabled || hideDividersEnabled),
             )
-            ConversationGrouping.refreshLayoutStyle()
         }
     }
 

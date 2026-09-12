@@ -9,7 +9,6 @@ import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import android.widget.ListView
 import dev.ujhhgtg.wekit.features.api.ui.WeConversationListViewApi
-import dev.ujhhgtg.wekit.features.items.beautify.BeautifyConversationList
 import dev.ujhhgtg.wekit.ui.utils.dpToPx
 import kotlin.math.abs
 
@@ -186,7 +185,7 @@ class ConversationGroupTabsHost(
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             if (!visibleBounds.contains(event.x.toInt(), event.y.toInt())) return false
-            if (BeautifyConversationList.isLayoutBeautificationEnabled) {
+            if (ConversationGrouping.usesFloatingTabs) {
                 val left = ConversationGrouping.CAPSULE_HORIZONTAL_INSET_DP.dpToPx(context).toFloat()
                 val top = ConversationGrouping.CAPSULE_VERTICAL_INSET_DP.dpToPx(context).toFloat()
                 val right = width - left

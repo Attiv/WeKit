@@ -116,7 +116,6 @@ import dev.ujhhgtg.wekit.features.api.core.WeMessageApi.ConversationUnreadState
 import dev.ujhhgtg.wekit.features.api.ui.WeConversationListViewApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
-import dev.ujhhgtg.wekit.features.items.beautify.BeautifyConversationList
 import dev.ujhhgtg.wekit.features.items.beautify.home_screen_panel.HomeSidePanel
 import dev.ujhhgtg.wekit.features.items.contacts.HideContacts
 import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
@@ -128,6 +127,7 @@ import dev.ujhhgtg.wekit.ui.content.ContactsSelector
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.IconButton
 import dev.ujhhgtg.wekit.ui.content.TextButton
+import dev.ujhhgtg.wekit.ui.content.m3.RadioButtonWidget
 import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.content.m3.SwitchWidget
 import dev.ujhhgtg.wekit.ui.content.rememberViewBackdrop
@@ -184,7 +184,12 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     // ordinary ChatGroup entry (identified solely by this id) so the list order is enough to
     // remember where it sits.
     private const val ALL_TAB_ID = "${GROUP_PREFIX}all"
+    private const val TAB_STYLE_KEY = "conversation_grouping_tab_style"
+    private const val TAB_STYLE_FULL_WIDTH = 0
+    private const val TAB_STYLE_FLOATING = 1
 
+    private var tabStyle by WePrefs.prefOption(TAB_STYLE_KEY, TAB_STYLE_FULL_WIDTH)
+    private val tabStyleState by lazy { mutableStateOf(tabStyle) }
     private var pinTabs by WePrefs.prefOption("conversation_grouping_pin_tabs", true)
     private var takeOverHorizontalScroll by WePrefs.prefOption("conversation_grouping_take_over_horizontal_scroll", true)
     private var rememberScrollState by WePrefs.prefOption("conversation_grouping_remember_scroll_state", false)
@@ -194,15 +199,46 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private val showUnreadState by lazy { mutableStateOf(showUnread) }
     private var includeOfficialUnread by WePrefs.prefOption("conversation_grouping_include_official_unread", false)
     private val tabHosts = Collections.newSetFromMap(WeakHashMap<ConversationGroupTabsHost, Boolean>())
-    private val layoutBeautificationState by lazy {
-        mutableStateOf(BeautifyConversationList.isLayoutBeautificationEnabled)
-    }
 
     private val groupTabHorizontalPadding = 16.dp
     private val selectionPillEasing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
 
-    fun refreshLayoutStyle() {
-        layoutBeautificationState.value = BeautifyConversationList.isLayoutBeautificationEnabled
+    val usesFloatingTabs: Boolean
+        get() = tabStyleState.value == TAB_STYLE_FLOATING
+
+    /** Called once at startup, before any feature UI can change the old beauty preference. */
+    fun migrateTabStyle(legacyFloatingTabs: Boolean) {
+        if (WePrefs.containsKey(TAB_STYLE_KEY)) return
+        // Persist the full-width result too: future beauty toggles must never repeat migration.
+        updateTabStyle(if (legacyFloatingTabs) TAB_STYLE_FLOATING else TAB_STYLE_FULL_WIDTH)
+    }
+
+    private fun updateTabStyle(style: Int) {
+        if (WePrefs.containsKey(TAB_STYLE_KEY) && tabStyle == style) return
+        swipeSessions.values.mapNotNull { it.get() }.forEach { it.cancelImmediately() }
+        tabStyle = style
+        tabStyleState.value = style
+    }
+
+    fun showFloatingTabsRecommendation(context: Context) {
+        if (!isEnabled || usesFloatingTabs) return
+        showComposeDialog(context) {
+            AlertDialogContent(
+                title = { Text(stringResource(R.string.conversation_grouping_floating_recommend_title)) },
+                text = { Text(stringResource(R.string.conversation_grouping_floating_recommend_message)) },
+                confirmButton = {
+                    Button(onClick = {
+                        updateTabStyle(TAB_STYLE_FLOATING)
+                        onDismiss()
+                    }) {
+                        Text(stringResource(R.string.conversation_grouping_floating_recommend_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_cancel)) }
+                },
+            )
+        }
     }
 
     private fun isAllTab(id: String?): Boolean = id == ALL_TAB_ID
@@ -880,6 +916,20 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 titlePadding = PaddingValues(start = 16.dp, top = 8.dp, bottom = 8.dp),
                             ) {
                                 item {
+                                    RadioButtonWidget(
+                                        title = stringResource(R.string.conversation_grouping_tab_style_full_width),
+                                        selected = tabStyleState.value == TAB_STYLE_FULL_WIDTH,
+                                        onSelect = { updateTabStyle(TAB_STYLE_FULL_WIDTH) },
+                                    )
+                                }
+                                item {
+                                    RadioButtonWidget(
+                                        title = stringResource(R.string.conversation_grouping_tab_style_floating),
+                                        selected = tabStyleState.value == TAB_STYLE_FLOATING,
+                                        onSelect = { updateTabStyle(TAB_STYLE_FLOATING) },
+                                    )
+                                }
+                                item {
                                     SwitchWidget(
                                         title = stringResource(R.string.conversation_grouping_pin_tabs),
                                         description = stringResource(R.string.conversation_grouping_pin_tabs_description),
@@ -1265,7 +1315,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         containerColor: Color = if (isSystemInDarkTheme()) Color(0xFF111111) else Color(0xFFEDEDED),
     ) {
         val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
-        val capsuleStyle = layoutBeautificationState.value
+        val capsuleStyle = usesFloatingTabs
         val darkTheme = isSystemInDarkTheme()
         val shadowProgress by animateFloatAsState(
             targetValue = if (capsuleStyle && hasContentBehind) 1f else 0f,
@@ -1274,7 +1324,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         )
         val tabContainerColor = if (capsuleStyle) Color.Transparent else containerColor
         // The native list is a sibling of this overlay, so its capture contains the conversations
-        // behind the bar without sampling the bar itself. Dispose the capture when layout styling is off.
+        // behind the bar without sampling the bar itself. Full-width tabs need no backdrop capture.
         val backdrop = if (capsuleStyle && isRuntimeShaderSupported()) {
             rememberViewBackdrop(sourceView, lifecycleOwner)
         } else null

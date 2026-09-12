@@ -548,7 +548,7 @@
     <string name="feature_beautify_activity_transition_animation_name">美化活动过渡动画</string>
     <string name="feature_beautify_activity_transition_animation_description">将部分活动过渡动画替换为默认过渡或元素级共享动画 (没做完)</string>
     <string name="feature_beautify_conversation_list_name">美化对话列表</string>
-    <string name="feature_beautify_conversation_list_description">为会话列表提供岛式布局、联动胶囊分组、未读突出和分隔线设置</string>
+    <string name="feature_beautify_conversation_list_description">为会话列表提供岛式布局、未读突出和分隔线设置</string>
     <string name="feature_beautify_view_press_effect_name">美化组件按下效果</string>
     <string name="feature_beautify_view_press_effect_description">将 View 的背景替换为 RippleDrawable (没写完)</string>
     <string name="feature_center_profile_card_name">资料卡居中</string>
@@ -1295,6 +1295,11 @@
     <string name="conversation_group_sql_help" formatted="false">数据源自 rcontact r、img_flag i、rconversation c\n示例：c.unReadCount &gt; 0 AND r.username LIKE \'%@chatroom\'</string>
     <string name="conversation_group_saved">已保存</string>
     <string name="conversation_grouping_tab_layout_title">标签布局</string>
+    <string name="conversation_grouping_tab_style_full_width">全宽度标签栏</string>
+    <string name="conversation_grouping_tab_style_floating">浮动岛</string>
+    <string name="conversation_grouping_floating_recommend_title">推荐使用浮动岛</string>
+    <string name="conversation_grouping_floating_recommend_message">已开启对话列表的美化布局，推荐将对话分组的标签样式切换为浮动岛，与列表更协调。是否切换？</string>
+    <string name="conversation_grouping_floating_recommend_confirm">切换到浮动岛</string>
     <string name="conversation_grouping_pin_tabs">固定分组标签</string>
     <string name="conversation_grouping_pin_tabs_description">向上滚动时将分组标签固定在标题栏下方</string>
     <string name="conversation_grouping_take_over_horizontal_scroll">接管横向滑动</string>
@@ -2794,7 +2799,7 @@
     <string name="beautify_global_background_status_bar_summary">设置状态栏背景为透明</string>
     <string name="beautify_conversation_list_title">美化对话列表</string>
     <string name="beautify_conversation_layout">美化布局</string>
-    <string name="beautify_conversation_layout_summary">置顶与非置顶会话分别显示为圆角岛，并联动浮动胶囊分组栏</string>
+    <string name="beautify_conversation_layout_summary">置顶与非置顶会话分别显示为圆角岛</string>
     <string name="beautify_conversation_highlight_unread">突出未读会话</string>
     <string name="beautify_conversation_hide_dividers">隐藏分隔线</string>
     <string name="beautify_profile_card_title">资料卡居中</string>
