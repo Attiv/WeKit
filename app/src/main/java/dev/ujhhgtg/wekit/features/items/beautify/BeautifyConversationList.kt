@@ -21,8 +21,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import dev.ujhhgtg.reflekt.reflekt
+import androidx.core.graphics.drawable.toDrawable
 import dev.ujhhgtg.reflekt.reflected.ReflectedField
+import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.features.api.ui.WeConversationListViewApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
@@ -187,7 +188,7 @@ object BeautifyConversationList : ClickableFeature() {
             if (unread) {
                 val previous = backgrounds[row]
                 val original = if (previous != null) previous.original else row.background
-                val highlight = ColorDrawable(if (row.context.isDarkMode) 0x243CB371 else 0x143CB371)
+                val highlight = (if (row.context.isDarkMode) 0x243CB371 else 0x143CB371).toDrawable()
                 replaceBackground(row, LayerDrawable(arrayOf(original ?: ColorDrawable(), highlight)))
             } else {
                 restoreBackground(row)
@@ -221,13 +222,13 @@ object BeautifyConversationList : ClickableFeature() {
         val content = row as ViewGroup
         for (index in 0 until content.childCount) {
             val child = content.getChildAt(index)
-            if (child.background != null) replaceBackground(child, ColorDrawable(Color.TRANSPARENT))
+            if (child.background != null) replaceBackground(child, Color.TRANSPARENT.toDrawable())
         }
         // The folded-pinned banner has a second background behind its label and arrow.
         val foldedBanner = content.getChildAt(1) as? ViewGroup
         val foldedLabel = foldedBanner?.getChildAt(1)
         if (foldedLabel?.background != null) {
-            replaceBackground(foldedLabel, ColorDrawable(Color.TRANSPARENT))
+            replaceBackground(foldedLabel, Color.TRANSPARENT.toDrawable())
         }
 
         val container = WeConversationListViewApi.currentContainer() ?: return
@@ -247,7 +248,7 @@ object BeautifyConversationList : ClickableFeature() {
                 // View.setBackgroundColor mutates a bare ColorDrawable in place. A one-layer
                 // wrapper routes host recoloring through our existing background hook instead,
                 // keeping the filler styled without polling or another global hook.
-                replaceBackground(view, LayerDrawable(arrayOf(ColorDrawable(color))))
+                replaceBackground(view, LayerDrawable(arrayOf(color.toDrawable())))
             } else {
                 (applied.getDrawable(0) as ColorDrawable).color = color
             }
@@ -355,7 +356,7 @@ object BeautifyConversationList : ClickableFeature() {
             } as ReflectedField<Any>)
         }
         // Read the bound model every time so pin/unpin updates need no storage query or cache reset.
-        return (field.get(conversation) as Long) and PLACED_TOP_BIT != 0L
+        return field.get(conversation) as Long and PLACED_TOP_BIT != 0L
     }
 
     private fun isUnread(conversation: Any): Boolean {
