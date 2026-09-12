@@ -1,5 +1,6 @@
 @file:Suppress("AvoidDuplicateDependencies")
 
+import com.android.build.api.variant.BuildConfigField
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
@@ -13,19 +14,18 @@ plugins {
     alias(libs.plugins.aboutlibraries.android)
 }
 
-fun getCommitCount(): Int {
-    return providers.exec {
-        commandLine("git", "rev-list", "--count", "HEAD")
-    }.standardOutput.asText.get().trim().toInt()
-}
+// Keep Git values lazy: reading them during configuration invalidates the configuration cache
+// on every commit. Wire these providers into variant/task inputs instead.
+val commitCount = providers.exec {
+    workingDir(rootProject.layout.projectDirectory)
+    commandLine("git", "rev-list", "--count", "HEAD")
+}.standardOutput.asText.map { it.trim().toInt() }
 
-fun getGitHash(): String {
-    // fixed width: bare --short widens as history grows and varies across git versions, which would
-    // make versionName disagree with the hash xtask bakes into module.prop and the Zygisk zip name
-    return providers.exec {
-        commandLine("git", "rev-parse", "--short=8", "HEAD")
-    }.standardOutput.asText.get().trim()
-}
+// Keep the same short-hash width as xtask's module metadata.
+val gitHash = providers.exec {
+    workingDir(rootProject.layout.projectDirectory)
+    commandLine("git", "rev-parse", "--short=8", "HEAD")
+}.standardOutput.asText.map { it.trim() }
 
 android {
     namespace = libs.versions.namespace.get()
@@ -36,22 +36,16 @@ android {
     }
     ndkVersion = libs.versions.ndk.get()
 
-    val commitCount = getCommitCount()
-    val gitHash = getGitHash()
-
     defaultConfig {
         applicationId = libs.versions.namespace.get()
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = commitCount
-        versionName = "git+$gitHash"
 
         ndk {
             // noinspection ChromeOsAbiSupport
             abiFilters += "arm64-v8a"
         }
 
-        buildConfigField("String", "COMMIT_HASH", "\"${gitHash}\"")
         buildConfigField("String", "TAG", "\"WeKit\"")
         buildConfigField("long", "BUILD_TIMESTAMP", "${System.currentTimeMillis()}L")
     }
@@ -186,6 +180,14 @@ tasks.withType<KotlinCompile> {
 val adbProvider = androidComponents.sdkComponents.adb
 androidComponents {
     onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(commitCount)
+            output.versionName.set(gitHash.map { "git+$it" })
+        }
+        variant.buildConfigFields!!.put("COMMIT_HASH", gitHash.map {
+            BuildConfigField("String", "\"$it\"", null)
+        })
+
         val generateZygiskResources = tasks.register<GenerateZygiskResourcesTask>(
             "generate${variant.name.replaceFirstChar { it.uppercase() }}ZygiskResources"
         ) {
@@ -248,7 +250,7 @@ val generateNewFeatures = tasks.register<GenerateNewFeaturesTask>("generateNewFe
     outputDir.set(layout.buildDirectory.dir("generated/source/newfeatures"))
     namespace.set(libs.versions.namespace.get())
     windowDays.set(30)
-    gitHead.set(getGitHash())
+    gitHead.set(gitHash)
 }
 
 val scriptDeps = configurations.create("scriptDeps") {
