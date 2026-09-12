@@ -81,10 +81,7 @@ fun AgentSettingsScaffold(
                 title = title,
                 navigationIcon = {
                     if (onBack != null) {
-                        Row {
-                            ExpressiveBackButton(onClick = onBack)
-                            Spacer(modifier = Modifier.size(16.dp))
-                        }
+                        ExpressiveBackButton(onClick = onBack)
                     }
                 },
                 actions = actions,
