@@ -77,11 +77,11 @@ import dev.ujhhgtg.wekit.features.items.scripting_python.runtime.PythonRuntimeLo
 import dev.ujhhgtg.wekit.i18n.LocaleResourceMode
 import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
 import dev.ujhhgtg.wekit.i18n.WeKitLocaleProvider
-import dev.ujhhgtg.wekit.ui.agent.settings.AgentActionRow
-import dev.ujhhgtg.wekit.ui.agent.settings.AgentConfirmDialog
-import dev.ujhhgtg.wekit.ui.agent.settings.AgentListActionButton
-import dev.ujhhgtg.wekit.ui.agent.settings.AgentSettingsScaffold
-import dev.ujhhgtg.wekit.ui.agent.settings.rememberCreationBackGuard
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsActionRow
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsConfirmDialog
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsListActionButton
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsScaffold
+import dev.ujhhgtg.wekit.ui.content.m3.rememberCreationBackGuard
 import dev.ujhhgtg.wekit.ui.animation.predictiveback.weKitNavTransition
 import dev.ujhhgtg.wekit.ui.content.m3.ExpressiveBackButton
 import dev.ujhhgtg.wekit.ui.content.m3.BaseWidget
@@ -220,7 +220,7 @@ private fun PythonHomeScreen(
         }
     }
 
-    AgentSettingsScaffold(stringResource(R.string.python_scripts_title), onBack) {
+    SettingsScaffold(stringResource(R.string.python_scripts_title), onBack) {
         item {
             SegmentedColumn(title = stringResource(R.string.python_runtime_section)) {
                 item {
@@ -292,7 +292,7 @@ private fun PythonHomeScreen(
             }
         }
     }
-    AgentConfirmDialog(
+    SettingsConfirmDialog(
         show = pendingTrustPlugin != null,
         title = stringResource(R.string.python_security_warning_title),
         message = stringResource(R.string.python_security_warning),
@@ -300,7 +300,7 @@ private fun PythonHomeScreen(
         dismissLabel = stringResource(R.string.dialog_cancel),
         destructive = true,
         onConfirm = {
-            val enabledPluginId = pendingTrustPlugin ?: return@AgentConfirmDialog
+            val enabledPluginId = pendingTrustPlugin ?: return@SettingsConfirmDialog
             pendingTrustPlugin = null
             PythonPluginManager.acceptTrustWarning()
             coroutineScope.launch(Dispatchers.IO) {
@@ -310,7 +310,7 @@ private fun PythonHomeScreen(
         onDismiss = { pendingTrustPlugin = null },
     )
     // 导入的 zip 携带任意代码，无论之前是否接受过警告，每次导入都要重新确认。
-    AgentConfirmDialog(
+    SettingsConfirmDialog(
         show = showImportWarning,
         title = stringResource(R.string.python_security_warning_title),
         message = stringResource(R.string.python_security_warning),
@@ -365,7 +365,7 @@ private fun PythonPluginInfoScreen(pluginId: String?, onBack: () -> Unit) {
         }
     }
 
-    AgentSettingsScaffold(
+    SettingsScaffold(
         title = if (creating) stringResource(R.string.python_new_plugin) else manifest?.name ?: pluginId.orEmpty(),
         onBack = guardedBack,
     ) {
@@ -474,8 +474,8 @@ private fun PythonPluginInfoScreen(pluginId: String?, onBack: () -> Unit) {
         }
         if (creating) {
             item {
-                AgentActionRow {
-                    AgentListActionButton(
+                SettingsActionRow {
+                    SettingsListActionButton(
                         label = stringResource(R.string.action_save),
                         icon = MaterialSymbols.Outlined.Save,
                         loading = saving,
@@ -556,7 +556,7 @@ private fun PythonDetailScreen(
         record.status == PythonPluginStatus.UNLOADING
     // 基本信息写入 plugin.json,插件运行中禁止编辑;开关本身保持可用以便停用。
     val infoEditable = !inFlight && record.status != PythonPluginStatus.ACTIVE
-    AgentSettingsScaffold(record.manifest?.name ?: pluginId, onBack) {
+    SettingsScaffold(record.manifest?.name ?: pluginId, onBack) {
         item {
             SegmentedColumn(title = stringResource(R.string.python_plugin_info_section)) {
                 item {
@@ -666,7 +666,7 @@ private fun PythonDetailScreen(
             }
         }
     }
-    AgentConfirmDialog(
+    SettingsConfirmDialog(
         show = confirmClear,
         title = stringResource(R.string.python_clear_data),
         message = stringResource(R.string.python_clear_data_confirm),
@@ -681,7 +681,7 @@ private fun PythonDetailScreen(
         },
         onDismiss = { confirmClear = false },
     )
-    AgentConfirmDialog(
+    SettingsConfirmDialog(
         show = confirmDelete,
         title = stringResource(R.string.python_delete_plugin),
         message = stringResource(R.string.python_delete_plugin_confirm),
@@ -707,7 +707,7 @@ private fun PythonDetailScreen(
         },
         onDismiss = { confirmDelete = false },
     )
-    AgentConfirmDialog(
+    SettingsConfirmDialog(
         show = pendingTrustPlugin != null,
         title = stringResource(R.string.python_security_warning_title),
         message = stringResource(R.string.python_security_warning),
@@ -887,7 +887,7 @@ private fun PythonDiagnosticsScreen(pluginId: String, onBack: () -> Unit) {
         }
     }
     val copiedText = stringResource(R.string.copied_to_clipboard)
-    AgentSettingsScaffold(
+    SettingsScaffold(
         title = stringResource(R.string.python_diagnostics_title),
         onBack = onBack,
         actions = {

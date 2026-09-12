@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Delete
 import com.composables.icons.materialsymbols.outlined.Play_arrow
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsConfirmDialog
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsScaffold
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
 import dev.ujhhgtg.wekit.agent.data.entity.LinuxEnvironmentEntity
@@ -100,7 +102,7 @@ fun LinuxEnvironmentDetailScreen(environmentId: String?, onBack: () -> Unit) {
         }
     }
 
-    AgentSettingsScaffold(
+    SettingsScaffold(
         title = stringResource(if (environmentId == null) R.string.agent_linux_environment_add else R.string.agent_linux_environment_detail),
         onBack = onBack,
     ) {
@@ -235,7 +237,7 @@ fun LinuxEnvironmentDetailScreen(environmentId: String?, onBack: () -> Unit) {
         }
     }
     error?.let { message -> AlertDialog(onDismissRequest = { error = null }, title = { Text(stringResource(R.string.agent_linux_environment_error)) }, text = { Text(message) }, confirmButton = { TextButton(onClick = { error = null }) { Text(stringResource(android.R.string.ok)) } }) }
-    if (showDelete) AgentConfirmDialog(
+    if (showDelete) SettingsConfirmDialog(
         true,
         stringResource(R.string.action_delete),
         stringResource(R.string.agent_linux_environment_delete_confirm),
@@ -244,7 +246,7 @@ fun LinuxEnvironmentDetailScreen(environmentId: String?, onBack: () -> Unit) {
         destructive = true,
         loading = operation == EnvironmentOperation.DELETE,
         onConfirm = {
-            if (busy) return@AgentConfirmDialog
+            if (busy) return@SettingsConfirmDialog
             operation = EnvironmentOperation.DELETE
             status = null
             scope.launch {
@@ -257,7 +259,7 @@ fun LinuxEnvironmentDetailScreen(environmentId: String?, onBack: () -> Unit) {
         onDismiss = { if (!busy) showDelete = false },
     )
     pendingHostKey?.let { hostKeyError ->
-        AgentConfirmDialog(
+        SettingsConfirmDialog(
             true,
             stringResource(R.string.agent_linux_environment_host_key_title),
             stringResource(
@@ -269,7 +271,7 @@ fun LinuxEnvironmentDetailScreen(environmentId: String?, onBack: () -> Unit) {
             stringResource(android.R.string.cancel),
             loading = operation == EnvironmentOperation.TRUST,
             onConfirm = {
-                if (busy) return@AgentConfirmDialog
+                if (busy) return@SettingsConfirmDialog
                 operation = EnvironmentOperation.TRUST
                 status = null
                 scope.launch {

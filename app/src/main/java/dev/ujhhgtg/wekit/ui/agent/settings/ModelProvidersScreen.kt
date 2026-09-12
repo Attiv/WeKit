@@ -10,6 +10,10 @@ import androidx.compose.ui.res.stringResource
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Add
 import com.composables.icons.materialsymbols.outlined.Chevron_right
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsActionRow
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsEmptyState
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsListActionButton
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsScaffold
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
 import dev.ujhhgtg.wekit.agent.data.entity.ModelProviderType
@@ -27,10 +31,10 @@ fun ModelProvidersScreen(
 ) {
     val providers by WeAgentRepository.observeModelProviders().collectAsState(initial = emptyList())
 
-    AgentSettingsScaffold(title = stringResource(R.string.agent_model_providers_title), onBack = onBack) {
+    SettingsScaffold(title = stringResource(R.string.agent_model_providers_title), onBack = onBack) {
         if (providers.isEmpty()) {
             item {
-                AgentEmptyState(
+                SettingsEmptyState(
                     title = stringResource(R.string.agent_empty_providers_title),
                     message = stringResource(R.string.agent_empty_providers_message),
                     actionLabel = stringResource(R.string.agent_add_provider),
@@ -52,8 +56,8 @@ fun ModelProvidersScreen(
             }
         }
         item {
-            AgentActionRow {
-                AgentListActionButton(
+            SettingsActionRow {
+                SettingsListActionButton(
                     label = stringResource(R.string.agent_add_provider),
                     icon = MaterialSymbols.Outlined.Add,
                     onClick = { onOpenProvider("") },

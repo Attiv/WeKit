@@ -232,7 +232,7 @@ WeKit's ported widget family lives in `app/src/main/java/dev/ujhhgtg/wekit/ui/co
   one group per concern, short `title` above each group). Do not hand-roll card layouts
   or use flat lists with dividers.
 - Use the shared scaffolds — `M3ListScaffold` (`activity/settings/SettingsActivity.kt`)
-  or `AgentSettingsScaffold` (`ui/agent/settings/AgentSettingsCommon.kt`): collapsing
+  or `SettingsScaffold` (`ui/content/m3/SettingsComponents.kt`): collapsing
   `LargeFlexibleTopAppBar` + blur + back button. Do not build per-screen scaffolds.
 - Multi-screen settings follow the miuix-nav `NavDisplay` pattern of
   `WeAgentSettingsActivity` / `ReadReceiptsSettingsActivity` (sealed `@Serializable`

@@ -42,6 +42,11 @@ import com.composables.icons.materialsymbols.outlined.Add
 import com.composables.icons.materialsymbols.outlined.Chevron_right
 import com.composables.icons.materialsymbols.outlined.Cloud_download
 import com.composables.icons.materialsymbols.outlined.Save
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsActionRow
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsConfirmDialog
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsListActionButton
+import dev.ujhhgtg.wekit.ui.content.m3.SettingsScaffold
+import dev.ujhhgtg.wekit.ui.content.m3.rememberCreationBackGuard
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.ui.content.WeKitBasicDialog
 import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
@@ -129,7 +134,7 @@ fun ModelProviderDetailScreen(
     val savable = p?.baseUrl?.isNotBlank() == true
     val guardedBack = rememberCreationBackGuard(!editing && savable, onBack)
 
-    AgentSettingsScaffold(
+    SettingsScaffold(
         title = if (!editing) stringResource(R.string.agent_add_model_provider)
         else p?.name ?: stringResource(R.string.agent_provider_fallback_title),
         onBack = guardedBack,
@@ -143,7 +148,7 @@ fun ModelProviderDetailScreen(
                     CircularProgressIndicator(Modifier.size(28.dp))
                 }
             }
-            return@AgentSettingsScaffold
+            return@SettingsScaffold
         }
 
         item {
@@ -199,8 +204,8 @@ fun ModelProviderDetailScreen(
             item {
                 // A blank name falls back to the provider type label, like the old add dialog did.
                 val fallbackName = p.type.label()
-                AgentActionRow {
-                    AgentListActionButton(
+                SettingsActionRow {
+                    SettingsListActionButton(
                         label = stringResource(R.string.action_save),
                         icon = MaterialSymbols.Outlined.Save,
                         enabled = savable,
@@ -223,7 +228,7 @@ fun ModelProviderDetailScreen(
             }
         } else {
             item {
-                AgentActionRow {
+                SettingsActionRow {
                     OutlinedButton(
                         onClick = { showDeleteProviderConfirm = true },
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -259,8 +264,8 @@ fun ModelProviderDetailScreen(
                 }
             }
             item {
-                AgentActionRow {
-                    AgentListActionButton(
+                SettingsActionRow {
+                    SettingsListActionButton(
                         label = stringResource(R.string.agent_add_model),
                         icon = MaterialSymbols.Outlined.Add,
                         enabled = !importing,
@@ -268,7 +273,7 @@ fun ModelProviderDetailScreen(
                     )
                     // Auto-import is only meaningful for the OpenAI-style /models endpoint.
                     if (p.type != ModelProviderType.ANTHROPIC_MESSAGES) {
-                        AgentListActionButton(
+                        SettingsListActionButton(
                             label = stringResource(R.string.agent_auto_import_models),
                             icon = MaterialSymbols.Outlined.Cloud_download,
                             loading = importing,
@@ -299,7 +304,7 @@ fun ModelProviderDetailScreen(
     }
 
     if (p != null) {
-        AgentConfirmDialog(
+        SettingsConfirmDialog(
             show = showDeleteProviderConfirm,
             title = stringResource(R.string.agent_delete_provider),
             message = stringResource(R.string.agent_delete_provider_confirm),
@@ -384,7 +389,7 @@ fun ModelDetailScreen(providerId: String, modelId: String, onBack: () -> Unit) {
     val ready = m?.modelIdRemote?.isNotBlank() == true
     val guardedBack = rememberCreationBackGuard(creating && ready, onBack)
 
-    AgentSettingsScaffold(
+    SettingsScaffold(
         title = stringResource(if (creating) R.string.agent_add_model else R.string.agent_edit_model),
         onBack = guardedBack,
     ) {
@@ -397,7 +402,7 @@ fun ModelDetailScreen(providerId: String, modelId: String, onBack: () -> Unit) {
                     CircularProgressIndicator(Modifier.size(28.dp))
                 }
             }
-            return@AgentSettingsScaffold
+            return@SettingsScaffold
         }
 
         item {
@@ -503,8 +508,8 @@ fun ModelDetailScreen(providerId: String, modelId: String, onBack: () -> Unit) {
 
         if (creating) {
             item {
-                AgentActionRow {
-                    AgentListActionButton(
+                SettingsActionRow {
+                    SettingsListActionButton(
                         label = stringResource(R.string.action_save),
                         icon = MaterialSymbols.Outlined.Save,
                         enabled = ready,
@@ -522,7 +527,7 @@ fun ModelDetailScreen(providerId: String, modelId: String, onBack: () -> Unit) {
             }
         } else {
             item {
-                AgentActionRow {
+                SettingsActionRow {
                     OutlinedButton(
                         onClick = { showDeleteConfirm = true },
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -532,7 +537,7 @@ fun ModelDetailScreen(providerId: String, modelId: String, onBack: () -> Unit) {
         }
     }
 
-    AgentConfirmDialog(
+    SettingsConfirmDialog(
         show = showDeleteConfirm,
         title = stringResource(R.string.action_delete),
         message = stringResource(R.string.agent_delete_model_confirm),
