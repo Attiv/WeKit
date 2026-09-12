@@ -28,7 +28,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -118,6 +117,7 @@ import dev.ujhhgtg.wekit.ui.content.m3.CornerRadius
 import dev.ujhhgtg.wekit.ui.content.m3.DropDownMenuWidget
 import dev.ujhhgtg.wekit.ui.content.m3.DropdownOption
 import dev.ujhhgtg.wekit.ui.content.m3.ExpressiveBackButton
+import dev.ujhhgtg.wekit.ui.content.m3.ExpressiveCollapsingTopAppBar
 import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.content.m3.SwitchWidget
 import dev.ujhhgtg.wekit.ui.content.m3AppBarBlur
@@ -1008,9 +1008,9 @@ fun LicenseScreen(onBack: () -> Unit) {
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = {
-            LargeFlexibleTopAppBar(
+            ExpressiveCollapsingTopAppBar(
                 modifier = Modifier.m3AppBarBlur(barBackdrop),
-                title = { Text(stringResource(R.string.licenses_title)) },
+                title = stringResource(R.string.licenses_title),
                 navigationIcon = { ExpressiveBackButton(onClick = onBack) },
                 scrollBehavior = scrollBehavior,
                 colors = TopAppBarDefaults.topAppBarColors(

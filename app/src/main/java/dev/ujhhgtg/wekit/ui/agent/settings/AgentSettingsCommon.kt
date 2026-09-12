@@ -23,7 +23,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -52,13 +51,14 @@ import dev.ujhhgtg.wekit.ui.content.m3AppBarColor
 import dev.ujhhgtg.wekit.ui.content.m3BackdropLayer
 import dev.ujhhgtg.wekit.ui.content.rememberMaterial3BlurBackdrop
 import dev.ujhhgtg.wekit.ui.content.m3.ExpressiveBackButton
+import dev.ujhhgtg.wekit.ui.content.m3.ExpressiveCollapsingTopAppBar
 
 /** Bottom padding so scrollable content clears the system nav bar comfortably. */
 val AGENT_CONTENT_BOTTOM_INSET = 32.dp
 
 /**
  * Standard scaffold for every WeAgent settings sub-screen: collapsing blurred
- * [LargeFlexibleTopAppBar] with a back button + a scroll-through-blur [LazyColumn], mirroring
+ * [ExpressiveCollapsingTopAppBar] with a back button + a scroll-through-blur [LazyColumn], mirroring
  * [dev.ujhhgtg.wekit.activity.settings.M3ListScaffold] but with a navigation icon.
  */
 @Composable
@@ -76,9 +76,9 @@ fun AgentSettingsScaffold(
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = {
-            LargeFlexibleTopAppBar(
+            ExpressiveCollapsingTopAppBar(
                 modifier = Modifier.m3AppBarBlur(barBackdrop),
-                title = { Text(title) },
+                title = title,
                 navigationIcon = {
                     if (onBack != null) {
                         Row {
