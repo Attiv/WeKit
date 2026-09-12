@@ -50,6 +50,7 @@ import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
 import com.tencent.mm.pluginsdk.ui.chat.ChattingUILayout
+import com.tencent.mm.ui.chatting.view.MMChattingListView
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.toClass
 import dev.ujhhgtg.wekit.R
@@ -669,6 +670,24 @@ object FloatingChatHeader : ClickableFeature(), IResolveDex {
             result = null
             if (layout != null) scheduleReconcile(layout, RECONCILE_TIPS)
         } ?: WeLogger.w(TAG, "ChatTipsBarGroup.setListViewPaddingTop hook target not found")
+
+        // 历史消息预加载保存的是首个可见消息的 View.top, 恢复时却直接传给
+        // setSelectionFromTop → LinearLayoutManager.scrollToPositionWithOffset。
+        // 后者会再加 paddingTop; 原生顶部为 0 时无事, 悬浮标题栏会让消息跳动一整段
+        // 顶部留白。只把这份预加载快照换算成 padding 内的偏移, 不改其他定位调用。
+        MMChattingListView::class.reflekt().firstMethod {
+            name = "getPreloadFirstVisitViewTop"
+            parameters()
+            returnType(Int::class)
+        }.hookAfter {
+            val top = result as Int
+            if (top == Int.MIN_VALUE) return@hookAfter
+            val layout = (thisObject as MMChattingListView).findAncestorChattingUILayout()
+                ?: return@hookAfter
+            val recycler = layout.chatRecycler() ?: return@hookAfter
+            if (!chatListBasePaddings.containsKey(recycler)) return@hookAfter
+            result = top - recycler.paddingTop
+        }
 
         // ChatTipsBarGroup 在树里的实际父容器不猜了: 构造时拿到实例, attach 后反查所属
         // ChattingUILayout 登记。悬浮与 dim 压制都直接走这份登记, 版本差异也能兜住。
