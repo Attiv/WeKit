@@ -43,10 +43,10 @@ class ConversationGroupSwipeSession(
     private val onFailure: () -> Unit,
 ) {
     private enum class Phase { IDLE, PREPARING, DRAGGING, SETTLING, RESTORING }
+    private enum class DeferredIntent { WAIT, SWIPE, DISCARD }
 
-    private val gesture = ConversationGroupSwipeState(
-        ViewConfiguration.get(sourceView.context).scaledTouchSlop.toFloat(),
-    )
+    private val touchSlopPx = ViewConfiguration.get(sourceView.context).scaledTouchSlop.toFloat()
+    private val gesture = ConversationGroupSwipeState(touchSlopPx)
     private val sourceBounds = Rect()
     private val pagerBounds = Rect()
     private val tabBounds = Rect()
@@ -70,6 +70,14 @@ class ConversationGroupSwipeSession(
     private var immediateAbort = false
     private var disposed = false
     private var failureReported = false
+    private val deferredEvents = ArrayDeque<MotionEvent>()
+    private var replayingEvents = false
+    private var replayPosted = false
+    private var discardTouchStream = false
+    private val replayEvents = Runnable {
+        replayPosted = false
+        replayDeferredEvents()
+    }
 
     private val layoutListener = View.OnLayoutChangeListener { _, left, top, right, bottom,
         oldLeft, oldTop, oldRight, oldBottom ->
@@ -99,14 +107,37 @@ class ConversationGroupSwipeSession(
     }
 
     val defersHomeSidePanel: Boolean
-        get() = !cancellingHost && !immediateAbort && (phase != Phase.IDLE ||
+        get() = !cancellingHost && (discardTouchStream ||
+            (!replayingEvents && deferredEvents.isNotEmpty()) ||
+            !immediateAbort && (phase != Phase.IDLE ||
             gesture.owner == ConversationGroupSwipeState.Owner.PENDING ||
             gesture.owner == ConversationGroupSwipeState.Owner.NATIVE_VERTICAL ||
-            gesture.owner == ConversationGroupSwipeState.Owner.GROUP)
+            gesture.owner == ConversationGroupSwipeState.Owner.GROUP))
 
     /** Called before the native pager dispatches an event. True means this session consumed it. */
     fun beforeDispatch(event: MotionEvent): Boolean {
         if (cancellingHost) return false
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            discardTouchStream = false
+            if (gesture.owner == ConversationGroupSwipeState.Owner.GROUP) cancel()
+            // A new finger starts from the settled group, not from the previous gesture's state.
+            // The native target is already ready here; only the decorative animation remains.
+            if (phase == Phase.SETTLING && !immediateAbort) {
+                stopAnimator()
+                finishSettlement(pendingSettlement == true)
+            }
+        }
+        if (discardTouchStream) return true
+        if (!replayingEvents && !immediateAbort && !disposed && enabled() &&
+            (deferredEvents.isNotEmpty() ||
+                event.actionMasked == MotionEvent.ACTION_DOWN && phase != Phase.IDLE)
+        ) {
+            // Preparation/rollback may still need the native list. Preserve DOWN and its entire
+            // stream so finishing that work cannot hand an orphan MOVE to the outer pager/panel.
+            deferredEvents.addLast(MotionEvent.obtain(event))
+            scheduleDeferredEvents()
+            return true
+        }
         if (phase != Phase.IDLE) {
             if (immediateAbort) return false
             if (!enabled()) cancel()
@@ -143,6 +174,7 @@ class ConversationGroupSwipeSession(
     /** Let DOWN initialize the native pager; defer MOVE only while an inner group is possible. */
     fun shouldDeferInterception(event: MotionEvent): Boolean {
         if (cancellingHost) return false
+        if (discardTouchStream || !replayingEvents && deferredEvents.isNotEmpty()) return true
         if (phase != Phase.IDLE) return !immediateAbort
         if (disposed || !enabled()) {
             gesture.onCancel()
@@ -161,6 +193,7 @@ class ConversationGroupSwipeSession(
     /** Called after native children had the chance to claim the deciding horizontal MOVE. */
     fun afterDispatch(event: MotionEvent, cancelHost: () -> Unit): Boolean {
         if (cancellingHost) return false
+        if (discardTouchStream || !replayingEvents && deferredEvents.isNotEmpty()) return true
         if (phase != Phase.IDLE) return !immediateAbort
         when (event.actionMasked) {
             MotionEvent.ACTION_MOVE -> {
@@ -358,7 +391,7 @@ class ConversationGroupSwipeSession(
         phase = Phase.SETTLING
         val target = if (commit) 1f else 0f
         val from = progress
-        if (from == target) {
+        if (from == target || deferredEvents.firstOrNull()?.actionMasked == MotionEvent.ACTION_DOWN) {
             finishSettlement(commit)
             return
         }
@@ -380,7 +413,7 @@ class ConversationGroupSwipeSession(
     }
 
     private fun finishSettlement(commit: Boolean) {
-        if (commit && !immediateAbort && groupIds() == downGroupIds) {
+        if (commit && !immediateAbort && enabled() && groupIds() == downGroupIds) {
             try {
                 commitGroup(targetGroupId!!)
             } finally {
@@ -488,6 +521,7 @@ class ConversationGroupSwipeSession(
     }
 
     private fun abortImmediately() {
+        discardDeferredEvents()
         gesture.onCancel()
         if (phase == Phase.IDLE) return
         immediateAbort = true
@@ -549,6 +583,85 @@ class ConversationGroupSwipeSession(
         immediateAbort = false
         phase = Phase.IDLE
         clearVisual()
+        scheduleDeferredEvents()
+    }
+
+    private fun scheduleDeferredEvents() {
+        if (phase != Phase.IDLE || replayPosted || replayingEvents || deferredEvents.isEmpty()) return
+        replayPosted = true
+        pager.post(replayEvents)
+    }
+
+    private fun replayDeferredEvents() {
+        if (disposed || !enabled() || !sourceView.isAttachedToWindow ||
+            !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        ) {
+            discardDeferredEvents()
+            return
+        }
+        replayingEvents = true
+        try {
+            while (deferredEvents.isNotEmpty()) {
+                if (deferredEvents.first().actionMasked == MotionEvent.ACTION_DOWN) {
+                    if (phase != Phase.IDLE) {
+                        if (phase != Phase.SETTLING || immediateAbort) break
+                        stopAnimator()
+                        finishSettlement(pendingSettlement == true)
+                        if (phase != Phase.IDLE) break
+                    }
+                    when (deferredHorizontalIntent()) {
+                        DeferredIntent.WAIT -> break
+                        DeferredIntent.DISCARD -> {
+                            do {
+                                deferredEvents.removeFirst().recycle()
+                            } while (deferredEvents.isNotEmpty() &&
+                                deferredEvents.first().actionMasked != MotionEvent.ACTION_DOWN)
+                            if (deferredEvents.isEmpty()) discardTouchStream = true
+                            continue
+                        }
+                        DeferredIntent.SWIPE -> Unit
+                    }
+                }
+                val event = deferredEvents.removeFirst()
+                try {
+                    // Use normal dispatch, including hooks and children: a deferred stream must
+                    // retain row-swipe priority and normal outward handoff at the first/last group.
+                    pager.dispatchTouchEvent(event)
+                } finally {
+                    event.recycle()
+                }
+            }
+        } finally {
+            replayingEvents = false
+        }
+    }
+
+    private fun deferredHorizontalIntent(): DeferredIntent {
+        val events = deferredEvents.iterator()
+        val down = events.next()
+        val intent = ConversationGroupSwipeState(touchSlopPx)
+        intent.onDown(
+            down.rawX, down.rawY, sourceView.width.coerceAtLeast(1).toFloat(), down.eventTime,
+            canGoPrevious = true, canGoNext = true,
+        )
+        // The finger went down on a frozen page. Only replay a confirmed swipe; replaying a tap
+        // (or DOWN alone before its later UP) could open a different row on the newly loaded page.
+        while (events.hasNext()) {
+            val event = events.next()
+            if (event.actionMasked != MotionEvent.ACTION_MOVE || event.pointerCount != 1) {
+                return DeferredIntent.DISCARD
+            }
+            if (intent.onMove(event.rawX, event.rawY, event.eventTime) != null) return DeferredIntent.SWIPE
+            if (intent.owner == ConversationGroupSwipeState.Owner.NATIVE_VERTICAL) return DeferredIntent.DISCARD
+        }
+        return DeferredIntent.WAIT
+    }
+
+    private fun discardDeferredEvents() {
+        pager.removeCallbacks(replayEvents)
+        replayPosted = false
+        if (deferredEvents.isNotEmpty()) discardTouchStream = true
+        while (deferredEvents.isNotEmpty()) deferredEvents.removeFirst().recycle()
     }
 
     private fun reportFailure(error: Throwable) {
