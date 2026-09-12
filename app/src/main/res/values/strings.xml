@@ -946,8 +946,6 @@
     <string name="feature_set_profile_nickname_description">Set WeChat nickname more flexibly by sending packages</string>
     <string name="feature_upload_transparent_avatars_name">Upload transparent avatar</string>
     <string name="feature_upload_transparent_avatars_description">Use PNG format to maintain transparency when uploading avatars</string>
-    <string name="feature_bypass_scripts_drm_name">Bypass some script verification</string>
-    <string name="feature_bypass_scripts_drm_description">Try to bypass the packet capture detection &amp; authorization verification &amp; cloud black detection of Xuanxinyun script\nIt doesn’t matter, you continue to collect your money, I will continue to write my code, if you don’t like it, just accept it</string>
     <string name="feature_decompile_bean_shell_snapshot_name">Decompile BeanShell snapshot</string>
     <string name="feature_decompile_bean_shell_snapshot_description">If you don’t know what this is for, just leave it alone.</string>
     <string name="feature_java_hook_api_name">Script hook API</string>

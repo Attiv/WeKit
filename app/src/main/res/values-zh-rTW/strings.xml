@@ -908,8 +908,6 @@
     <string name="feature_set_profile_nickname_description">通過發包來更靈活的設置微信暱稱</string>
     <string name="feature_upload_transparent_avatars_name">上傳透明頭像</string>
     <string name="feature_upload_transparent_avatars_description">頭像上傳時使用 PNG 格式保持透明</string>
-    <string name="feature_bypass_scripts_drm_name">繞過部分腳本驗證</string>
-    <string name="feature_bypass_scripts_drm_description">嘗試繞過軒心雲腳本的抓包檢測 &amp; 授權驗證 &amp; 雲黑檢測\n沒關係的, 你們繼續圈你們的錢, 我繼續寫我的代碼, 不喜歡就受着</string>
     <string name="feature_decompile_bean_shell_snapshot_name">反編譯 BeanShell 快照</string>
     <string name="feature_decompile_bean_shell_snapshot_description">不知道這是幹啥的就別管了</string>
     <string name="feature_java_hook_api_name">腳本 Hook 服務</string>

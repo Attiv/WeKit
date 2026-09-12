@@ -910,8 +910,6 @@
     <string name="feature_set_profile_nickname_description">通过发包来更灵活的设置微信昵称</string>
     <string name="feature_upload_transparent_avatars_name">上传透明头像</string>
     <string name="feature_upload_transparent_avatars_description">头像上传时使用 PNG 格式保持透明</string>
-    <string name="feature_bypass_scripts_drm_name">绕过部分脚本验证</string>
-    <string name="feature_bypass_scripts_drm_description">尝试绕过轩心云脚本的抓包检测 &amp; 授权验证 &amp; 云黑检测\n没关系的, 你们继续圈你们的钱, 我继续写我的代码, 不喜欢就受着</string>
     <string name="feature_decompile_bean_shell_snapshot_name">反编译 BeanShell 快照</string>
     <string name="feature_decompile_bean_shell_snapshot_description">不知道这是干啥的就别管了</string>
     <string name="feature_java_hook_api_name">脚本 Hook 服务</string>
