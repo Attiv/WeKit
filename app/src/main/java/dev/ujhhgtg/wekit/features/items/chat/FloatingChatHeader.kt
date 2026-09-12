@@ -2361,7 +2361,9 @@ object FloatingChatHeader : ClickableFeature(), IResolveDex {
 
     private fun currentStatusBarOffset(layout: View): Int {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return 0
-        return layout.rootWindowInsets?.getInsets(WindowInsets.Type.statusBars())?.top ?: 0
+        // 照片全屏过渡会隐藏状态栏；聊天页仍需保留其占位，避免背后的标题卡和列表上跳。
+        return layout.rootWindowInsets
+            ?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())?.top ?: 0
     }
 
     private fun zeroChatLayoutTopPadding(layout: View) {
