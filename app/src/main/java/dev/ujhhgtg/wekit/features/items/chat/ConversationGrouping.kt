@@ -1,6 +1,11 @@
 package dev.ujhhgtg.wekit.features.items.chat
 
 import android.content.Context
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
@@ -8,6 +13,8 @@ import android.widget.HeaderViewListAdapter
 import android.widget.ListView
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
+import androidx.core.view.OneShotPreDrawListener
+import androidx.core.view.doOnAttach
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
@@ -85,6 +92,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.LifecycleOwner
+import com.tencent.mm.ui.base.CustomViewPager
+import com.tencent.mm.ui.LauncherUI
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Add
 import com.composables.icons.materialsymbols.outlined.Check
@@ -108,8 +117,10 @@ import dev.ujhhgtg.wekit.features.api.ui.WeConversationListViewApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.items.beautify.BeautifyConversationList
+import dev.ujhhgtg.wekit.features.items.beautify.home_screen_panel.HomeSidePanel
 import dev.ujhhgtg.wekit.features.items.contacts.HideContacts
 import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
+import dev.ujhhgtg.wekit.i18n.HostLocalizedStrings
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
@@ -125,6 +136,7 @@ import dev.ujhhgtg.wekit.ui.utils.setLifecycleOwner
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.ui.utils.theme.InjectedUiTheme
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.utils.invokeOriginalMethod
 import dev.ujhhgtg.wekit.utils.android.baseActivity
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
@@ -142,9 +154,11 @@ import top.yukonga.miuix.kmp.blur.drawBackdrop
 import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -172,6 +186,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private const val ALL_TAB_ID = "${GROUP_PREFIX}all"
 
     private var pinTabs by WePrefs.prefOption("conversation_grouping_pin_tabs", true)
+    private var takeOverHorizontalScroll by WePrefs.prefOption("conversation_grouping_take_over_horizontal_scroll", false)
+    private var swipeHooksInstalled = false
+    private val swipeSessions = WeakHashMap<ViewGroup, WeakReference<ConversationGroupSwipeSession>>()
     private var showUnread by WePrefs.prefOption("conversation_grouping_show_unread", true)
     private val showUnreadState by lazy { mutableStateOf(showUnread) }
     private var includeOfficialUnread by WePrefs.prefOption("conversation_grouping_include_official_unread", false)
@@ -191,11 +208,47 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     private fun allTab(): ChatGroup = ChatGroup(id = ALL_TAB_ID)
 
-    @Volatile
-    private var activeAdapterGroup: ChatGroup = allTab()
+    private data class GroupFilter(val group: ChatGroup, val members: Set<String>)
 
     @Volatile
-    private var activeAdapterMembers: Set<String> = emptySet()
+    private var activeFilter = GroupFilter(allTab(), emptySet())
+
+    private val activeAdapterGroup: ChatGroup get() = activeFilter.group
+
+    private class PagingFilter(val source: WeakReference<View>, val filter: GroupFilter)
+    private val pagingFilters = WeakHashMap<Any, PagingFilter>()
+
+    private fun filterFor(owner: Any): GroupFilter = synchronized(pagingFilters) {
+        pagingFilters[owner]?.filter ?: activeFilter
+    }
+
+    private fun installPagingFilter(request: PagingRequest) {
+        val scoped = PagingFilter(WeakReference(request.source), request.filter)
+        synchronized(pagingFilters) {
+            pagingFilters[request.adapter] = scoped
+            request.list?.let { pagingFilters[it] = scoped }
+            request.dataSource?.let { pagingFilters[it] = scoped }
+        }
+        synchronized(adapterCaches) { adapterCaches.remove(request.adapter) }
+    }
+
+    private fun commitPagingGroup(source: View, groupId: String): String {
+        val filter = synchronized(pagingFilters) {
+            pagingFilters.values.firstOrNull { it.source.get() === source }?.filter
+        }?.takeIf { it.group.id == groupId } ?: groupFilter(groupId)
+        activeFilter = filter
+        return filter.group.id
+    }
+
+    private fun releasePagingFilter(source: View) {
+        synchronized(pagingFilters) {
+            pagingFilters.entries.removeAll { it.value.source.get() === source }
+        }
+        // Releasing a visual after resize may happen again while the original group is restoring.
+        // Cancel only an uncommitted candidate here; the restore must be allowed to finish.
+        pagingRequest?.takeIf { it.source === source && it.filter.group.id != activeFilter.group.id }
+            ?.let { finishPagingRequest(it, false) }
+    }
 
     private data class AdapterCache(
         val visiblePositions: List<Int>,
@@ -222,6 +275,31 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private val recyclerLists = Collections.synchronizedSet(
         Collections.newSetFromMap(WeakHashMap<Any, Boolean>()),
     )
+    private val hookedRecyclerAppliedMethods = mutableSetOf<Method>()
+    private val pagingHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val pagingQueryRequest = ThreadLocal<PagingRequest?>()
+    @Volatile
+    private var pagingRequest: PagingRequest? = null
+
+    private class PagingRequest(
+        val source: View,
+        val adapter: Any,
+        val filter: GroupFilter,
+        val list: Any?,
+        val dataSource: Any?,
+        val loadCounter: AtomicInteger?,
+        val completed: (Boolean) -> Unit,
+    ) {
+        val deadline = SystemClock.uptimeMillis() + 8_000L
+        @Volatile var issued = false
+        @Volatile var loadId = 0
+        @Volatile var expectedNames: Set<String>? = null
+        @Volatile var queryCompletedAt = 0L
+        var lastIssuedAt = 0L
+        var applied = false
+        var layoutListener: OneShotPreDrawListener? = null
+        var retry: Runnable? = null
+    }
     private val adapterPositionProvider = WeConversationListViewApi.IAdapterPositionProvider { adapter, rawPosition ->
         adapterPositionSnapshot(adapter, rawPosition)
     }
@@ -251,6 +329,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             }
         }
         hookConversationListAdapter()
+        if (takeOverHorizontalScroll) ensureSwipeHooks()
 
         methodOnTabCreate.hookAfter {
             val mainUi = thisObject!!
@@ -258,16 +337,20 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             if (conversationHostView is ListView) hookListViewFooterClicks(conversationHostView)
 
             val contentOverlapState = mutableStateOf(false)
+            val selectedGroupIdState = mutableStateOf(activeAdapterGroup.id)
+            val groupsState = mutableStateOf(loadGroups())
+            val backdropSourceState = mutableStateOf(conversationHostView)
+            val pagingProgressState = mutableStateOf<ConversationGroupPagingProgress?>(null)
+            val groupSortModeState = mutableStateOf(false)
+            val activity = conversationHostView.context.baseActivity!! as LauncherUI
+            val lifecycleOwner = LifecycleOwnerProvider.getOrCreate(activity)
             val composeView = ComposeView(conversationHostView.context).apply {
-                val lifecycleOwner = LifecycleOwnerProvider.getOrCreate(conversationHostView.context.baseActivity!!)
                 setLifecycleOwner(lifecycleOwner)
 
                 val context = conversationHostView.context
 
                 // These values get lost when ComposeView becomes invisible, so we have to lift them
                 // out of the Composable.
-                val selectedGroupIdState = mutableStateOf(ALL_TAB_ID)
-                val groupsState = mutableStateOf(loadGroups())
                 setContent {
                     InjectedUiTheme {
                         val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
@@ -275,9 +358,11 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                         var groups by groupsState
 
                         ConversationTabs(
-                            sourceView = conversationHostView,
+                            sourceView = backdropSourceState.value,
                             lifecycleOwner = lifecycleOwner,
                             hasContentBehind = contentOverlapState.value,
+                            pagingProgress = pagingProgressState.value,
+                            onSortModeChanged = { groupSortModeState.value = it },
                             groups = groups,
                             selectedGroupId = selectedGroupId,
                             onTabSelected = { groupId ->
@@ -344,11 +429,53 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             )
             tabHost.install(mainUi)
             tabHosts.add(tabHost)
+            conversationHostView.doOnAttach {
+                val pager = generateSequence(conversationHostView.parent as? View) { it.parent as? View }
+                    .filterIsInstance<CustomViewPager>().firstOrNull() ?: return@doOnAttach
+                swipeSessions[pager]?.get()?.dispose()
+                val session = ConversationGroupSwipeSession(
+                    sourceView = conversationHostView,
+                    pager = pager,
+                    tabHost = tabHost,
+                    lifecycleOwner = lifecycleOwner,
+                    groupIds = { groupsState.value.map { it.id } },
+                    selectedGroupId = { selectedGroupIdState.value },
+                    enabled = { isEnabled && takeOverHorizontalScroll },
+                    canStart = {
+                        activity.currentFragmet == null && !groupSortModeState.value &&
+                            !HomeSidePanel.blocksConversationGroupSwipe(pager) &&
+                            !WeConversationListViewApi.isRecentPageVisible(conversationHostView)
+                    },
+                    prepareGroup = { groupId, completed ->
+                        preparePagingGroup(conversationHostView, groupId, completed)
+                    },
+                    cancelPreparation = {
+                        pagingRequest?.takeIf { it.source === conversationHostView }
+                            ?.let { finishPagingRequest(it, false) }
+                    },
+                    commitGroup = { selectedGroupIdState.value = commitPagingGroup(conversationHostView, it) },
+                    onVisualState = { view, progress ->
+                        backdropSourceState.value = view ?: conversationHostView
+                        pagingProgressState.value = progress
+                        if (view == null) releasePagingFilter(conversationHostView)
+                    },
+                    onFailure = {
+                        showToast(HostLocalizedStrings.get(R.string.conversation_grouping_swipe_prepare_failed))
+                    },
+                )
+                swipeSessions[pager] = WeakReference(session)
+            }
         }
         WeConversationListViewApi.addPositionProvider(adapterPositionProvider)
     }
 
     override fun onDisable() {
+        swipeSessions.values.mapNotNull { it.get() }.forEach { it.dispose() }
+        swipeSessions.clear()
+        swipeHooksInstalled = false
+        hookedRecyclerAppliedMethods.clear()
+        pagingRequest?.let { finishPagingRequest(it, false) }
+        synchronized(pagingFilters) { pagingFilters.clear() }
         tabHosts.forEach { it.setPinned(false) }
         tabHosts.clear()
         WeDatabaseListenerApi.removeListener(contactUnreadListener)
@@ -358,6 +485,66 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         clearAdapterCaches()
         hookedListClickMethods.clear()
         snapshotFailuresLogged.clear()
+    }
+
+    private fun ensureSwipeHooks() {
+        if (swipeHooksInstalled || !isActive) return
+        val pagerClass = CustomViewPager::class.reflekt()
+        pagerClass.firstMethod {
+            name = "onInterceptTouchEvent"
+            parameters(MotionEvent::class)
+        }.hookBefore {
+            val session = swipeSessions[thisObject as ViewGroup]?.get() ?: return@hookBefore
+            if (session.shouldDeferInterception(args[0] as MotionEvent)) result = false
+        }
+        val dispatch = pagerClass.firstMethod {
+            name = "dispatchTouchEvent"
+            parameters(MotionEvent::class)
+        }
+        dispatch.hookBefore {
+            val session = swipeSessions[thisObject as ViewGroup]?.get() ?: return@hookBefore
+            if (session.beforeDispatch(args[0] as MotionEvent)) result = true
+        }
+        dispatch.hookAfter {
+            val session = swipeSessions[thisObject as ViewGroup]?.get() ?: return@hookAfter
+            val event = args[0] as MotionEvent
+            if (session.afterDispatch(event) {
+                    val cancel = MotionEvent.obtain(event)
+                    try {
+                        cancel.action = MotionEvent.ACTION_CANCEL
+                        invokeOriginalMethod(args = arrayOf(cancel))
+                    } finally {
+                        cancel.recycle()
+                    }
+                }
+            ) result = true
+        }
+        pagerClass.firstMethod {
+            name = "onPageScrolled"
+            parameters(Int::class, Float::class, Int::class)
+            superclass()
+        }.hookAfter {
+            swipeSessions[thisObject as ViewGroup]?.get()?.onPagerViewportChanged()
+        }
+        LauncherUI::class.reflekt().firstMethod {
+            name = "startChatting"
+            parameters(String::class, Bundle::class, Boolean::class)
+        }.hookBefore {
+            swipeSessions.values.mapNotNull { it.get() }.forEach { it.cancelImmediately() }
+        }
+        ViewGroup::class.reflekt().firstMethod {
+            name = "requestDisallowInterceptTouchEvent"
+            parameters(Boolean::class)
+        }.hookBefore {
+            if (args[0] as Boolean) swipeSessions[thisObject as ViewGroup]?.get()?.onChildClaimed()
+        }
+        swipeHooksInstalled = true
+    }
+
+    fun shouldDeferHomeSidePanel(pager: ViewGroup, event: MotionEvent): Boolean {
+        val session = swipeSessions[pager]?.get() ?: return false
+        session.shouldDeferInterception(event)
+        return session.defersHomeSidePanel
     }
 
     private fun hookConversationListAdapter() {
@@ -390,8 +577,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
         adapterMethods.forEach { methods ->
             methods.getCount.hookAfter {
-                if (isAllTab(activeAdapterGroup.id)) return@hookAfter
                 val adapter = thisObject!!
+                if (isAllTab(filterFor(adapter).group.id)) return@hookAfter
                 // The inherited count method is also called by unrelated adapters.
                 if (!methods.getView.declaringClass.isInstance(adapter)) return@hookAfter
                 val boundCache = if (bindingAdapter.get() === adapter) {
@@ -406,8 +593,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 rebuildAdapterCache(adapter, result as Int)?.let { result = it.visiblePositions.size }
             }
             methods.getView.hookBefore(priority = 100) {
-                if (isAllTab(activeAdapterGroup.id)) return@hookBefore
                 val adapter = thisObject!!
+                if (isAllTab(filterFor(adapter).group.id)) return@hookBefore
                 val position = args[0] as Int
                 val cache = synchronized(adapterCaches) { adapterCaches[adapter] } ?: return@hookBefore
                 bindingAdapter.set(adapter)
@@ -432,9 +619,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }.self
         if (clickMethod in hookedListClickMethods) return
         clickMethod.hookBefore {
-            if (isAllTab(activeAdapterGroup.id)) return@hookBefore
             val clickedListView = args[0] as ListView
             val adapter = clickedListView.adapter as? HeaderViewListAdapter ?: return@hookBefore
+            if (isAllTab(filterFor(adapter.wrappedAdapter).group.id)) return@hookBefore
             if (adapterMethods.none { it.getView.declaringClass.isInstance(adapter.wrappedAdapter) }) {
                 return@hookBefore
             }
@@ -453,12 +640,31 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     }
 
     private fun hookRecyclerDataSource() {
+        methodRecyclerQueryPage.hookBefore {
+            val request = pagingRequest
+            pagingQueryRequest.set(request?.takeIf {
+                it.issued && it.dataSource === thisObject && it.loadCounter!!.get() == it.loadId
+            })
+        }
         methodRecyclerQueryPage.hookAfter {
+            val request = pagingQueryRequest.get()
+            pagingQueryRequest.remove()
             if (!classRecyclerDataSource.clazz.isInstance(thisObject)) return@hookAfter
+            if (throwable != null) {
+                request?.let { pagingHandler.post { finishPagingRequest(it, false) } }
+                return@hookAfter
+            }
             val page = result!!
             @Suppress("UNCHECKED_CAST")
             val rows = fieldRecyclerPageItems.field.get(page) as MutableList<Any>
-            filterRecyclerRows(rows)
+            filterRecyclerRows(rows, filterFor(thisObject!!))
+            if (request != null && pagingRequest === request && filterFor(request.adapter) === request.filter &&
+                request.loadCounter!!.get() == request.loadId
+            ) {
+                request.expectedNames = rows.asSequence().filter { classRecyclerRow.clazz.isInstance(it) }
+                    .map { adapterItemUsername(fieldRecyclerRowConversation.field.get(it))!! }.toSet()
+                request.queryCompletedAt = SystemClock.uptimeMillis()
+            }
         }
 
         WeConversationListViewApi.classConversationRecyclerAdapter.clazz.constructors.forEach { constructor ->
@@ -477,20 +683,46 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             val pendingData = args[0]!!
             @Suppress("UNCHECKED_CAST")
             val rows = fieldRecyclerPendingItems.field.get(pendingData) as MutableList<Any>
-            filterRecyclerRows(rows)
+            filterRecyclerRows(rows, filterFor(thisObject!!))
         }
     }
 
     private fun captureRecyclerList(adapter: Any) {
         recyclerLists.add(fieldRecyclerMvvmList.field.get(adapter)!!)
+        val applied = adapter.javaClass.reflekt().firstMethod {
+            parameters(methodRecyclerSubmitUiChange.method.parameterTypes.single())
+            returnType = Void.TYPE
+        }.self
+        if (hookedRecyclerAppliedMethods.add(applied)) {
+            // This adapter callback only runs after ConcurrentMvvmList accepted the pending data.
+            // A rejected stale submitUIChange returns before it, including when the group is empty.
+            applied.hookAfter {
+                val request = pagingRequest ?: return@hookAfter
+                if (thisObject !== request.adapter || !request.issued ||
+                    filterFor(request.adapter) !== request.filter || request.loadCounter!!.get() != request.loadId
+                ) return@hookAfter
+                val expected = request.expectedNames ?: return@hookAfter
+                @Suppress("UNCHECKED_CAST")
+                val rows = fieldRecyclerPendingItems.field.get(args[0]) as List<Any>
+                val conversations = rows.filter { classRecyclerRow.clazz.isInstance(it) }
+                    .map { fieldRecyclerRowConversation.field.get(it)!! }
+                val actual = conversations.map { adapterItemUsername(it)!! }.toSet()
+                // The host may merge messages that arrived after the query. Accept those additions
+                // only inside the intended group, and require the freshly queried rows to be present.
+                if (!actual.containsAll(expected) || conversations.any { !adapterItemMatches(it, request.filter) }) {
+                    return@hookAfter
+                }
+                request.applied = true
+                awaitPagingLayout(request)
+            }
+        }
     }
 
-    private fun filterRecyclerRows(rows: MutableList<Any>) {
-        val group = activeAdapterGroup
-        if (isAllTab(group.id)) return
+    private fun filterRecyclerRows(rows: MutableList<Any>, filter: GroupFilter) {
+        if (isAllTab(filter.group.id)) return
         rows.removeAll { row ->
             classRecyclerRow.clazz.isInstance(row) &&
-                !adapterItemMatches(fieldRecyclerRowConversation.field.get(row), group)
+                !adapterItemMatches(fieldRecyclerRowConversation.field.get(row), filter)
         }
     }
 
@@ -507,7 +739,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         synchronized(adapterCaches) {
             // Never let a failed refresh leave an index built for an older backing dataset.
             adapterCaches.remove(adapter)
-            val group = activeAdapterGroup
+            val filter = filterFor(adapter)
             val methods = adapterMethods(adapter)
             val items: List<Any?>? = runCatching {
                 when (methods.storage) {
@@ -537,7 +769,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             }
             val visible = runCatching {
                 items.mapIndexedNotNull { index, item ->
-                    if (adapterItemMatches(item, group)) index else null
+                    if (adapterItemMatches(item, filter)) index else null
                 }
             }.getOrElse { error ->
                 if (snapshotFailuresLogged.add(adapter.javaClass)) {
@@ -577,14 +809,15 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private fun adapterMethods(adapter: Any): AdapterMethods =
         adapterMethods.first { it.getView.declaringClass.isInstance(adapter) }
 
-    private fun adapterItemMatches(item: Any?, group: ChatGroup): Boolean {
+    private fun adapterItemMatches(item: Any?, filter: GroupFilter): Boolean {
+        val group = filter.group
         if (isAllTab(group.id)) return true
         val username = adapterItemUsername(item) ?: return false
         return when (group.type) {
             GroupType.PRESET_UNREAD -> adapterItemUnread(item) > 0
             GroupType.PRESET_GROUPS -> username.endsWith("@chatroom")
             GroupType.PRESET_FRIENDS -> !username.endsWith("@chatroom") && !isOfficialConversation(username)
-            GroupType.MANUAL, GroupType.SQL -> activeAdapterMembers.contains(username)
+            GroupType.MANUAL, GroupType.SQL -> filter.members.contains(username)
             GroupType.PRESET_OFFICIALS -> isOfficialConversation(username)
         }
     }
@@ -623,6 +856,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {
             var pinTabsEnabled by remember { mutableStateOf(pinTabs) }
+            var takeOverScroll by remember { mutableStateOf(takeOverHorizontalScroll) }
             var countOfficialUnread by remember { mutableStateOf(includeOfficialUnread) }
             AlertDialogContent(
                 title = { Text(stringResource(R.string.feature_conversation_grouping_name)) },
@@ -644,6 +878,19 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                             pinTabs = checked
                                             pinTabsEnabled = checked
                                             tabHosts.forEach { it.setPinned(checked) }
+                                        },
+                                    )
+                                }
+                                item {
+                                    SwitchWidget(
+                                        title = stringResource(R.string.conversation_grouping_take_over_horizontal_scroll),
+                                        description = stringResource(R.string.conversation_grouping_take_over_horizontal_scroll_description),
+                                        checked = takeOverScroll,
+                                        onCheckedChange = { checked ->
+                                            takeOverScroll = checked
+                                            takeOverHorizontalScroll = checked
+                                            if (checked) ensureSwipeHooks()
+                                            else swipeSessions.values.mapNotNull { it.get() }.forEach { it.cancelImmediately() }
                                         },
                                     )
                                 }
@@ -690,20 +937,131 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
     }
 
-    private fun selectTab(groupId: String?) {
-        // Resolve manual / SQL members once per selection, outside adapter binding.
-        activeAdapterGroup = if (groupId == null || isAllTab(groupId)) {
-            allTab()
-        } else {
-            groupById(groupId) ?: allTab()
-        }
-        activeAdapterMembers = when (activeAdapterGroup.type) {
-            GroupType.MANUAL, GroupType.SQL ->
-                getGroupMembers(activeAdapterGroup).toSet()
+    private fun groupFilter(groupId: String?): GroupFilter {
+        val group = if (groupId == null || isAllTab(groupId)) allTab()
+            else groupById(groupId) ?: allTab()
+        val members = when (group.type) {
+            GroupType.MANUAL, GroupType.SQL -> getGroupMembers(group).toSet()
             else -> emptySet()
         }
+        return GroupFilter(group, members)
+    }
+
+    private fun selectTab(groupId: String?) {
+        activeFilter = groupFilter(groupId)
         clearAdapterCaches()
         refreshConversations()
+    }
+
+    private fun preparePagingGroup(source: View, groupId: String, completed: (Boolean) -> Unit) {
+        check(pagingRequest == null) { "conversation group preparations must be serialized" }
+        if (!isActive) {
+            completed(true)
+            return
+        }
+        // Cancelling restores the exact committed filter, including manual/SQL membership.
+        // A preview never replaces the global selection seen by a newly created MainUI.
+        val filter = activeFilter.takeIf { it.group.id == groupId } ?: groupFilter(groupId)
+        if (filter.group.id != groupId) {
+            completed(false)
+            return
+        }
+        val adapter = if (source is ListView) {
+            val installed = source.adapter
+            (installed as? HeaderViewListAdapter)?.wrappedAdapter ?: installed
+        } else {
+            source.reflekt().firstMethod {
+                name = "getAdapter"
+                parameters()
+                superclass()
+            }.invoke()
+        }
+        if (adapter == null) {
+            completed(false)
+            return
+        }
+        val list = if (source is ListView) null else fieldRecyclerMvvmList.field.get(adapter)!!
+        val dataSource = list?.reflekt()?.fields {
+            type { !it.isPrimitive }
+        }?.firstNotNullOfOrNull { field ->
+            field.get()?.takeIf { classRecyclerDataSource.clazz.isInstance(it) }
+        }
+        if (list != null) checkNotNull(dataSource) { "conversation paging data source is absent" }
+        val counter = list?.reflekt()?.firstField { type = AtomicInteger::class }?.get() as AtomicInteger?
+        val request = PagingRequest(source, adapter, filter, list, dataSource, counter, completed)
+        val retry = object : Runnable {
+            override fun run() {
+                if (pagingRequest !== request) return
+                try {
+                    val now = SystemClock.uptimeMillis()
+                    if (now >= request.deadline || !isActive) {
+                        WeLogger.w(TAG, "conversation group page preparation timed out or stopped: $groupId")
+                        finishPagingRequest(request, false)
+                        return
+                    }
+                    if (request.list != null && !request.applied) {
+                        val loading = fieldRecyclerLoading.field.getBoolean(request.list)
+                        val counterChanged = request.issued && request.loadCounter!!.get() != request.loadId
+                        val completedWithoutApply = request.source.windowVisibility == View.VISIBLE &&
+                            request.queryCompletedAt > 0L && now - request.queryCompletedAt > 500L
+                        val startWasIgnored = request.issued && request.expectedNames == null && now - request.lastIssuedAt > 250L
+                        if (!loading && (!request.issued || counterChanged || completedWithoutApply || startWasIgnored)) {
+                            // The native actor ignores StartLoad while loading. Wait for idle before
+                            // issuing/retrying; never increment its load ID on every gesture MOVE.
+                            installPagingFilter(request)
+                            request.expectedNames = null
+                            request.queryCompletedAt = 0L
+                            request.lastIssuedAt = now
+                            request.loadId = request.loadCounter!!.get() + 1
+                            request.issued = true
+                            methodRecyclerRefreshAll.method.invoke(null, request.list, null, 1, null)
+                            request.loadId = request.loadCounter.get()
+                        }
+                    }
+                    pagingHandler.postDelayed(this, 32L)
+                } catch (error: Exception) {
+                    WeLogger.e(TAG, "conversation page preparation failed: $groupId", error)
+                    finishPagingRequest(request, false)
+                }
+            }
+        }
+        request.retry = retry
+        pagingRequest = request
+        try {
+            if (list == null) {
+                installPagingFilter(request)
+                request.issued = true
+                WeConversationListViewApi.refreshContainer(source, resetListViewPosition = true)
+                awaitPagingLayout(request)
+            }
+            if (pagingRequest === request) pagingHandler.post(retry)
+        } catch (error: Exception) {
+            WeLogger.e(TAG, "conversation page initialization failed: $groupId", error)
+            finishPagingRequest(request, false)
+        }
+    }
+
+    private fun awaitPagingLayout(request: PagingRequest) {
+        if (pagingRequest !== request || request.layoutListener != null) return
+        if (!request.source.isAttachedToWindow || request.source.windowVisibility != View.VISIBLE) {
+            finishPagingRequest(request, true)
+            return
+        }
+        request.layoutListener = OneShotPreDrawListener.add(request.source) {
+            request.layoutListener = null
+            if (pagingRequest === request) finishPagingRequest(request, true)
+        }
+        request.source.requestLayout()
+        request.source.invalidate()
+    }
+
+    private fun finishPagingRequest(request: PagingRequest, success: Boolean) {
+        if (pagingRequest !== request) return
+        pagingRequest = null
+        request.retry?.let(pagingHandler::removeCallbacks)
+        request.layoutListener?.removeListener()
+        request.layoutListener = null
+        request.completed(success)
     }
 
     private fun refreshConversations() {
@@ -733,6 +1091,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     private val methodRecyclerRefreshAll by dexMethod()
 
+    private val fieldRecyclerLoading by dexField()
+
     private val methodOnTabCreate by dexMethod {
         matcher {
             declaredClass = "com.tencent.mm.ui.conversation.MainUI"
@@ -753,6 +1113,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             fieldRecyclerPendingItems.setPlaceholderDescriptor(true, reason)
             fieldRecyclerMvvmList.setPlaceholderDescriptor(true, reason)
             methodRecyclerRefreshAll.setPlaceholderDescriptor(true, reason)
+            fieldRecyclerLoading.setPlaceholderDescriptor(true, reason)
             return
         }
 
@@ -843,6 +1204,18 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 usingEqStrings("submitRefreshAll")
             }
         }
+        fieldRecyclerLoading.find(dexKit) {
+            matcher {
+                declaredClass(methodRecyclerSubmitUiChange.data.declaredClassName)
+                type = "boolean"
+                addReadMethod { usingStrings("already loading, ignore StartLoad type=") }
+                addWriteMethod {
+                    name = "onStateChanged"
+                    paramCount = 2
+                    returnType = "void"
+                }
+            }
+        }
     }
 
     // ----------------------------------------------------------------------------------------------
@@ -855,6 +1228,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         sourceView: View,
         lifecycleOwner: LifecycleOwner,
         hasContentBehind: Boolean,
+        pagingProgress: ConversationGroupPagingProgress?,
+        onSortModeChanged: (Boolean) -> Unit,
         groups: List<ChatGroup>,
         selectedGroupId: String,
         onTabSelected: (String) -> Unit,
@@ -915,6 +1290,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         var menuForGroupId by remember { mutableStateOf<String?>(null) }
         // Sort (edit) mode: long-press a tab to drag-reorder.
         var sortMode by remember { mutableStateOf(false) }
+        LaunchedEffect(sortMode) { onSortModeChanged(sortMode) }
         // The working order while sorting. Seeded from `groups` on entry and mutated live as the
         // user drags; committed via onReorder only when the check button is tapped.
         var order by remember { mutableStateOf(groups.map { it.id }) }
@@ -1004,6 +1380,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                         unread = unreadCounts[group.id] ?: noUnread,
                                         selected = selectedGroupId == group.id,
                                         capsuleStyle = capsuleStyle,
+                                        enabled = pagingProgress == null,
                                         onClick = { onTabSelected(group.id) },
                                         onLongClick = { menuForGroupId = group.id }
                                     )
@@ -1080,7 +1457,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                         .coerceAtLeast(0)
                     val indicator: @Composable TabIndicatorScope.() -> Unit = {
                         if (capsuleStyle) {
-                            AnimatedGroupSelectionPill(tabWidths, selectedTabIndex)
+                            AnimatedGroupSelectionPill(tabWidths, selectedTabIndex, orderedGroups.map { it.id }, pagingProgress)
                         } else {
                             TabRowDefaults.PrimaryIndicator(
                                 modifier = Modifier.tabIndicatorOffset(selectedTabIndex, matchContentSize = true),
@@ -1387,7 +1764,24 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     }
 
     @Composable
-    private fun TabIndicatorScope.AnimatedGroupSelectionPill(widths: List<Dp>, selectedIndex: Int) {
+    private fun TabIndicatorScope.AnimatedGroupSelectionPill(
+        widths: List<Dp>,
+        selectedIndex: Int,
+        groupIds: List<String>,
+        pagingProgress: ConversationGroupPagingProgress?,
+    ) {
+        if (pagingProgress != null) {
+            val from = groupIds.indexOf(pagingProgress.fromGroupId)
+            val to = groupIds.indexOf(pagingProgress.toGroupId)
+            if (from >= 0 && to >= 0) {
+                val fromLeft = widths.take(from).fold(0.dp) { left, width -> left + width }
+                val toLeft = widths.take(to).fold(0.dp) { left, width -> left + width }
+                val left = fromLeft + (toLeft - fromLeft) * pagingProgress.progress
+                val width = widths[from] + (widths[to] - widths[from]) * pagingProgress.progress
+                PositionedGroupSelectionPill(selectedIndex, { left }, { width })
+                return
+            }
+        }
         val targetLeft = widths.take(selectedIndex).fold(0.dp) { left, width -> left + width }
         val left = animateDpAsState(
             targetValue = targetLeft,
@@ -1399,18 +1793,27 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             animationSpec = tween(durationMillis = 320, easing = selectionPillEasing),
             label = "groupSelectionWidth",
         )
+        PositionedGroupSelectionPill(selectedIndex, { left.value }, { width.value })
+    }
+
+    @Composable
+    private fun TabIndicatorScope.PositionedGroupSelectionPill(
+        selectedIndex: Int,
+        left: () -> Dp,
+        width: () -> Dp,
+    ) {
         GroupSelectionPill(
             Modifier
                 .zIndex(-1f)
                 .tabIndicatorLayout { measurable, constraints, positions ->
-                    val animatedWidth = width.value.roundToPx()
+                    val animatedWidth = width().roundToPx()
                     val pill = measurable.measure(
                         constraints.copy(minWidth = animatedWidth, maxWidth = animatedWidth),
                     )
                     // Report the target tab width, not the animated width: ScrollableTabRow's
                     // centering compensation must not shift the pill while its width animates.
                     layout(positions[selectedIndex].width.roundToPx(), pill.height) {
-                        pill.placeRelative(left.value.roundToPx(), 0)
+                        pill.placeRelative(left().roundToPx(), 0)
                     }
                 }
                 .fillMaxHeight(),
@@ -1424,6 +1827,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         unread: ConversationUnreadState,
         selected: Boolean,
         capsuleStyle: Boolean,
+        enabled: Boolean,
         onClick: () -> Unit,
         onLongClick: () -> Unit,
     ) {
@@ -1437,6 +1841,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 .then(if (capsuleStyle) Modifier.clip(CircleShape) else Modifier)
                 .semantics { this.selected = selected }
                 .combinedClickable(
+                    enabled = enabled,
                     role = Role.Tab,
                     onClick = onClick,
                     onLongClick = onLongClick,

@@ -37,6 +37,7 @@ class ConversationGroupTabsHost(
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val capsuleVerticalInset = ConversationGrouping.CAPSULE_VERTICAL_INSET_DP.dpToPx(context)
     private var contentOverlap = false
+    private var pagingTransitionActive = false
     private var downEvent: MotionEvent? = null
     private var horizontalGesture = false
     private var childOwnsGesture = false
@@ -65,6 +66,11 @@ class ConversationGroupTabsHost(
         conversationView.invalidate()
     }
 
+    fun setPagingTransitionActive(active: Boolean) {
+        pagingTransitionActive = active
+        if (!active) conversationView.invalidate()
+    }
+
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         observer = viewTreeObserver.also { it.addOnPreDrawListener(this) }
@@ -88,6 +94,9 @@ class ConversationGroupTabsHost(
     }
 
     override fun onPreDraw(): Boolean {
+        // The live list is preparing the next group behind a frozen page. Retain the current
+        // tab-bar anchor until that page is committed or the original scroll state is restored.
+        if (pagingTransitionActive) return true
         val actionBar = WeConversationListViewApi.actionBarView(conversationView)
         if (!conversationView.isShown || actionBar == null || !actionBar.isShown || actionBar.alpha == 0f || height == 0) {
             hideTabs()

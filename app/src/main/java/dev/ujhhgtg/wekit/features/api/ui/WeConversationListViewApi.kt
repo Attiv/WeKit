@@ -1,6 +1,7 @@
 package dev.ujhhgtg.wekit.features.api.ui
 
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.view.View
@@ -428,6 +429,44 @@ object WeConversationListViewApi : ApiFeature(), IResolveDex {
     fun currentAdapter(): Any? = latestAdapter?.get()
 
     fun currentContainer(): View? = latestContainer?.get()
+
+    /** UI-thread refresh of a specific host, without relying on the last row that happened to bind. */
+    fun refreshContainer(container: View, resetListViewPosition: Boolean = false) {
+        if (container is ListView) {
+            val installed = container.adapter ?: return
+            val adapter = (installed as? HeaderViewListAdapter)?.wrappedAdapter ?: installed
+            dividerCoordinator.applyListView(container)
+            (adapter as BaseAdapter).notifyDataSetChanged()
+            if (resetListViewPosition) {
+                methodListViewCheckEmptyFooter.method.invoke(container)
+                container.setSelection(0)
+            }
+        } else {
+            val adapter = container.reflekt().firstMethod {
+                name = "getAdapter"
+                parameters()
+                superclass()
+            }.invoke() ?: return
+            notifyAdapterChanged(adapter)
+        }
+    }
+
+    /** Called only when deciding a gesture, not during scrolling or drawing. */
+    fun isRecentPageVisible(container: View): Boolean {
+        val header = container.reflekt().fields {
+            type { it.name.startsWith("com.tencent.mm.plugin.taskbar.ui.") }
+        }.firstNotNullOfOrNull { field ->
+            (field.get() as? View)?.takeIf {
+                it.javaClass.name == "com.tencent.mm.plugin.taskbar.ui.TaskBarContainer"
+            }
+        } ?: return false
+        val visible = Rect()
+        if (!header.isShown || !header.getGlobalVisibleRect(visible)) return false
+        val actionBar = actionBarView(container) ?: return true
+        val actionBarBounds = Rect()
+        if (!actionBar.getGlobalVisibleRect(actionBarBounds)) return true
+        return visible.bottom > actionBarBounds.bottom
+    }
 
     /** Empty spacer footers, including RecyclerView's fixed footer before it is attached. */
     fun emptyFooterViews(container: View): List<ViewGroup> {

@@ -1294,6 +1294,9 @@
     <string name="conversation_grouping_tab_layout_title">標籤佈局</string>
     <string name="conversation_grouping_pin_tabs">固定分組標籤</string>
     <string name="conversation_grouping_pin_tabs_description">向上捲動時將分組標籤固定在標題列下方</string>
+    <string name="conversation_grouping_take_over_horizontal_scroll">接管橫向捲動</string>
+    <string name="conversation_grouping_take_over_horizontal_scroll_description">橫滑切換相鄰分組，向邊界外滑動時交回微信頁面或側欄。保留「左劃對話菜單」，兩者共用手勢，可自行選擇是否同時啟用。</string>
+    <string name="conversation_grouping_swipe_prepare_failed">暫時無法切換分組，請重試</string>
     <string name="conversation_grouping_unread_title">未讀提示</string>
     <string name="conversation_grouping_show_unread">顯示未讀</string>
     <string name="conversation_grouping_show_unread_description">在分組標籤上顯示未讀數字和紅點</string>
