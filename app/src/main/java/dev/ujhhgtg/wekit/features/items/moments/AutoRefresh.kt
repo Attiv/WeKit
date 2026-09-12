@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -244,6 +245,8 @@ object AutoRefresh : ClickableFeature(), IResolveDex {
                 mutableFloatStateOf(minutesToSliderPosition(initialInterval))
             }
             var intervalInput by remember { mutableIntStateOf(initialInterval) }
+            val sliderState = remember { SliderState(value = sliderPosition, trackRange = 0f..1f) }
+            sliderState.value = sliderPosition
             val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
 
             AlertDialogContent(
@@ -258,12 +261,11 @@ object AutoRefresh : ClickableFeature(), IResolveDex {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Slider(
-                                value = sliderPosition,
+                                state = sliderState,
                                 onValueChange = {
                                     sliderPosition = it
                                     intervalInput = sliderPositionToMinutes(it)
                                 },
-                                valueRange = 0f..1f,
                                 modifier = Modifier.weight(1f),
                             )
                             Spacer(Modifier.width(16.dp))

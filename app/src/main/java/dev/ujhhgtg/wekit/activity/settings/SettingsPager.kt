@@ -34,6 +34,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -745,6 +746,9 @@ private fun HsvSlider(
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
 ) {
+    val sliderState = remember(valueRange) { SliderState(value = value, trackRange = valueRange) }
+    sliderState.value = value
+
     Column {
         Text(
             text = "$label: ${value.toInt()}",
@@ -752,9 +756,8 @@ private fun HsvSlider(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Slider(
-            value = value,
+            state = sliderState,
             onValueChange = onValueChange,
-            valueRange = valueRange,
         )
     }
 }
