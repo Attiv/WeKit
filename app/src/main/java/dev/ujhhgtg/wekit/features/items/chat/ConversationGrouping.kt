@@ -146,8 +146,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     const val GROUP_PREFIX = "wekit_group_"
 
     // The fixed "全部" tab. It behaves like a group for ordering purposes — it can be dragged to any
-    // position and that position is persisted alongside the real groups — but it can never be
-    // edited or deleted, and selecting it applies no filter. It's stored as an
+    // position and that position is persisted alongside the real groups. Only its name can be
+    // edited; it cannot be deleted, and selecting it applies no filter. It's stored as an
     // ordinary ChatGroup entry (identified solely by this id) so the list order is enough to
     // remember where it sits.
     private const val ALL_TAB_ID = "${GROUP_PREFIX}all"
@@ -155,7 +155,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private var equalWidthTabs by WePrefs.prefOption("conversation_grouping_equal_width_tabs", false)
     private val equalWidthTabsState by lazy { mutableStateOf(equalWidthTabs) }
     private var pinTabs by WePrefs.prefOption("conversation_grouping_pin_tabs", true)
-    private var includeOfficialUnread by WePrefs.prefOption("conversation_grouping_include_official_unread", true)
+    private var showUnread by WePrefs.prefOption("conversation_grouping_show_unread", true)
+    private val showUnreadState by lazy { mutableStateOf(showUnread) }
+    private var includeOfficialUnread by WePrefs.prefOption("conversation_grouping_include_official_unread", false)
     private val tabHosts = Collections.newSetFromMap(WeakHashMap<ConversationGroupTabsHost, Boolean>())
 
     private val groupTabHorizontalPadding = 16.dp
@@ -643,8 +645,20 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             ) {
                                 item {
                                     SwitchWidget(
+                                        title = stringResource(R.string.conversation_grouping_show_unread),
+                                        description = stringResource(R.string.conversation_grouping_show_unread_description),
+                                        checked = showUnreadState.value,
+                                        onCheckedChange = { checked ->
+                                            showUnread = checked
+                                            showUnreadState.value = checked
+                                        },
+                                    )
+                                }
+                                item(animatedVisibility = showUnreadState.value) {
+                                    SwitchWidget(
                                         title = stringResource(R.string.conversation_grouping_include_official_unread),
                                         description = stringResource(R.string.conversation_grouping_include_official_unread_description),
+                                        enabled = showUnreadState.value,
                                         checked = countOfficialUnread,
                                         onCheckedChange = { checked ->
                                             includeOfficialUnread = checked
@@ -838,7 +852,12 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     ) {
         val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
         var unreadCounts by remember { mutableStateOf<Map<String, ConversationUnreadState>>(emptyMap()) }
-        LaunchedEffect(groups) {
+        val showUnreadEnabled = showUnreadState.value
+        LaunchedEffect(groups, showUnreadEnabled) {
+            if (!showUnreadEnabled) {
+                unreadCounts = emptyMap()
+                return@LaunchedEffect
+            }
             unreadRefreshVersion.collect {
                 // Coalesce bursts without postponing updates indefinitely during message sync.
                 delay(150.milliseconds)
@@ -916,23 +935,20 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                             onCreateGroup()
                                         }
                                     )
-                                    // The fixed "全部" tab can be reordered but never edited or deleted.
-                                    if (!allTab) {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.conversation_group_action_edit)) },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = MaterialSymbols.Outlined.Edit,
-                                                    contentDescription = stringResource(R.string.conversation_group_action_edit),
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            },
-                                            onClick = {
-                                                menuForGroupId = null
-                                                onEditGroup(group)
-                                            }
-                                        )
-                                    }
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.conversation_group_action_edit)) },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = MaterialSymbols.Outlined.Edit,
+                                                contentDescription = stringResource(R.string.conversation_group_action_edit),
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        },
+                                        onClick = {
+                                            menuForGroupId = null
+                                            onEditGroup(group)
+                                        }
+                                    )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.conversation_group_action_reorder)) },
                                         leadingIcon = {
@@ -1038,15 +1054,19 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     }
 
     private fun localizedGroupName(context: Context, group: ChatGroup): String {
-        if (isAllTab(group.id)) return context.getString(R.string.conversation_group_all)
         if (group.name.isNotBlank()) return group.name
-        return when (group.builtInLabel) {
-            BuiltInGroupLabel.UNREAD -> context.getString(R.string.conversation_group_default_unread)
-            BuiltInGroupLabel.GROUPS -> context.getString(R.string.conversation_group_default_groups)
-            BuiltInGroupLabel.FRIENDS -> context.getString(R.string.conversation_group_default_friends)
-            BuiltInGroupLabel.OFFICIALS -> context.getString(R.string.conversation_group_default_officials)
-            null -> ""
-        }
+        if (isAllTab(group.id)) return context.getString(R.string.conversation_group_all)
+        // Keep older nameless manual/SQL groups visible until the user supplies a name on edit.
+        val label = builtInLabelFor(group.type) ?: group.builtInLabel
+        return label?.let { context.getString(it.nameRes) }.orEmpty()
+    }
+
+    private fun builtInLabelFor(type: GroupType): BuiltInGroupLabel? = when (type) {
+        GroupType.PRESET_UNREAD -> BuiltInGroupLabel.UNREAD
+        GroupType.PRESET_GROUPS -> BuiltInGroupLabel.GROUPS
+        GroupType.PRESET_FRIENDS -> BuiltInGroupLabel.FRIENDS
+        GroupType.PRESET_OFFICIALS -> BuiltInGroupLabel.OFFICIALS
+        GroupType.MANUAL, GroupType.SQL -> null
     }
 
     data class GroupChoice(val id: String, val name: String, val members: List<String>)
@@ -1275,17 +1295,19 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (unread.normalCount > 0) {
-                        Badge(containerColor = Color(0xFFFF3B30)) {
-                            Text(
-                                text = if (unread.normalCount <= 99) unread.normalCount.toString()
-                                    else stringResource(R.string.badge_count_overflow),
-                                color = Color.White,
-                                fontSize = 10.sp,
-                            )
+                    if (showUnreadState.value) {
+                        if (unread.normalCount > 0) {
+                            Badge(containerColor = Color(0xFFFF3B30)) {
+                                Text(
+                                    text = if (unread.normalCount <= 99) unread.normalCount.toString()
+                                        else stringResource(R.string.badge_count_overflow),
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                )
+                            }
+                        } else if (unread.hasMutedUnread) {
+                            Badge(containerColor = Color(0xFFFF3B30))
                         }
-                    } else if (unread.hasMutedUnread) {
-                        Badge(containerColor = Color(0xFFFF3B30))
                     }
                 },
             ) { measurables, constraints ->
@@ -1430,9 +1452,37 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
         val groupId = remember(group) { group?.id ?: newGroupId() }
         var name by remember(group) { mutableStateOf(group?.name ?: "") }
+
+        if (group != null && isAllTab(group.id)) {
+            AlertDialogContent(
+                title = { Text(stringResource(titleRes)) },
+                text = {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.conversation_group_name)) },
+                        placeholder = { Text(stringResource(R.string.conversation_group_all)) },
+                        singleLine = true
+                    )
+                },
+                dismissButton = {
+                    TextButton(onDismiss) { Text(stringResource(R.string.dialog_cancel)) }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        onSave(group.copy(name = name.trim()))
+                        showToast(localizedContext.getString(R.string.conversation_group_saved))
+                    }) { Text(stringResource(R.string.dialog_confirm)) }
+                }
+            )
+            return
+        }
+
         var members by remember(group) { mutableStateOf(group?.members?.toSet().orEmpty()) }
 
         var type by remember(group) { mutableStateOf(group?.type ?: GroupType.MANUAL) }
+        val builtInLabel = builtInLabelFor(type)
         var selectFields by remember(group) { mutableStateOf(group?.selectFields ?: "r.username") }
         var whereClause by remember(group) { mutableStateOf(group?.whereClause ?: "") }
 
@@ -1463,8 +1513,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                         onValueChange = { name = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.conversation_group_name)) },
-                        placeholder = group?.takeIf { it.builtInLabel != null }?.let { builtInGroup ->
-                            { Text(groupDisplayName(builtInGroup)) }
+                        placeholder = builtInLabel?.let { label ->
+                            { Text(stringResource(label.nameRes)) }
                         },
                         singleLine = true
                     )
@@ -1617,7 +1667,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             },
             confirmButton = {
                 Button(
-                    enabled = name.isNotBlank() || group?.builtInLabel != null,
+                    enabled = name.isNotBlank() || builtInLabel != null,
                     onClick = {
                         val next = ChatGroup(
                             id = groupId,
@@ -1626,7 +1676,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             type = type,
                             selectFields = selectFields.trim(),
                             whereClause = whereClause.trim(),
-                            builtInLabel = group?.builtInLabel,
+                            builtInLabel = builtInLabel,
                         )
                         onSave(next)
                         showToast(localizedContext.getString(R.string.conversation_group_saved))
@@ -1749,7 +1799,8 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 .map(::migrateLegacyBuiltInLabel)
                 .filter {
                     (isGroupId(it.id) || isAllTab(it.id)) &&
-                        (isAllTab(it.id) || it.name.isNotBlank() || it.builtInLabel != null)
+                        (isAllTab(it.id) || it.name.isNotBlank() ||
+                            builtInLabelFor(it.type) != null || it.builtInLabel != null)
                 }
         }.onFailure {
             WeLogger.w(TAG, "failed to decode groups config from $groupsFile", it)
@@ -1762,7 +1813,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     }
 
     private fun migrateLegacyBuiltInLabel(group: ChatGroup): ChatGroup {
-        if (isAllTab(group.id)) return group.copy(name = "")
+        if (isAllTab(group.id)) return group
         if (group.builtInLabel != null) return group
         val label = when (group.type) {
             GroupType.PRESET_UNREAD if group.name == "未读" -> BuiltInGroupLabel.UNREAD
@@ -1839,11 +1890,11 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     }
 
     @Serializable
-    private enum class BuiltInGroupLabel {
-        UNREAD,
-        GROUPS,
-        FRIENDS,
-        OFFICIALS,
+    private enum class BuiltInGroupLabel(@param:StringRes val nameRes: Int) {
+        UNREAD(R.string.conversation_group_default_unread),
+        GROUPS(R.string.conversation_group_default_groups),
+        FRIENDS(R.string.conversation_group_default_friends),
+        OFFICIALS(R.string.conversation_group_default_officials),
     }
 
     @Serializable

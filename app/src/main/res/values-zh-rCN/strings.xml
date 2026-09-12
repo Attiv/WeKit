@@ -1304,6 +1304,8 @@
     <string name="conversation_grouping_tab_layout_equal">等宽铺满</string>
     <string name="conversation_grouping_tab_layout_equal_description">所有标签等宽分配，占满整行</string>
     <string name="conversation_grouping_unread_title">未读提示</string>
+    <string name="conversation_grouping_show_unread">显示未读</string>
+    <string name="conversation_grouping_show_unread_description">在分组标签上显示未读数字和红点</string>
     <string name="conversation_grouping_include_official_unread">计入公众号未读</string>
     <string name="conversation_grouping_include_official_unread_description">将公众号未读计入分组标签的数字和红点</string>
     <string name="fab_default_scan">扫一扫</string>

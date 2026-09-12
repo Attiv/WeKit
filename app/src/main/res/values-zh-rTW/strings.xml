@@ -1301,6 +1301,8 @@
     <string name="conversation_grouping_tab_layout_equal">等寬鋪滿</string>
     <string name="conversation_grouping_tab_layout_equal_description">所有標籤等寬分配，佔滿整行</string>
     <string name="conversation_grouping_unread_title">未讀提示</string>
+    <string name="conversation_grouping_show_unread">顯示未讀</string>
+    <string name="conversation_grouping_show_unread_description">在分組標籤上顯示未讀數字和紅點</string>
     <string name="conversation_grouping_include_official_unread">計入公眾號未讀</string>
     <string name="conversation_grouping_include_official_unread_description">將公眾號未讀計入分組標籤的數字和紅點</string>
     <string name="fab_default_scan">掃一掃</string>

@@ -1342,6 +1342,8 @@
     <string name="conversation_grouping_tab_layout_equal">Equal width</string>
     <string name="conversation_grouping_tab_layout_equal_description">Distribute tabs evenly across the entire row</string>
     <string name="conversation_grouping_unread_title">Unread indicators</string>
+    <string name="conversation_grouping_show_unread">Show unread</string>
+    <string name="conversation_grouping_show_unread_description">Show unread counts and dots on group tabs</string>
     <string name="conversation_grouping_include_official_unread">Include unread from official accounts</string>
     <string name="conversation_grouping_include_official_unread_description">Include official accounts in unread counts and dots on group tabs</string>
     <string name="fab_default_scan">Scan</string>
