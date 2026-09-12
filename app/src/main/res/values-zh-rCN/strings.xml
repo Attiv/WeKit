@@ -838,7 +838,7 @@
     <string name="feature_skip_splash_name">跳过启动页面</string>
     <string name="feature_skip_splash_description">跳过小程序启动页面, 变相去广告 (实验性)</string>
     <string name="feature_spoof_host_version_name">伪装宿主版本</string>
-    <string name="feature_spoof_host_version_description">解决提示版本较低无法使用部分小程序</string>
+    <string name="feature_spoof_host_version_description">伪装小程序基础库版本，并拦截微信官方升级页跳转</string>
     <string name="feature_always_show_interaction_entry_name">常驻互动消息入口</string>
     <string name="feature_always_show_interaction_entry_description">没有未读互动消息时也在朋友圈顶部显示互动消息入口</string>
     <string name="feature_anti_moment_comments_delete_name">朋友圈评论防撤回</string>
@@ -870,7 +870,7 @@
     <string name="feature_no_close_video_player_on_click_name">单击不关闭视频播放器</string>
     <string name="feature_no_close_video_player_on_click_description">朋友圈视频播放器内单击视频将展开/折叠控制栏而非关闭视频 (遇到长视频下意识点一下就给我视频关了, 有点反人类了)</string>
     <string name="feature_no_compress_uploaded_images_name">上传原图</string>
-    <string name="feature_no_compress_uploaded_images_description">上传时不压缩图片, 过大可能上传失败</string>
+    <string name="feature_no_compress_uploaded_images_description">保留朋友圈原图及图库选择的原视频文件；过大或不支持的媒体仍可能上传失败</string>
     <string name="feature_open_details_on_item_click_name">点击空白处查看详情</string>
     <string name="feature_open_details_on_item_click_description">点击一条朋友圈的空白区域直接进入该条朋友圈的详情页面</string>
     <string name="feature_remove_moments_ads_name">拦截朋友圈广告</string>
@@ -945,7 +945,7 @@
     <string name="feature_enable_web_view_features_name">强制启用 WebView 菜单</string>
     <string name="feature_enable_web_view_features_description">强制显示 WebView 页面右上角菜单按钮</string>
     <string name="feature_fake_location_name">虚拟定位</string>
-    <string name="feature_fake_location_description">预设定微信获取到的经纬度</string>
+    <string name="feature_fake_location_description">预设微信与小程序获取到的经纬度；启用后请重启微信</string>
     <string name="feature_feature_flag_manager_name">灰度测试管理器</string>
     <string name="feature_feature_flag_manager_description">覆盖微信灰度测试 (Feature Flag) 的值</string>
     <string name="feature_force_tablet_mode_name">强制平板模式</string>
@@ -3726,4 +3726,15 @@
     <string name="feature_show_friend_add_time_description">在联系人详情头部显示好友添加时间</string>
     <string name="feature_we_contact_header_api_name">联系人详情头部扩展</string>
     <string name="contacts_add_time_value">添加时间: %1$s</string>
+    <string name="contacts_custom_avatar_manage">管理头像</string>
+    <string name="contacts_custom_avatar_scopes">生效范围</string>
+    <string name="contacts_custom_avatar_scope_chat">聊天消息</string>
+    <string name="contacts_custom_avatar_scope_conversation">会话列表</string>
+    <string name="contacts_custom_avatar_scope_contacts">通讯录与联系人选择器</string>
+    <string name="contacts_custom_avatar_scope_profile">好友与群聊资料页</string>
+    <string name="contacts_custom_avatar_scope_moments">朋友圈</string>
+    <string name="contacts_custom_avatar_scope_other">微信其他页面</string>
+    <string name="contacts_custom_avatar_scope_notifications">通知</string>
+    <string name="contacts_custom_avatar_scope_shortcuts">桌面快捷方式</string>
+    <string name="contacts_custom_avatar_shortcut_hint">创建快捷方式时生效；已有快捷方式需重新创建以更新图标。</string>
 </resources>

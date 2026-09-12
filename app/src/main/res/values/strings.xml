@@ -874,7 +874,7 @@
     <string name="feature_skip_splash_name">Skip startup screen</string>
     <string name="feature_skip_splash_description">Skip the Mini App startup page and remove ads in disguise (experimental)</string>
     <string name="feature_spoof_host_version_name">Spoof host version</string>
-    <string name="feature_spoof_host_version_description">Solve the problem that the version is too low to use some Mini Apps</string>
+    <string name="feature_spoof_host_version_description">Spoof the Mini App base library version and block official upgrade-page redirects</string>
     <string name="feature_always_show_interaction_entry_name">Always show interaction entry</string>
     <string name="feature_always_show_interaction_entry_description">When there are no unread interactive messages, the interactive message entry will also be displayed at the top of the Moments.</string>
     <string name="feature_anti_moment_comments_delete_name">Prevent Moments comment deletion</string>
@@ -906,7 +906,7 @@
     <string name="feature_no_close_video_player_on_click_name">Keep video player open on tap</string>
     <string name="feature_no_close_video_player_on_click_description">Clicking on a video in the Moments video player will expand/collapse the control bar instead of closing the video (when encountering a long video, you subconsciously click on it to close the video, which is a bit anti-human)</string>
     <string name="feature_no_compress_uploaded_images_name">Upload original image</string>
-    <string name="feature_no_compress_uploaded_images_description">Do not compress images when uploading. If they are too large, the upload may fail.</string>
+    <string name="feature_no_compress_uploaded_images_description">Preserve original Moments images and gallery video files. Large or unsupported media may still fail to upload.</string>
     <string name="feature_open_details_on_item_click_name">Open Moments details on blank-area tap</string>
     <string name="feature_open_details_on_item_click_description">Click on the blank area of a Moments to directly enter the details page of the Moments.</string>
     <string name="feature_remove_moments_ads_name">Block ads in Moments</string>
@@ -981,7 +981,7 @@
     <string name="feature_enable_web_view_features_name">Force enable WebView menu</string>
     <string name="feature_enable_web_view_features_description">Force display of the menu button in the upper right corner of the WebView page</string>
     <string name="feature_fake_location_name">Fake location</string>
-    <string name="feature_fake_location_description">Preset the latitude and longitude obtained by WeChat</string>
+    <string name="feature_fake_location_description">Preset the coordinates returned to WeChat and Mini Apps. Restart WeChat after enabling the feature.</string>
     <string name="feature_feature_flag_manager_name">Feature flag manager</string>
     <string name="feature_feature_flag_manager_description">Override the value of WeChat grayscale test (Feature Flag)</string>
     <string name="feature_force_tablet_mode_name">Force tablet mode</string>
@@ -3694,4 +3694,15 @@
     <string name="feature_show_friend_add_time_description">Display when a friend was added in the contact profile header</string>
     <string name="feature_we_contact_header_api_name">Contact profile header extensions</string>
     <string name="contacts_add_time_value">Added: %1$s</string>
+    <string name="contacts_custom_avatar_manage">Manage avatars</string>
+    <string name="contacts_custom_avatar_scopes">Apply to</string>
+    <string name="contacts_custom_avatar_scope_chat">Chat messages</string>
+    <string name="contacts_custom_avatar_scope_conversation">Conversation list</string>
+    <string name="contacts_custom_avatar_scope_contacts">Contacts and contact selectors</string>
+    <string name="contacts_custom_avatar_scope_profile">Contact and group profiles</string>
+    <string name="contacts_custom_avatar_scope_moments">Moments</string>
+    <string name="contacts_custom_avatar_scope_other">Other WeChat pages</string>
+    <string name="contacts_custom_avatar_scope_notifications">Notifications</string>
+    <string name="contacts_custom_avatar_scope_shortcuts">Home screen shortcuts</string>
+    <string name="contacts_custom_avatar_shortcut_hint">Applies when creating shortcuts. Recreate existing shortcuts to update their icons.</string>
 </resources>
