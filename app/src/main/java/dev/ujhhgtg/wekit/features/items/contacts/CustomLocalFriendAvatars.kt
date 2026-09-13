@@ -107,7 +107,6 @@ object CustomLocalFriendAvatars : ClickableFeature(), IContactInfoProvider, IRes
     override val descriptionRes = R.string.feature_custom_local_friend_avatars_description
     override val targetProcesses = setOf(TargetProcess.MAIN, TargetProcess.PUSH)
 
-    private const val PREF_KEY = "custom_avatar"
     private const val SEP = ";"
     private const val VIEW_TAG_CUSTOM_AVATAR = 0x57434156
     private const val VIEW_TAG_AVATAR_SCOPE = 0x57434153
@@ -443,28 +442,23 @@ object CustomLocalFriendAvatars : ClickableFeature(), IContactInfoProvider, IRes
         val hasCustomAvatar = avatarMap.containsKey(wxId)
         return listOf(
             PreferenceItem(
-                key = PREF_KEY,
                 title = activity.localizedContactsString(
                     if (hasCustomAvatar) R.string.contacts_custom_avatar_change
                     else R.string.contacts_custom_avatar_add,
                 ),
-                position = 1
+                position = 1,
+                onClick = onClick@{ activity ->
+                    val clickedWxId = activity.currentWxId ?: return@onClick
+                    if (avatarMap.containsKey(clickedWxId)) {
+                        showContactAvatarDialog(activity, clickedWxId)
+                    } else {
+                        selectAvatarImage(activity, clickedWxId)
+                    }
+                },
             )
         )
     }
 
-    override fun onItemClick(activity: Activity, key: String): Boolean {
-        if (key != PREF_KEY) return false
-        val wxId = activity.currentWxId ?: return true
-
-        if (avatarMap.containsKey(wxId)) {
-            showContactAvatarDialog(activity, wxId)
-        } else {
-            selectAvatarImage(activity, wxId)
-        }
-
-        return true
-    }
 
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {

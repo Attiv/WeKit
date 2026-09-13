@@ -86,8 +86,6 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
         }
     }
 
-    private const val PREF_KEY = "real_name_last_char"
-
     private val cacheFile by lazy { KnownPaths.moduleData / "real_names.json" }
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
@@ -223,41 +221,37 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
 
         return listOf(
             PreferenceItem(
-                key = PREF_KEY,
                 title = activity.localizedChatString(R.string.chat_real_name_fetch_title),
                 summary = realNames[memberId]?.let { activity.localizedChatString(R.string.chat_real_name_value, it) }
                     ?: activity.localizedChatString(R.string.chat_contact_tap_to_fetch),
-                position = 1
+                position = 1,
+                onClick = onClick@{ activity ->
+                    activity.run {
+                        val clickedMemberId = activity.currentWxId ?: return@onClick
+                        val groupId = WeCurrentConversationApi.value.takeIf { it.isGroupChatWxId }
+
+                        WeLogger.i(TAG, "fetching last char for $clickedMemberId $groupId")
+
+                        val cached = realNames[clickedMemberId]
+                        if (cached != null) {
+                            showToast(activity, activity.localizedChatString(R.string.chat_real_name_value, cached))
+                            return@onClick
+                        }
+
+                        showToast(activity, activity.localizedChatString(R.string.chat_real_name_fetching))
+                        actualFetchRealName(clickedMemberId, groupId) { result ->
+                            mainHandler.post {
+                                when (result) {
+                                    is FetchResult.Found -> showToast(activity, activity.localizedChatString(R.string.chat_real_name_value, result.realName))
+                                    FetchResult.NoRealName -> showToast(activity, activity.localizedChatString(R.string.chat_real_name_not_found))
+                                    is FetchResult.Failure -> showToast(activity, activity.localizedChatString(R.string.chat_real_name_fetch_failed, result.errMsg ?: result.errCode))
+                                }
+                            }
+                        }
+                    }
+                },
             )
         )
     }
 
-    override fun onItemClick(activity: Activity, key: String): Boolean {
-        if (key != PREF_KEY) return false
-
-        activity.run {
-            val memberId = activity.currentWxId ?: return true
-            val groupId = WeCurrentConversationApi.value.takeIf { it.isGroupChatWxId }
-
-            WeLogger.i(TAG, "fetching last char for $memberId $groupId")
-
-            val cached = realNames[memberId]
-            if (cached != null) {
-                showToast(activity, activity.localizedChatString(R.string.chat_real_name_value, cached))
-                return true
-            }
-
-            showToast(activity, activity.localizedChatString(R.string.chat_real_name_fetching))
-            actualFetchRealName(memberId, groupId) { result ->
-                mainHandler.post {
-                    when (result) {
-                        is FetchResult.Found -> showToast(activity, activity.localizedChatString(R.string.chat_real_name_value, result.realName))
-                        FetchResult.NoRealName -> showToast(activity, activity.localizedChatString(R.string.chat_real_name_not_found))
-                        is FetchResult.Failure -> showToast(activity, activity.localizedChatString(R.string.chat_real_name_fetch_failed, result.errMsg ?: result.errCode))
-                    }
-                }
-            }
-            return true
-        }
-    }
 }

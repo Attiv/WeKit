@@ -61,11 +61,9 @@ object BruteForceGroupMemberRealNamesFirstChar : SwitchFeature(),
     override val descriptionRes = R.string.feature_brute_force_group_member_real_names_first_char_description
 
     private const val TAG = "BruteForceGroupMemberRealNamesFirstChar"
-    private const val PREF_KEY = "exploit_real_name_first_char"
 
     /** WeChat's retcode for "姓名验证不正确" — i.e. the guessed [Char] was wrong. */
     private const val RETCODE_WRONG_NAME = "268502266"
-
 
     // ── Result cache ──────────────────────────────────────────────────────────
 
@@ -149,28 +147,23 @@ object BruteForceGroupMemberRealNamesFirstChar : SwitchFeature(),
 
         return listOf(
             WeContactPrefsScreenApi.PreferenceItem(
-                key = PREF_KEY,
                 title = localizedChatString(R.string.chat_real_name_bruteforce_title),
                 summary = realNames[memberId]?.let {
                     localizedChatString(R.string.chat_real_name_bruteforce_first_char, it)
                 } ?: localizedChatString(R.string.chat_real_name_bruteforce_tap),
-                position = 1
+                position = 1,
+                onClick = onClick@{ activity ->
+                    val clickedMemberId = activity.currentWxId ?: return@onClick
+                    // Non-null only when the profile was opened from inside a group chat.
+                    // Null means a direct friend lookup — beforetransfer and transferplaceorder
+                    // both handle this case with groupId omitted.
+                    val groupId = activity.intent.getStringExtra("Contact_ChatRoomId")
+                        ?.takeIf { it.isNotEmpty() }
+
+                    showComposeDialog(activity) { ExploitDialog(clickedMemberId, groupId) }
+                },
             )
         )
-    }
-
-    override fun onItemClick(activity: Activity, key: String): Boolean {
-        if (key != PREF_KEY) return false
-
-        val memberId = activity.currentWxId ?: return true
-        // Non-null only when the profile was opened from inside a group chat.
-        // Null means a direct friend lookup — beforetransfer and transferplaceorder
-        // both handle this case with groupId omitted.
-        val groupId = activity.intent.getStringExtra("Contact_ChatRoomId")
-            ?.takeIf { it.isNotEmpty() }
-
-        showComposeDialog(activity) { ExploitDialog(memberId, groupId) }
-        return true
     }
 
     // ── Brute-force orchestration ─────────────────────────────────────────────
