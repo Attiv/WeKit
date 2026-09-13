@@ -14,13 +14,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CheckableDropdownMenuItem
 import androidx.compose.material3.DropdownMenuGroup
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenuPopup
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
@@ -42,18 +42,21 @@ import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Content_copy
 import com.composables.icons.materialsymbols.outlined.Check
 import com.composables.icons.materialsymbols.outlined.Delete_sweep
-import com.composables.icons.materialsymbols.outlined.Globe
 import com.composables.icons.materialsymbols.outlined.History
+import com.composables.icons.materialsymbols.outlined.Home
 import com.composables.icons.materialsymbols.outlined.Info
 import com.composables.icons.materialsymbols.outlined.More_vert
+import com.composables.icons.materialsymbols.outlined.Open_in_new
 import com.composables.icons.materialsymbols.outlined.Person
 import com.composables.icons.materialsymbols.outlined.Shopping_cart
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.i18n.LocaleResourceMode
 import dev.ujhhgtg.wekit.i18n.WeKitLocaleProvider
+import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.IconButton
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.content.m3.BaseItemContainer
+import dev.ujhhgtg.wekit.ui.content.m3.BaseWidget
 import dev.ujhhgtg.wekit.ui.content.m3.SETTINGS_CONTENT_BOTTOM_INSET
 import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.content.m3.SettingsConfirmDialog
@@ -63,6 +66,7 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.copyToClipboard
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.formatEpoch
+import dev.ujhhgtg.wekit.utils.openInSystem
 
 @Keep
 class QrCodeRecordSettingsActivity : ComponentActivity() {
@@ -93,7 +97,6 @@ class QrCodeRecordSettingsActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun QrCodeRecordSettingsScreen(
     records: List<QrCodeRecord.QrRecord>,
@@ -120,7 +123,7 @@ private fun QrCodeRecordSettingsScreen(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },
                 ) {
-                    DropdownMenuGroup(shapes = MenuDefaults.groupShape(0, 2)) {
+                    DropdownMenuGroup(shapes = MenuDefaults.groupShapes()) {
                         CheckableDropdownMenuItem(
                             checked = homeMenuEnabled,
                             onCheckedChange = { enabled ->
@@ -128,33 +131,46 @@ private fun QrCodeRecordSettingsScreen(
                                 homeMenuEnabled = enabled
                                 QrCodeRecord.showInHomeMenu = enabled
                             },
+                            leadingIcon = {
+                                Icon(
+                                    if (homeMenuEnabled) MaterialSymbols.Outlined.Check
+                                    else MaterialSymbols.Outlined.Home,
+                                    contentDescription = null,
+                                )
+                            },
                             text = { Text(stringResource(R.string.qr_code_record_home_menu_enabled)) },
-                            supportingText = { Text(stringResource(R.string.qr_code_record_home_menu_description)) },
-                            trailingContent = if (homeMenuEnabled) {
-                                { Icon(MaterialSymbols.Outlined.Check, contentDescription = null) }
-                            } else null,
                             horizontalArrangement = Arrangement.SpaceBetween,
                             shapes = MenuDefaults.itemShape(0, 1),
-                        )
-                    }
-                    Spacer(Modifier.size(2.dp))
-                    DropdownMenuGroup(shapes = MenuDefaults.groupShape(1, 2)) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.action_clear)) },
-                            leadingIcon = { Icon(MaterialSymbols.Outlined.Delete_sweep, null) },
-                            enabled = records.isNotEmpty(),
-                            onClick = { menuExpanded = false; confirmClear = true },
-                            shape = MenuDefaults.standaloneItemShape,
-                            colors = MenuDefaults.itemColors(
-                                textColor = MaterialTheme.colorScheme.error,
-                                leadingIconColor = MaterialTheme.colorScheme.error,
-                            ),
                         )
                     }
                 }
             }
         },
     ) {
+        item {
+            SegmentedColumn {
+                item {
+                    BaseWidget(
+                        icon = MaterialSymbols.Outlined.History,
+                        title = stringResource(R.string.qr_code_record_count, records.size),
+                        description = stringResource(R.string.qr_code_record_native_open_description),
+                        selected = true,
+                        trailingContent = {
+                            IconButton(
+                                onClick = { confirmClear = true },
+                                enabled = records.isNotEmpty(),
+                            ) {
+                                Icon(
+                                    MaterialSymbols.Outlined.Delete_sweep,
+                                    contentDescription = stringResource(R.string.action_clear),
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+        }
         if (records.isEmpty()) {
             item {
                 SegmentedColumn {
@@ -227,38 +243,33 @@ private fun QrRecordCard(record: QrCodeRecord.QrRecord) {
 
     SegmentedColumn {
         item {
-            BaseItemContainer {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, end = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(stringResource(typeRes), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium)
-                            Text(formatEpoch(record.time, true), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-                        }
-                        Row {
-                            IconButton({
-                                runCatching { QrCodeRecord.openInWeChat(activity, record) }
-                                    .onFailure {
-                                        WeLogger.e("QrCodeRecord", "Failed to open native scan handler", it)
-                                        showToast(context, openFailedMessage)
-                                    }
-                            }) { Icon(MaterialSymbols.Outlined.Globe, stringResource(R.string.system_qr_code_record_open)) }
-                            IconButton({ copyToClipboard(context, record.url); showToast(context, copiedMessage) }) {
-                                Icon(MaterialSymbols.Outlined.Content_copy, stringResource(R.string.system_qr_code_record_copy))
-                            }
+            BaseWidget(
+                icon = icon,
+                iconColor = MaterialTheme.colorScheme.primary,
+                title = stringResource(typeRes),
+                description = formatEpoch(record.time, true),
+                trailingContent = {
+                    if (!uri.scheme.isNullOrEmpty()) {
+                        IconButton({ uri.openInSystem(context, true) }) {
+                            Icon(
+                                MaterialSymbols.Outlined.Open_in_new,
+                                contentDescription = stringResource(R.string.system_qr_code_record_open_in_system),
+                            )
                         }
                     }
+                },
+            )
+        }
+        item {
+            BaseItemContainer {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                     SelectionContainer {
                         Text(
                             record.url,
-                            modifier = Modifier.padding(horizontal = 16.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = if (expanded) Int.MAX_VALUE else 4,
@@ -267,11 +278,37 @@ private fun QrRecordCard(record: QrCodeRecord.QrRecord) {
                         )
                     }
                     if (truncated || expanded) {
-                        TextButton(modifier = Modifier.padding(horizontal = 16.dp), onClick = { expanded = !expanded }) {
+                        TextButton(onClick = { expanded = !expanded }) {
                             Text(stringResource(if (expanded) R.string.qr_code_record_collapse else R.string.qr_code_record_expand))
                         }
                     }
-                    Spacer(Modifier.size(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Button(
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.filledTonalButtonColors(),
+                            onClick = {
+                                runCatching { QrCodeRecord.openInWeChat(activity, record) }
+                                    .onFailure {
+                                        WeLogger.e("QrCodeRecord", "Failed to open native scan handler", it)
+                                        showToast(context, openFailedMessage)
+                                    }
+                            },
+                        ) { Text(stringResource(R.string.system_qr_code_record_open)) }
+                        TextButton(
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                copyToClipboard(context, record.url)
+                                showToast(context, copiedMessage)
+                            },
+                        ) {
+                            Icon(MaterialSymbols.Outlined.Content_copy, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.system_qr_code_record_copy))
+                        }
+                    }
                 }
             }
         }
