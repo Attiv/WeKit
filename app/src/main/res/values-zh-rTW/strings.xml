@@ -3591,6 +3591,7 @@
     <string name="qr_code_record_collapse">收合內容</string>
     <string name="system_qr_code_record_clear_description">確定清空所有掃描記錄嗎？此操作無法復原。</string>
     <string name="qr_code_record_menu">更多選項</string>
+    <string name="qr_code_record_home_menu_title">掃描記錄</string>
     <string name="qr_code_record_home_menu_enabled">首頁快捷入口</string>
     <string name="system_safe_mode_enable_title">開啓安全模式？</string>
     <string name="system_safe_mode_enable_message">開啓後，下次啓動微信時普通功能不會被加載，只保留核心功能；普通功能仍會顯示在設置頁中，以便關閉安全模式後恢復使用。\n\n確認開啓安全模式？</string>

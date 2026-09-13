@@ -3607,6 +3607,7 @@
     <string name="qr_code_record_collapse">收起内容</string>
     <string name="system_qr_code_record_clear_description">确定清空所有扫描记录吗？此操作无法撤销。</string>
     <string name="qr_code_record_menu">更多选项</string>
+    <string name="qr_code_record_home_menu_title">扫描记录</string>
     <string name="qr_code_record_home_menu_enabled">首页快捷入口</string>
     <string name="system_safe_mode_enable_title">开启安全模式？</string>
     <string name="system_safe_mode_enable_message">开启后，下次启动微信时普通功能不会被加载，只保留核心功能；普通功能仍会显示在设置页中，以便关闭安全模式后恢复使用。\n\n确认开启安全模式？</string>

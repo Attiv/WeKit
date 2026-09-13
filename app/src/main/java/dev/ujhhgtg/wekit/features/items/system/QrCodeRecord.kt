@@ -13,7 +13,7 @@ import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.items.home_screen_menu.localizedHomeMenuString
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
-import dev.ujhhgtg.wekit.ui.utils.CameraIcon
+import dev.ujhhgtg.wekit.ui.utils.QrCodeIcon
 import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.nul
@@ -77,8 +77,8 @@ object QrCodeRecord : ClickableFeature(), IResolveDex, WeHomeScreenPopupMenuApi.
         return listOf(
             WeHomeScreenPopupMenuApi.MenuItem(
                 777031,
-                localizedHomeMenuString(R.string.feature_qr_code_record_name),
-                CameraIcon,
+                localizedHomeMenuString(R.string.qr_code_record_home_menu_title),
+                QrCodeIcon,
             ) {
                 val activity = LauncherUI.getInstance()!!
                 activity.startActivity(Intent(activity, QrCodeRecordSettingsActivity::class.java))
