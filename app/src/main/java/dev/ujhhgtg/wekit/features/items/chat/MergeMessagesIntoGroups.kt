@@ -2,7 +2,6 @@ package dev.ujhhgtg.wekit.features.items.chat
 
 import android.util.SparseBooleanArray
 import android.view.View
-import android.widget.TextView
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
@@ -106,12 +105,8 @@ object MergeMessagesIntoGroups : SwitchFeature(), WeChatMessageViewApi.ICreateVi
 
         // Display Name: only shown in group chats
         if (isGroupChat) {
-            val displayNameView = displayNameField.get(tag) as? View
-            val hasDisplayName = (displayNameView as? TextView)
-                ?.text
-                ?.isNotEmpty() == true
-            displayNameView?.visibility =
-                if (isFirstInGroup && hasDisplayName) View.VISIBLE else View.GONE
+            (displayNameField.get(tag) as? View)?.visibility =
+                if (isFirstInGroup) View.VISIBLE else View.GONE
         }
     }
 

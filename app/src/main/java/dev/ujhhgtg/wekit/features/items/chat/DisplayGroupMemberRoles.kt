@@ -56,8 +56,7 @@ import dev.ujhhgtg.wekit.utils.unreachable
 import kotlin.math.roundToInt
 
 object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
-    WeChatMessageViewApi.ICreateViewListener,
-    WeChatMessageViewApi.IPostBindListener {
+    WeChatMessageViewApi.ICreateViewListener {
 
     override val technicalId = "显示群成员身份"
     override val nameRes = R.string.feature_display_group_member_roles_name
@@ -76,10 +75,6 @@ object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
 
     override fun onDisable() {
         WeChatMessageViewApi.removeListener(this)
-    }
-
-    override fun onPostBind(param: HookParam, view: View) {
-        onCreateView(param, view)
     }
 
     private const val DEFAULT_OWNER_BG = "#FFFFC107"

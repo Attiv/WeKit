@@ -1,7 +1,6 @@
 package dev.ujhhgtg.wekit.features.api.ui
 
 import android.view.View
-import android.widget.TextView
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
@@ -27,11 +26,6 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
         fun onCreateView(
             param: HookParam, view: View
         )
-    }
-
-    /** Listener invoked after host-posted binding work has had a chance to update the row. */
-    interface IPostBindListener {
-        fun onPostBind(param: HookParam, view: View)
     }
 
     interface IMessageViewLifecycleListener {
@@ -93,20 +87,6 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
     }
 
     override fun onEnable() {
-        methodChatItemOnBindView.hookBefore {
-            val holder = args[0]!!
-            val userTextView = holder.reflekt()
-                .firstFieldOrNull { name = "userTV"; superclass() }
-                ?.get() as? TextView
-            userTextView?.let {
-                // Host bind paths can hide userTV without clearing its old text. Reset it before
-                // every bind so RecyclerView reuse cannot expose a nickname from another row or
-                // conversation when a later feature makes the view visible again.
-                it.text = null
-                it.visibility = View.GONE
-            }
-        }
-
         methodChatItemOnBindView.hookAfter {
             val holder = args[0]!!
             val view = holder.reflekt()
@@ -135,21 +115,6 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
                     listener.onCreateView(this, view)
                 } catch (ex: Exception) {
                     WeLogger.e(TAG, "listener ${listener.javaClass.name} threw", ex)
-                }
-            }
-
-            // A few host item types populate userTV from a posted callback. Give listeners that
-            // depend on the final nickname a second, binding-checked pass after those callbacks.
-            view.post {
-                val current = synchronized(currentBindings) { currentBindings[view] }
-                if (current?.instance !== message.instance) return@post
-                for (listener in listeners) {
-                    if (listener !is IPostBindListener) continue
-                    try {
-                        listener.onPostBind(this, view)
-                    } catch (ex: Exception) {
-                        WeLogger.e(TAG, "post-bind listener ${listener.javaClass.name} threw", ex)
-                    }
                 }
             }
         }
