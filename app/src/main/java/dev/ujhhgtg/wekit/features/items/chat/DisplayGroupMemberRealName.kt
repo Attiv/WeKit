@@ -12,6 +12,7 @@ import androidx.core.view.isGone
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.features.api.ui.WeChatMessageViewApi
+import dev.ujhhgtg.wekit.features.api.core.models.MessageInfo
 import dev.ujhhgtg.wekit.features.core.ApiFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.HookParam
@@ -37,7 +38,8 @@ import dev.ujhhgtg.wekit.utils.HookParam
  * [DisplayGroupMemberRealNamesLastChar.fetchRealName]; on completion the same view is updated
  * if it has not yet been recycled to a different sender.
  */
-object DisplayGroupMemberRealName : ApiFeature(), WeChatMessageViewApi.ICreateViewListener {
+object DisplayGroupMemberRealName : ApiFeature(), WeChatMessageViewApi.ICreateViewListener,
+    WeChatMessageViewApi.INicknameUpdateListener {
 
     override val technicalId = "显示群成员实名全字"
     override val nameRes = R.string.feature_display_group_member_real_name_name
@@ -65,16 +67,22 @@ object DisplayGroupMemberRealName : ApiFeature(), WeChatMessageViewApi.ICreateVi
 
     override fun onEnable() {
         WeChatMessageViewApi.addListener(this)
+        WeChatMessageViewApi.addNicknameUpdateListener(this)
     }
 
     override fun onDisable() {
         WeChatMessageViewApi.removeListener(this)
+        WeChatMessageViewApi.removeNicknameUpdateListener(this)
     }
 
     // ── ICreateViewListener ───────────────────────────────────────────────────
 
     override fun onCreateView(param: HookParam, view: View) {
-        val msgInfo = WeChatMessageViewApi.getMsgInfoFromParam(param)
+        // Wait for WeChat's nickname setter; onBindView can run before it and expose recycled text.
+    }
+
+    override fun onNicknameUpdated(view: View, message: MessageInfo, nickname: CharSequence) {
+        val msgInfo = message
         if (!msgInfo.isInGroupChat) return
         if (msgInfo.isSend != 0) return
         val sender = runCatching { msgInfo.sender }.getOrNull() ?: return

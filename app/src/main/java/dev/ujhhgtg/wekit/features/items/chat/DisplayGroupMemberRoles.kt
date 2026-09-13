@@ -39,6 +39,7 @@ import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeConversationApi
 import dev.ujhhgtg.wekit.features.api.ui.WeChatMessageViewApi
+import dev.ujhhgtg.wekit.features.api.core.models.MessageInfo
 import dev.ujhhgtg.wekit.features.items.contacts.GroupMemberRoleSpan
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
@@ -56,7 +57,8 @@ import dev.ujhhgtg.wekit.utils.unreachable
 import kotlin.math.roundToInt
 
 object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
-    WeChatMessageViewApi.ICreateViewListener {
+    WeChatMessageViewApi.ICreateViewListener,
+    WeChatMessageViewApi.INicknameUpdateListener {
 
     override val technicalId = "显示群成员身份"
     override val nameRes = R.string.feature_display_group_member_roles_name
@@ -71,10 +73,12 @@ object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
 
     override fun onEnable() {
         WeChatMessageViewApi.addListener(this)
+        WeChatMessageViewApi.addNicknameUpdateListener(this)
     }
 
     override fun onDisable() {
         WeChatMessageViewApi.removeListener(this)
+        WeChatMessageViewApi.removeNicknameUpdateListener(this)
     }
 
     private const val DEFAULT_OWNER_BG = "#FFFFC107"
@@ -281,7 +285,12 @@ object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
         param: HookParam,
         view: View
     ) {
-        val msgInfo = WeChatMessageViewApi.getMsgInfoFromParam(param)
+        // Rendering before WeChat's nickname setter runs reads recycled text.  The setter
+        // callback below is the authoritative point at which the current nickname exists.
+    }
+
+    override fun onNicknameUpdated(view: View, message: MessageInfo, nickname: CharSequence) {
+        val msgInfo = message
         if (!msgInfo.isInGroupChat) return
         if (msgInfo.isSend != 0) return
         val sender = runCatching { msgInfo.sender }.getOrNull() ?: return
