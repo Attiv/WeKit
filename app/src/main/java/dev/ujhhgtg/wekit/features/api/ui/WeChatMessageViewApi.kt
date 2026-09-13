@@ -218,6 +218,10 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
         synchronized(currentBindings) { currentBindings[view] }
 
     fun getMsgInfoFromParam(param: HookParam): MessageInfo {
+        val item = param.args[1]
+        val current = item?.let { findMessageInfo(it) }
+        if (current != null) return current
+
         val chattingDataAdapter = param.thisObject!!.reflekt()
             .firstField { type = WeMessageApi.classChattingDataAdapter.clazz }
             .get()!!
@@ -226,5 +230,19 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
             .firstMethod { name = "getItem" }
             .invoke(msgId)!!
         return MessageInfo(msgInfo)
+    }
+
+    private fun findMessageInfo(value: Any, depth: Int = 2): MessageInfo? {
+        if (value.javaClass == WeMessageApi.classMsgInfo.clazz) {
+            return MessageInfo(value)
+        }
+        if (depth == 0) return null
+
+        value.reflekt().fields { superclass() }.forEach { field ->
+            val nested = runCatching { field.get() }.getOrNull() ?: return@forEach
+            val result = findMessageInfo(nested, depth - 1)
+            if (result != null) return result
+        }
+        return null
     }
 }
