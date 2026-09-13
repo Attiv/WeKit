@@ -1,6 +1,7 @@
 package dev.ujhhgtg.wekit.features.api.ui
 
 import android.view.View
+import android.widget.TextView
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
@@ -87,6 +88,20 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
     }
 
     override fun onEnable() {
+        methodChatItemOnBindView.hookBefore {
+            val holder = args[0]!!
+            val userTextView = holder.reflekt()
+                .firstField { name = "userTV"; superclass() }
+                .get() as? TextView
+            userTextView?.let {
+                // Host bind paths can hide userTV without clearing its old text. Reset it before
+                // every bind so RecyclerView reuse cannot expose a nickname from another row or
+                // conversation when a later feature makes the view visible again.
+                it.text = null
+                it.visibility = View.GONE
+            }
+        }
+
         methodChatItemOnBindView.hookAfter {
             val holder = args[0]!!
             val view = holder.reflekt()
