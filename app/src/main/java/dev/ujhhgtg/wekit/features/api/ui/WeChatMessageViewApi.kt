@@ -29,6 +29,11 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
         )
     }
 
+    /** Listener invoked after host-posted binding work has had a chance to update the row. */
+    interface IPostBindListener {
+        fun onPostBind(param: HookParam, view: View)
+    }
+
     interface IMessageViewLifecycleListener {
         fun onMessageViewAttached(view: View, message: MessageInfo) {}
         fun onMessageViewDetached(view: View, message: MessageInfo) {}
@@ -130,6 +135,21 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
                     listener.onCreateView(this, view)
                 } catch (ex: Exception) {
                     WeLogger.e(TAG, "listener ${listener.javaClass.name} threw", ex)
+                }
+            }
+
+            // A few host item types populate userTV from a posted callback. Give listeners that
+            // depend on the final nickname a second, binding-checked pass after those callbacks.
+            view.post {
+                val current = synchronized(currentBindings) { currentBindings[view] }
+                if (current?.instance !== message.instance) return@post
+                for (listener in listeners) {
+                    if (listener !is IPostBindListener) continue
+                    try {
+                        listener.onPostBind(this, view)
+                    } catch (ex: Exception) {
+                        WeLogger.e(TAG, "post-bind listener ${listener.javaClass.name} threw", ex)
+                    }
                 }
             }
         }
