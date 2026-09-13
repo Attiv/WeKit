@@ -1,7 +1,6 @@
 package dev.ujhhgtg.wekit.features.api.ui
 
 import android.view.View
-import android.widget.TextView
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
@@ -87,46 +86,7 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
         }
     }
 
-    /**
-     * Chat item nickname setter.  The base implementation only hides `userTV` when the
-     * nickname is null; recycled holders therefore retain the previous conversation's text.
-     * This method is named T/X in the supported host revisions (and has the same two-argument
-     * shape in the intermediate revisions).
-     */
-    private val methodChatItemSetNickname by dexMethod {
-        matcher {
-            declaredClass = "com.tencent.mm.ui.chatting.viewitems.a0"
-            paramTypes(null, CharSequence::class.java)
-            returnType(Void.TYPE)
-        }
-    }
-
     override fun onEnable() {
-        // a0.l/n may return before calling T/X (for example when the host has no nickname).
-        // Clear the recycled value before every bind so those early returns cannot expose it.
-        methodChatItemOnBindView.hookBefore {
-            val holder = args[0]!!
-            val userTv = holder.reflekt()
-                .firstFieldOrNull { name = "userTV"; superclass() }
-                ?.get() as? TextView
-            userTv?.let {
-                it.text = null
-                it.visibility = View.GONE
-            }
-        }
-
-        methodChatItemSetNickname.hookAfter {
-            if (args[1] != null) return@hookAfter
-            val itemView = args[0] ?: return@hookAfter
-            val userTv = itemView.reflekt()
-                .firstField {
-                    name = "userTV"
-                    superclass()
-                }
-                .get() as? TextView ?: return@hookAfter
-            userTv.text = null
-        }
-
         methodChatItemOnBindView.hookAfter {
             val holder = args[0]!!
             val view = holder.reflekt()
