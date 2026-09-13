@@ -96,8 +96,8 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
         methodChatItemOnBindView.hookBefore {
             val holder = args[0]!!
             val userTextView = holder.reflekt()
-                .firstField { name = "userTV"; superclass() }
-                .get() as? TextView
+                .firstFieldOrNull { name = "userTV"; superclass() }
+                ?.get() as? TextView
             userTextView?.let {
                 // Host bind paths can hide userTV without clearing its old text. Reset it before
                 // every bind so RecyclerView reuse cannot expose a nickname from another row or
