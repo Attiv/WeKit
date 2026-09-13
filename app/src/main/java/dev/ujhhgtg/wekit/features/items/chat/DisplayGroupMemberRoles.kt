@@ -39,6 +39,7 @@ import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeConversationApi
 import dev.ujhhgtg.wekit.features.api.ui.WeChatMessageViewApi
+import dev.ujhhgtg.wekit.features.items.contacts.GroupMemberRoleSpan
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs
@@ -51,7 +52,6 @@ import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.content.m3.SwitchWidget
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.HookParam
-import dev.ujhhgtg.wekit.utils.collections.LruCache
 import dev.ujhhgtg.wekit.utils.unreachable
 import kotlin.math.roundToInt
 
@@ -68,9 +68,6 @@ object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
             usingEqStrings("MicroMsg.ChatRoomMember", "getChatroomData hashMap is null!")
         }
     }
-
-    // Pair<groupId: String, sender: String>, type: Int (1=owner, 2=admin, 3=member)
-    private val resolvedRoles = LruCache<Pair<String, String>, Int>()
 
     override fun onEnable() {
         WeChatMessageViewApi.addListener(this)
@@ -290,30 +287,25 @@ object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
         val sender = runCatching { msgInfo.sender }.getOrNull() ?: return
         val groupId = msgInfo.talker
 
-        val role = resolvedRoles.getOrPut(groupId to sender) {
-            val group = WeConversationApi.getGroup(groupId)
-            val senderIsGroupOwner = group.reflekt()
-                .firstField {
-                    name = "field_roomowner"
-                    superclass()
-                }
-                .get() as? String? == sender
+        val group = WeConversationApi.getGroup(groupId)
+        val senderIsGroupOwner = group.reflekt()
+            .firstField {
+                name = "field_roomowner"
+                superclass()
+            }
+            .get() as? String? == sender
 
-            if (senderIsGroupOwner) return@getOrPut 1
-
+        val role = if (senderIsGroupOwner) {
+            1
+        } else {
             val memberData = methodGetChatroomData.method.invoke(group, sender) ?: return
             val memberRoleFlags = memberData.reflekt()
                 .firstField {
                     type = Int::class
                 }
                 .get()!! as Int
-            val senderIsGroupManager = memberRoleFlags and 2048 != 0
-
-            return@getOrPut if (senderIsGroupManager) 2 else 3
+            if (memberRoleFlags and 2048 != 0) 2 else 3
         }
-
-        // Hidden badges leave the name untouched so downstream hooks see no role span prefix.
-        if (role == 1 && !showOwner || role == 2 && !showAdmin || role == 3 && !showMember) return
 
         val tag = view.tag
         val textView = tag.reflekt()
@@ -323,7 +315,25 @@ object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
             }
             // might be null and throw NPE, although it doesn't affect functionality, I don't want it to litter the error logs
             .get() as? TextView? ?: return
-        val displayName = textView.text
+        // A message view can be rebound more than once without being recreated.  Remove role
+        // badges previously injected by this feature before constructing the new value.  Keeping
+        // the live Spannable (rather than converting to a String) is important: WeChat uses
+        // ReplacementSpans for emoji and other special nickname characters.
+        val displayName = textView.text.removeInjectedRolePrefixes()
+
+        // MergeMessagesIntoGroups can hide userTV for continuation rows.  Do not rewrite a
+        // hidden holder; restoring a stale badge is enough and the next visible bind will apply
+        // the current member's role.
+        if (textView.visibility != View.VISIBLE) {
+            if (displayName !== textView.text) textView.text = displayName
+            return
+        }
+
+        // Hidden badges should also remove a prefix left on a recycled view by an earlier bind.
+        if (role == 1 && !showOwner || role == 2 && !showAdmin || role == 3 && !showMember) {
+            if (displayName !== textView.text) textView.text = displayName
+            return
+        }
 
         val roleText = when (role) {
             1 -> roleText(ownerText, R.string.chat_group_role_owner)
@@ -367,6 +377,41 @@ object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
     }
 }
 
+/**
+ * Removes one or more role prefixes inserted by [DisplayGroupMemberRoles].
+ *
+ * Recycled message views may contain a badge from an earlier bind (or several badges from older
+ * versions of the feature).  Copying those [ReplacementSpan]s into a new text value makes Android
+ * render them as the replacement object (the dashed `OBJ` box), especially when the nickname also
+ * contains a host-provided replacement span.  We identify our prefixes by their span type and
+ * delete only the badge text plus its separating space, preserving all nickname spans.  The
+ * dedicated [GroupMemberRoleSpan] marker keeps this independent from other host ReplacementSpans.
+ */
+private fun CharSequence.removeInjectedRolePrefixes(): CharSequence {
+    val spanned = this as? Spanned ?: return this
+    val builder = SpannableStringBuilder(spanned)
+
+    while (builder.isNotEmpty()) {
+        val prefixSpan = builder
+            .getSpans(0, builder.length, GroupMemberRoleSpan::class.java)
+            .filter { builder.getSpanStart(it) == 0 }
+            .maxByOrNull { builder.getSpanEnd(it) }
+            ?: break
+        val end = builder.getSpanEnd(prefixSpan)
+        // Every injected badge is followed by one separator before the nickname.  An empty
+        // nickname is possible for a deleted account, in which case the badge reaches the end.
+        if (end <= 0) break
+        val deleteEnd = when {
+            end == builder.length -> end
+            builder[end] == ' ' -> end + 1
+            else -> break
+        }
+        builder.delete(0, deleteEnd)
+    }
+
+    return builder
+}
+
 /** Single-line inline text field filling a [BaseSupportingWidget] supporting slot. */
 @Composable
 private fun InlineRoleTextField(value: String, onValueChange: (String) -> Unit) {
@@ -385,7 +430,7 @@ private class RoundedBackgroundSpan(
     private val textColor: Int,
     private val cornerRadius: Float = 12f,
     private val padding: Float = 16f
-) : ReplacementSpan() {
+) : ReplacementSpan(), GroupMemberRoleSpan {
 
     override fun getSize(
         paint: Paint,
@@ -394,7 +439,7 @@ private class RoundedBackgroundSpan(
         end: Int,
         fm: Paint.FontMetricsInt?
     ): Int {
-        return (paint.measureText(text, start, end) + padding * 2).roundToInt()
+        return (paint.measureText(text.subSequence(start, end).toString()) + padding * 2).roundToInt()
     }
 
     override fun draw(
@@ -408,7 +453,8 @@ private class RoundedBackgroundSpan(
         bottom: Int,
         paint: Paint
     ) {
-        val width = paint.measureText(text, start, end)
+        val label = text.subSequence(start, end).toString()
+        val width = paint.measureText(label)
 
         val rect = RectF(x, top.toFloat(), x + width + padding * 2, bottom.toFloat())
 
@@ -416,6 +462,9 @@ private class RoundedBackgroundSpan(
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, paint)
 
         paint.color = textColor
-        canvas.drawText(text, start, end, x + padding, y.toFloat(), paint)
+        // Draw a plain string. Passing the live Spannable back to Canvas can make a nested
+        // ReplacementSpan render as the U+FFFC “OBJ” placeholder when the nickname has its own
+        // host-provided replacement spans.
+        canvas.drawText(label, x + padding, y.toFloat(), paint)
     }
 }
