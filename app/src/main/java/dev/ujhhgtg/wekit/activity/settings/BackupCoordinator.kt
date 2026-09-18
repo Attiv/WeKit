@@ -5,7 +5,6 @@ import android.os.Build
 import dev.ujhhgtg.wekit.BuildConfig
 import dev.ujhhgtg.wekit.extensions.ExtensionPacks
 import dev.ujhhgtg.wekit.utils.HostInfo
-import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.restartHost
 import dev.ujhhgtg.wekit.utils.fs.LegacyPaths
 import java.io.BufferedInputStream
@@ -37,7 +36,6 @@ import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
  * diagnostics and host data are never discovered by walking the whole module directory.
  */
 object BackupCoordinator {
-    private const val TAG = "BackupCoordinator"
     private const val FORMAT_VERSION = 1
     private const val MANIFEST = "manifest.json"
     private const val DATABASE = "wekit.sqlite"
@@ -341,15 +339,13 @@ object BackupCoordinator {
     private fun snapshotDatabase(source: File, destination: File) {
         // A checkpoint makes the main file self-contained before it is copied. Room keeps WAL
         // enabled for the live database; the temporary snapshot is never opened by Room.
-        runCatching {
-            android.database.sqlite.SQLiteDatabase.openDatabase(
-                source.absolutePath,
-                null,
-                android.database.sqlite.SQLiteDatabase.OPEN_READWRITE,
-            ).use { db ->
-                db.rawQuery("PRAGMA wal_checkpoint(FULL)", null).use { it.moveToFirst() }
-            }
-        }.onFailure { WeLogger.w(TAG, "数据库 checkpoint 失败，继续使用一致文件副本", it) }
+        android.database.sqlite.SQLiteDatabase.openDatabase(
+            source.absolutePath,
+            null,
+            android.database.sqlite.SQLiteDatabase.OPEN_READWRITE,
+        ).use { db ->
+            db.rawQuery("PRAGMA wal_checkpoint(FULL)", null).use { it.moveToFirst() }
+        }
         FileInputStream(source).use { input ->
             FileOutputStream(destination).use { output -> input.copyTo(output); output.fd.sync() }
         }
@@ -375,6 +371,9 @@ object BackupCoordinator {
                     db.delete(table, "key = ? OR key LIKE ?", arrayOf("payment_pswd_encdata", "%payment_pswd_encdata%"))
                 }
             }
+            // Rebuild the export copy after filtering device-local payment data so deleted
+            // ciphertext cannot remain in free pages of the backup database.
+            db.execSQL("VACUUM")
         }
     }
 
