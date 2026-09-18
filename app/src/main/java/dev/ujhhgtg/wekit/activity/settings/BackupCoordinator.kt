@@ -74,6 +74,7 @@ object BackupCoordinator {
         val scratch = File(context.cacheDir, ".wekit-backup-${UUID.randomUUID()}.sqlite")
         val files = ArrayList<ManifestFile>()
         val extensions = installedExtensions()
+        beforeBackup?.invoke()
         try {
             snapshotDatabase(database, scratch)
             files += ManifestFile(DATABASE, scratch.length(), sha256(scratch))
@@ -98,6 +99,7 @@ object BackupCoordinator {
             return Result(output, files.size)
         } finally {
             scratch.delete()
+            afterBackup?.invoke()
         }
     }
 
@@ -141,6 +143,10 @@ object BackupCoordinator {
 
     /** Set by the unified Room owner once it exposes its process-wide close hook. */
     var beforeDatabaseReplace: (() -> Unit)? = null
+
+    /** Hooks for draining database/file writers around a consistent export snapshot. */
+    var beforeBackup: (() -> Unit)? = null
+    var afterBackup: (() -> Unit)? = null
 
     fun restartAfterImport() = restartHost()
 
