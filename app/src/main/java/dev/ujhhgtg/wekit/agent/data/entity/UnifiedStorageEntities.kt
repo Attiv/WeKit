@@ -150,3 +150,28 @@ data class ManagedDataEntryEntity(
     val contentHash: String,
     val modifiedAt: Long,
 )
+
+/** Host-versioned Dex descriptors kept in the shared Room database. */
+@Entity(
+    tableName = "dex_cache_entries",
+    primaryKeys = ["hostVersion", "technicalId"],
+    indices = [Index("hostVersion")],
+)
+data class DexCacheEntryEntity(
+    val hostVersion: String,
+    val technicalId: String,
+    val methodHash: String,
+    val timestamp: Long,
+)
+
+@Entity(
+    tableName = "dex_cache_descriptors",
+    primaryKeys = ["hostVersion", "technicalId", "descriptorKey"],
+    indices = [Index("hostVersion", "technicalId")],
+)
+data class DexCacheDescriptorEntity(
+    val hostVersion: String,
+    val technicalId: String,
+    val descriptorKey: String,
+    val descriptorValue: String,
+)

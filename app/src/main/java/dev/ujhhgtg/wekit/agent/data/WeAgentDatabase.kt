@@ -50,6 +50,8 @@ import dev.ujhhgtg.wekit.agent.data.entity.AssetEntity
 import dev.ujhhgtg.wekit.agent.data.entity.DocumentEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ExtensionInstallEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ManagedDataEntryEntity
+import dev.ujhhgtg.wekit.agent.data.entity.DexCacheEntryEntity
+import dev.ujhhgtg.wekit.agent.data.entity.DexCacheDescriptorEntity
 import dev.ujhhgtg.wekit.agent.data.entity.PreferenceEntryEntity
 import dev.ujhhgtg.wekit.agent.data.entity.PreferenceSetMemberEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ScriptCatalogEntity
@@ -84,8 +86,10 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
         ScriptCatalogEntity::class,
         ExtensionInstallEntity::class,
         ManagedDataEntryEntity::class,
+        DexCacheEntryEntity::class,
+        DexCacheDescriptorEntity::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 9, to = 10), // adds external_services table
@@ -248,6 +252,15 @@ abstract class WeAgentDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `dex_cache_entries` (`hostVersion` TEXT NOT NULL, `technicalId` TEXT NOT NULL, `methodHash` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, PRIMARY KEY(`hostVersion`, `technicalId`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_dex_cache_entries_hostVersion` ON `dex_cache_entries` (`hostVersion`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `dex_cache_descriptors` (`hostVersion` TEXT NOT NULL, `technicalId` TEXT NOT NULL, `descriptorKey` TEXT NOT NULL, `descriptorValue` TEXT NOT NULL, PRIMARY KEY(`hostVersion`, `technicalId`, `descriptorKey`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_dex_cache_descriptors_hostVersion_technicalId` ON `dex_cache_descriptors` (`hostVersion`, `technicalId`)")
+            }
+        }
+
         val migration17To18Sql = listOf(
             "CREATE TABLE IF NOT EXISTS `preference_entries` (`namespace` TEXT NOT NULL, `key` TEXT NOT NULL, `valueType` TEXT NOT NULL, `valueText` TEXT, `valueLong` INTEGER, `valueDouble` REAL, `valueBlob` BLOB, `encodingVersion` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `exportable` INTEGER NOT NULL, PRIMARY KEY(`namespace`, `key`))",
             "CREATE INDEX IF NOT EXISTS `index_preference_entries_namespace` ON `preference_entries` (`namespace`)",
@@ -329,7 +342,7 @@ abstract class WeAgentDatabase : RoomDatabase() {
             dbFile.toString()
         )
             .setJournalMode(journalMode)
-            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             // Destructive fallback is scoped to the pre-release schemas (1–8) only, which no
             // migration path was ever written for. From 9 onwards every step must have a
             // migration: a missing one then fails loudly at open time instead of silently

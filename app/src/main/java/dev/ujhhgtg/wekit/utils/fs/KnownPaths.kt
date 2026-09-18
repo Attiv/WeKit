@@ -18,9 +18,6 @@ object KnownPaths {
         (HostInfo.application.filesDir.asPath / "wekit").createDirsSafe()
     }
 
-    fun versionedDexCacheDir(version: String): Path =
-        (moduleRoot / "dex_cache" / sanitizeVersionKey(version)).createDirsSafe()
-
     fun hostVersionKey(): String = sanitizeVersionKey("${HostInfo.versionName}-${HostInfo.versionCode}")
 
     private fun sanitizeVersionKey(value: String): String =
