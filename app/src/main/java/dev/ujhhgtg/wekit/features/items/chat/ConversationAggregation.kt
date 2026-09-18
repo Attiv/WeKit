@@ -116,7 +116,7 @@ object ConversationAggregation : ClickableFeature(),
     // alongside unReadMuteCount > 0 when unReadCount == 0).
     private const val ATTR_FLAG_MUTE_BIT = 2097152
 
-    private val foldersFile by lazy { KnownPaths.moduleData / "chat_folders.json" }
+    private val foldersFile by lazy { KnownPaths.moduleRoot / "chat_folders.json" }
 
     private const val CONTAINER_UI_NAME = "com.tencent.mm.ui.conversation.ConvBoxServiceConversationUI"
     private val methodConversationStorageQueryByParent by dexMethod(allowFailure = true) {

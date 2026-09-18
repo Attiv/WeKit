@@ -86,7 +86,7 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
         }
     }
 
-    private val cacheFile by lazy { KnownPaths.moduleData / "real_names.json" }
+    private val cacheFile by lazy { KnownPaths.moduleRoot / "real_names.json" }
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     /**

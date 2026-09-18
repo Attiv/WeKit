@@ -40,6 +40,7 @@ import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.showToast
+import dev.ujhhgtg.wekit.utils.fs.LegacyPaths
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
@@ -57,8 +58,10 @@ object RedPacketSettings {
     private val RED_PACKET_KEYWORD_MODES =
         listOf(AutomationKeywordMode.STRING_LIST, AutomationKeywordMode.REGEX)
 
-    private val configFile by lazy { KnownPaths.moduleData / "red_packet_settings.json" }
-    private val legacyGroupMemberFile by lazy { KnownPaths.moduleData / "red_packet_group_members.json" }
+    private val configFile by lazy { KnownPaths.moduleRoot / "red_packet_settings.json" }
+    private val legacyGroupMemberFile by lazy {
+        LegacyPaths.externalModuleRoot / "red_packet_group_members.json"
+    }
 
     @Serializable
     enum class ReceiveMode { NETWORK, CLICK }

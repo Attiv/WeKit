@@ -204,7 +204,7 @@ class MomentsAutomationSettings private constructor(
 
     private val store by lazy {
         AtomicJsonConfigStore(
-            file = KnownPaths.moduleData / fileName,
+            file = KnownPaths.moduleRoot / fileName,
             serializer = StoredMomentAutomationConfig.serializer(),
             tag = logTag,
             initialValue = ::migrateLegacyConfig

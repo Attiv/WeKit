@@ -153,7 +153,7 @@ object TransferSettings {
 
     private val store by lazy {
         AtomicJsonConfigStore(
-            file = KnownPaths.moduleData / "auto_accept_transfer_settings.json",
+            file = KnownPaths.moduleRoot / "auto_accept_transfer_settings.json",
             serializer = StoredConfig.serializer(),
             tag = TAG,
             initialValue = ::migrateLegacyConfig

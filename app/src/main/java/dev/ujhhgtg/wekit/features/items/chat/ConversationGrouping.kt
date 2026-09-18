@@ -341,7 +341,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         adapterPositionSnapshot(adapter, rawPosition)
     }
 
-    private val groupsFile by lazy { KnownPaths.moduleData / "conversation_groups.json" }
+    private val groupsFile by lazy { KnownPaths.moduleRoot / "conversation_groups.json" }
 
     @Volatile
     private var groupsCache: List<ChatGroup>? = null

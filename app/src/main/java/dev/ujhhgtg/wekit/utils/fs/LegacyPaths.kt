@@ -1,0 +1,26 @@
+package dev.ujhhgtg.wekit.utils.fs
+
+import android.os.Environment
+import dev.ujhhgtg.wekit.BuildConfig
+import dev.ujhhgtg.wekit.constants.PackageNames
+import dev.ujhhgtg.wekit.utils.HostInfo
+import java.nio.file.Path
+import kotlin.io.path.div
+
+/**
+ * Locations used by releases before module data moved into the host's private files directory.
+ *
+ * New runtime code must never use this object as a fallback.  It exists only for one-shot
+ * migration scanners, which can leave the source untouched when migration or validation fails.
+ */
+object LegacyPaths {
+    val externalModuleRoot: Path by lazy {
+        (Environment.getExternalStorageDirectory().toPath() / "Android" / "data" /
+                runCatching { HostInfo.packageName }.getOrDefault(PackageNames.WECHAT) /
+                BuildConfig.TAG)
+    }
+
+    val privateWeAgentDatabase: Path by lazy {
+        HostInfo.application.filesDir.asPath / "wekit-agent" / "weagent.db"
+    }
+}

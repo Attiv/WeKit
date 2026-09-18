@@ -38,8 +38,8 @@ object PythonPluginManager {
     private val mutableRecords = MutableStateFlow<Map<String, PythonPluginRecord>>(emptyMap())
     val records: StateFlow<Map<String, PythonPluginRecord>> = mutableRecords
 
-    private val scriptsDirectory by lazy { (KnownPaths.moduleData / "scripts_python").createDirsSafe().toFile() }
-    private val dataDirectory by lazy { (KnownPaths.moduleData / "python" / "data").createDirsSafe().toFile() }
+    private val scriptsDirectory by lazy { (KnownPaths.moduleRoot / "scripts_python").createDirsSafe().toFile() }
+    private val dataDirectory by lazy { (KnownPaths.moduleRoot / "python" / "data").createDirsSafe().toFile() }
     private val cacheDirectory by lazy { (KnownPaths.moduleCache / "python").createDirsSafe().toFile() }
 
     fun discover(): List<PythonPluginRecord> = synchronized(discoveryLock) {

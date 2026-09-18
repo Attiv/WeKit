@@ -97,7 +97,7 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
     override val categoryIds = listOf(FeatureCategoryIds.SYSTEM_PRIVACY)
     override val descriptionRes = R.string.feature_feature_flag_manager_description
 
-    private val overridesFile by lazy { KnownPaths.moduleData / "feature_flag_overrides.json" }
+    private val overridesFile by lazy { KnownPaths.moduleRoot / "feature_flag_overrides.json" }
 
     /**
      * Base class for all feature flags: [ly4.e] (verified from WeChat 8.0.69).

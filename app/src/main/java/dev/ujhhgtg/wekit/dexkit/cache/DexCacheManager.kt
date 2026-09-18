@@ -37,7 +37,7 @@ object DexCacheManager {
     private const val KEY_HOST_VERSION = "host_version"
 
     private val cacheDir: Path by lazy {
-        (KnownPaths.moduleData / CACHE_DIR_NAME).createDirsSafe()
+        (KnownPaths.moduleRoot / CACHE_DIR_NAME).createDirsSafe()
     }
 
     fun init(currentVer: String) {

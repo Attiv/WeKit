@@ -53,7 +53,7 @@ object CustomDetails : SwitchFeature(), WeMomentsContextMenuApi.IMenuItemsProvid
         $$"$userName"
     )
 
-    private val customTextsFile by lazy { KnownPaths.moduleData / "moments_custom_bottom_details.json" }
+    private val customTextsFile by lazy { KnownPaths.moduleRoot / "moments_custom_bottom_details.json" }
 
     override fun onEnable() {
         WeMomentsContextMenuApi.addProvider(this)

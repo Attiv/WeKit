@@ -112,7 +112,7 @@ object CustomLocalFriendAvatars : ClickableFeature(), IContactInfoProvider, IRes
     private const val VIEW_TAG_AVATAR_SCOPE = 0x57434153
 
     private const val TAG = "CustomLocalFriendAvatars"
-    private val avatarMapFile by lazy { KnownPaths.moduleData / "custom_avatars_map.json" }
+    private val avatarMapFile by lazy { KnownPaths.moduleRoot / "custom_avatars_map.json" }
 
     private enum class AvatarScope(val key: String, @StringRes val titleRes: Int) {
         CHAT("chat", R.string.contacts_custom_avatar_scope_chat),

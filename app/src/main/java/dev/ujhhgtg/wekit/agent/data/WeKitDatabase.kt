@@ -1,7 +1,7 @@
 package dev.ujhhgtg.wekit.agent.data
 
 import java.io.File
-import dev.ujhhgtg.wekit.utils.HostInfo
+import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 
 /**
  * Unified storage entry point.
@@ -18,5 +18,5 @@ object WeKitDatabase {
 
     /** Location used by the unified database after the path migration has completed. */
     val file: File
-        get() = File(HostInfo.application.filesDir, "wekit/$FILE_NAME")
+        get() = KnownPaths.moduleRoot.resolve(FILE_NAME).toFile()
 }
