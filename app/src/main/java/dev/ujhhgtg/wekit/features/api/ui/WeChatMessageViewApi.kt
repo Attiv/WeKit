@@ -1,6 +1,7 @@
 package dev.ujhhgtg.wekit.features.api.ui
 
 import android.view.View
+import android.widget.TextView
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
@@ -34,19 +35,12 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
         fun onMessageViewRecycled(view: View, message: MessageInfo) {}
     }
 
-    interface INicknameUpdateListener {
-        fun onNicknameUpdated(view: View, message: MessageInfo, nickname: CharSequence) {}
-    }
-
     private val listeners = CopyOnWriteArrayList<ICreateViewListener>()
     private val lifecycleListeners = CopyOnWriteArrayList<IMessageViewLifecycleListener>()
-    private val nicknameListeners = CopyOnWriteArrayList<INicknameUpdateListener>()
     private val currentBindings =
         Collections.synchronizedMap(WeakHashMap<View, MessageInfo>())
     private val attachStateListeners =
         Collections.synchronizedMap(WeakHashMap<View, View.OnAttachStateChangeListener>())
-    private val nicknameViews = Collections.synchronizedMap(WeakHashMap<Any, View>())
-    private val pendingBindings = Collections.synchronizedMap(WeakHashMap<View, MessageInfo>())
 
     fun addListener(listener: ICreateViewListener) {
         if (!listeners.contains(listener)) {
@@ -76,14 +70,6 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
         )
     }
 
-    fun addNicknameUpdateListener(listener: INicknameUpdateListener) {
-        if (!nicknameListeners.contains(listener)) nicknameListeners.add(listener)
-    }
-
-    fun removeNicknameUpdateListener(listener: INicknameUpdateListener) {
-        nicknameListeners.remove(listener)
-    }
-
     private const val TAG = "WeChatMessageViewApi"
 
     private val methodChatItemOnBindView by dexMethod {
@@ -111,35 +97,12 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
 
     override fun onEnable() {
         methodChatItemSetNickname.hookAfter {
+            if (args[1] != null) return@hookAfter
             val holder = args[0] ?: return@hookAfter
-            val view = synchronized(nicknameViews) { nicknameViews[holder] } ?: return@hookAfter
-            val message = synchronized(pendingBindings) { pendingBindings[view] }
-                ?: getBoundMessage(view)
-                ?: return@hookAfter
-            val nickname = args[1] as? CharSequence
-            if (nickname == null) return@hookAfter
-            for (listener in nicknameListeners) {
-                try {
-                    listener.onNicknameUpdated(view, message, nickname)
-                } catch (ex: Exception) {
-                    WeLogger.e(TAG, "nickname listener ${listener.javaClass.name} threw", ex)
-                }
-            }
-        }
-
-        methodChatItemOnBindView.hookBefore {
-            val holder = args[0]!!
-            val view = holder.reflekt()
-                .firstField { type = View::class; superclass() }
-                .get()!! as View
-            val item = args[1]
-            if (item != null) {
-                findMessageInfo(item)?.let { message ->
-                    synchronized(pendingBindings) { pendingBindings[view] = message }
-                }
-            }
-            val tag = view.tag
-            if (tag != null) synchronized(nicknameViews) { nicknameViews[tag] = view }
+            val userTv = holder.reflekt()
+                .firstFieldOrNull { name = "userTV"; superclass() }
+                ?.get() as? TextView ?: return@hookAfter
+            userTv.text = null
         }
 
         methodChatItemOnBindView.hookAfter {
@@ -161,7 +124,6 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
             synchronized(currentBindings) {
                 currentBindings[view] = message
             }
-            synchronized(pendingBindings) { pendingBindings.remove(view) }
             if (view.isAttachedToWindow && bindingChanged) {
                 dispatchLifecycle { it.onMessageViewAttached(view, message) }
             }
