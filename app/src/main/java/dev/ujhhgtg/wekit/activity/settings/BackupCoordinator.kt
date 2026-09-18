@@ -417,11 +417,16 @@ object BackupCoordinator {
         } catch (t: Throwable) {
             // Restore each moved item before surfacing the error. Import is replacement semantics:
             // a failed swap must leave the current installation usable.
-            File(root, LIVE_DATABASE).delete()
-            moveIfPresent(File(oldRoot, LIVE_DATABASE), File(root, LIVE_DATABASE))
+            if (File(oldRoot, LIVE_DATABASE).exists()) {
+                File(root, LIVE_DATABASE).delete()
+                moveIfPresent(File(oldRoot, LIVE_DATABASE), File(root, LIVE_DATABASE))
+            }
             for (directory in managedDirectories) {
-                File(root, directory).deleteRecursively()
-                moveIfPresent(File(oldRoot, directory), File(root, directory))
+                val old = File(oldRoot, directory)
+                if (old.exists()) {
+                    File(root, directory).deleteRecursively()
+                    moveIfPresent(old, File(root, directory))
+                }
             }
             throw t
         }
