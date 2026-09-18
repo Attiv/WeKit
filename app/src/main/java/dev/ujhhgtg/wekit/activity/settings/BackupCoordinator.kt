@@ -39,6 +39,7 @@ object BackupCoordinator {
     private const val FORMAT_VERSION = 1
     private const val MANIFEST = "manifest.json"
     private const val DATABASE = "wekit.sqlite"
+    private const val LIVE_DATABASE = "wekit.db"
 
     private val managedDirectories = listOf(
         "scripts_java",
@@ -64,7 +65,7 @@ object BackupCoordinator {
     fun create(context: Context, output: File): Result {
         val root = storageRoot(context)
         require(root.isDirectory) { "WeKit 数据目录不存在" }
-        val database = File(root, DATABASE)
+        val database = File(root, LIVE_DATABASE)
         require(database.isFile) { "统一数据库不存在，无法创建完整备份" }
 
         val scratch = File(context.cacheDir, ".wekit-backup-${UUID.randomUUID()}.sqlite")
@@ -327,9 +328,9 @@ object BackupCoordinator {
         oldRoot.mkdirs()
         root.mkdirs()
         try {
-            val database = File(root, DATABASE)
+            val database = File(root, LIVE_DATABASE)
             val stagedDatabase = File(staging, DATABASE)
-            moveIfPresent(database, File(oldRoot, DATABASE))
+            moveIfPresent(database, File(oldRoot, LIVE_DATABASE))
             moveIfPresent(stagedDatabase, database)
             for (directory in managedDirectories) {
                 val current = File(root, directory)
@@ -346,8 +347,8 @@ object BackupCoordinator {
         } catch (t: Throwable) {
             // Restore each moved item before surfacing the error. Import is replacement semantics:
             // a failed swap must leave the current installation usable.
-            File(root, DATABASE).delete()
-            moveIfPresent(File(oldRoot, DATABASE), File(root, DATABASE))
+            File(root, LIVE_DATABASE).delete()
+            moveIfPresent(File(oldRoot, LIVE_DATABASE), File(root, LIVE_DATABASE))
             for (directory in managedDirectories) {
                 File(root, directory).deleteRecursively()
                 moveIfPresent(File(oldRoot, directory), File(root, directory))

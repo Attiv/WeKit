@@ -13,8 +13,8 @@ import dev.ujhhgtg.wekit.agent.ssh.SshHostKey
 import dev.ujhhgtg.wekit.agent.ssh.SshHostKeyException
 import dev.ujhhgtg.wekit.extensions.ArchLinuxPack
 import dev.ujhhgtg.wekit.extensions.ExtensionPack
-import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import java.io.File
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -415,7 +415,7 @@ class LinuxEnvironmentManager(
             }
 
         private fun defaultNativeSnapshot(): EnvironmentSnapshot {
-            val workingDirectory = File(HostInfo.application.filesDir, "wekit-agent/environment/native")
+            val workingDirectory = KnownPaths.moduleRoot.resolve("agent/environment/native").toFile()
                 .apply { mkdirs() }
             return EnvironmentSnapshot(
                 id = NATIVE_ENVIRONMENT_ID,
