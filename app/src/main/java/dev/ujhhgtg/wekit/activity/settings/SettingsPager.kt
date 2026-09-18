@@ -874,7 +874,7 @@ private fun ClearConfigDialog(show: Boolean, onDismiss: () -> Unit) {
             onDismiss()
             CoroutineScope(Dispatchers.IO).launch {
                 showToastSuspend(localizedContext.getString(R.string.config_clearing))
-                SettingsConfigActions.clear()
+                SettingsConfigActions.clearAndRestart()
                 showToastSuspend(localizedContext.getString(R.string.config_clear_success))
             }
         },

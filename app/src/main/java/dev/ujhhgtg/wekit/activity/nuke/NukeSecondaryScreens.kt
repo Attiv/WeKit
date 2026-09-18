@@ -378,7 +378,7 @@ private fun NukeGeneralSettingsPage(onBack: (Offset) -> Unit) {
             confirmText = stringResource(R.string.action_clear),
             onDismiss = { showClearConfirmation = false },
             onConfirm = {
-                SettingsConfigActions.clear()
+                SettingsConfigActions.clearAndRestart()
                 showClearConfirmation = false
             },
         )
