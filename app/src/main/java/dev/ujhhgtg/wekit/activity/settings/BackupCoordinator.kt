@@ -3,9 +3,11 @@ package dev.ujhhgtg.wekit.activity.settings
 import android.content.Context
 import android.os.Build
 import dev.ujhhgtg.wekit.BuildConfig
+import dev.ujhhgtg.wekit.extensions.ExtensionPacks
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.restartHost
+import dev.ujhhgtg.wekit.utils.fs.LegacyPaths
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -54,11 +56,14 @@ object BackupCoordinator {
 
     private data class ManifestFile(val path: String, val size: Long, val sha256: String)
 
+    private data class ExtensionRequirement(val id: String, val version: String, val sha256: String)
+
     private data class Manifest(
         val formatVersion: Int,
         val packageName: String,
         val moduleVersion: String,
         val abis: List<String>,
+        val extensions: List<ExtensionRequirement>,
         val files: List<ManifestFile>,
     )
 
@@ -70,11 +75,12 @@ object BackupCoordinator {
 
         val scratch = File(context.cacheDir, ".wekit-backup-${UUID.randomUUID()}.sqlite")
         val files = ArrayList<ManifestFile>()
+        val extensions = installedExtensions()
         try {
             snapshotDatabase(database, scratch)
             files += ManifestFile(DATABASE, scratch.length(), sha256(scratch))
             ZipOutputStream(BufferedOutputStream(FileOutputStream(output))).use { zip ->
-                writeFile(zip, MANIFEST, manifestJson(context, files).toByteArray(Charsets.UTF_8))
+                writeFile(zip, MANIFEST, manifestJson(context, files, extensions).toByteArray(Charsets.UTF_8))
                 writeFile(zip, DATABASE, scratch)
                 for (directory in managedDirectories) {
                     val source = File(root, directory)
@@ -90,7 +96,7 @@ object BackupCoordinator {
                 }
             }
             // The manifest must describe all entries, including the files added after the DB.
-            rewriteManifest(output, context, files)
+            rewriteManifest(output, context, files, extensions)
             return Result(output, files.size)
         } finally {
             scratch.delete()
@@ -117,6 +123,7 @@ object BackupCoordinator {
             check(manifest.abis.any(Build.SUPPORTED_ABIS::contains)) {
                 "当前 ABI 与备份不匹配，请先安装匹配的运行制品"
             }
+            checkExtensions(manifest.extensions)
             val database = File(staging, DATABASE)
             check(database.isFile) { "备份缺少统一数据库" }
             validateDatabase(database)
@@ -147,19 +154,40 @@ object BackupCoordinator {
         beforeDatabaseReplace?.invoke()
         val root = storageRoot(context)
         root.deleteRecursively()
-        // MMKV is a legacy module-owned store. Remove only its own directory, never the host's
-        // shared preferences or databases.
-        File(HostInfo.application.filesDir, "mmkv").deleteRecursively()
+        // Remove old module-owned roots and artifacts, but never the host's shared MMKV directory
+        // wholesale. The old external root is module-specific and is safe to remove only here,
+        // after the user explicitly chose destructive clearing.
+        LegacyPaths.externalModuleRoot.toFile().deleteRecursively()
+        LegacyPaths.privateExtensionRoot.toFile().deleteRecursively()
+        LegacyPaths.privateAgentRoot.toFile().deleteRecursively()
+        File(HostInfo.application.filesDir, "wekit-python").deleteRecursively()
+        File(HostInfo.application.filesDir, "wekit_skip_rewarded_js").deleteRecursively()
+        File(HostInfo.application.filesDir, ".wekit-native").deleteRecursively()
+        val mmkv = File(HostInfo.application.filesDir, "mmkv")
+        listOf("wekit_prefs", "wekit_prefs.crc").forEach { File(mmkv, it).delete() }
     }
 
     fun storageRoot(context: Context): File = File(context.filesDir, "wekit")
 
-    private fun manifestJson(context: Context, files: List<ManifestFile>): String =
+    private fun manifestJson(
+        context: Context,
+        files: List<ManifestFile>,
+        extensions: List<ExtensionRequirement>,
+    ): String =
         DefaultJson.encodeToString(buildJsonObject {
             put("formatVersion", FORMAT_VERSION)
             put("packageName", context.packageName)
             put("moduleVersion", BuildConfig.VERSION_NAME)
             put("abis", buildJsonArray { Build.SUPPORTED_ABIS.forEach { add(JsonPrimitive(it)) } })
+            put("extensions", buildJsonArray {
+                extensions.forEach { extension ->
+                    add(buildJsonObject {
+                        put("id", extension.id)
+                        put("version", extension.version)
+                        put("sha256", extension.sha256)
+                    })
+                }
+            })
             put("files", buildJsonArray {
                 files.forEach { file ->
                     add(buildJsonObject {
@@ -171,7 +199,12 @@ object BackupCoordinator {
             })
         })
 
-    private fun rewriteManifest(output: File, context: Context, files: List<ManifestFile>) {
+    private fun rewriteManifest(
+        output: File,
+        context: Context,
+        files: List<ManifestFile>,
+        extensions: List<ExtensionRequirement>,
+    ) {
         val temp = File(output.parentFile, ".${output.name}.rewrite")
         ZipInputStream(BufferedInputStream(FileInputStream(output))).use { input ->
             ZipOutputStream(BufferedOutputStream(FileOutputStream(temp))).use { zip ->
@@ -184,7 +217,7 @@ object BackupCoordinator {
                     }
                     entry = input.nextEntry
                 }
-                writeFile(zip, MANIFEST, manifestJson(context, files).toByteArray(Charsets.UTF_8))
+                writeFile(zip, MANIFEST, manifestJson(context, files, extensions).toByteArray(Charsets.UTF_8))
             }
         }
         check(temp.renameTo(output)) { "无法写入备份清单" }
@@ -248,8 +281,35 @@ object BackupCoordinator {
             json["packageName"]!!.jsonPrimitive.content,
             json["moduleVersion"]!!.jsonPrimitive.content,
             json["abis"]!!.jsonArray.map { it.jsonPrimitive.content },
+            json["extensions"]!!.jsonArray.map { item ->
+                val obj = item.jsonObject
+                ExtensionRequirement(
+                    obj["id"]!!.jsonPrimitive.content,
+                    obj["version"]!!.jsonPrimitive.content,
+                    obj["sha256"]!!.jsonPrimitive.content,
+                )
+            },
             files,
         )
+    }
+
+    private fun installedExtensions(): List<ExtensionRequirement> =
+        ExtensionPacks.packs.mapNotNull { pack ->
+            pack.installedManifest()?.let { manifest ->
+                ExtensionRequirement(manifest.id, manifest.version, manifest.sha256)
+            }
+        }
+
+    private fun checkExtensions(requirements: List<ExtensionRequirement>) {
+        requirements.forEach { requirement ->
+            val pack = ExtensionPacks.byId(requirement.id)
+                ?: error("备份需要未安装的扩展包：${requirement.id}")
+            val installed = pack.installedManifest()
+                ?: error("备份需要扩展包：${requirement.id} ${requirement.version}")
+            check(installed.version == requirement.version && installed.sha256.equals(requirement.sha256, true)) {
+                "扩展包不匹配：${requirement.id}，请先安装 ${requirement.version}"
+            }
+        }
     }
 
     private fun checkHashes(staging: File, files: List<ManifestFile>) {
