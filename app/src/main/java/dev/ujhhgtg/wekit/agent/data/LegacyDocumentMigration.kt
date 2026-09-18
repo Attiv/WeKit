@@ -92,7 +92,11 @@ object LegacyDocumentMigration {
                 ),
             )
         } catch (error: Throwable) {
-            putState("failed", startedAt, mapOf("error" to (error.message ?: error.javaClass.name)))
+            runCatching {
+                putState("failed", startedAt, mapOf("error" to (error.message ?: error.javaClass.name)))
+            }.onFailure { metadataError ->
+                WeLogger.e(TAG, "failed to persist legacy migration error state", metadataError)
+            }
             WeLogger.e(TAG, "legacy document and asset migration failed; source files were retained", error)
         }
     }
