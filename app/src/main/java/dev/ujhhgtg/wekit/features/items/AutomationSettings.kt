@@ -1,5 +1,8 @@
 package dev.ujhhgtg.wekit.features.items
 
+import dev.ujhhgtg.wekit.utils.fs.moveReplacing
+import kotlin.io.path.createDirectories
+import kotlin.io.path.moveTo
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -23,7 +26,6 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
-import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.text.Collator
@@ -34,10 +36,10 @@ import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
 @Serializable
-internal data class AutomationToggleRule(val enabled: Boolean = false)
+data class AutomationToggleRule(val enabled: Boolean = false)
 
 @Serializable
-internal data class AutomationTimeRangeRule(
+data class AutomationTimeRangeRule(
     val enabled: Boolean = false,
     val startMinute: Int = 0,
     val endMinute: Int = 0
@@ -53,14 +55,14 @@ internal data class AutomationTimeRangeRule(
 }
 
 @Serializable
-internal enum class AutomationKeywordMode {
+enum class AutomationKeywordMode {
     STRING_LIST,
     EXACT,
     REGEX
 }
 
 @Serializable
-internal data class AutomationKeywordRule(
+data class AutomationKeywordRule(
     val enabled: Boolean = false,
     val mode: AutomationKeywordMode = AutomationKeywordMode.STRING_LIST,
     val strings: List<String> = emptyList(),
@@ -103,7 +105,7 @@ internal data class AutomationKeywordRule(
     }
 }
 
-internal class AtomicJsonConfigStore<T>(
+class AtomicJsonConfigStore<T>(
     private val file: Path,
     private val serializer: KSerializer<T>,
     private val tag: String,
@@ -139,19 +141,10 @@ internal class AtomicJsonConfigStore<T>(
 
     private fun write(value: T) {
         runCatching {
-            Files.createDirectories(file.parent)
+            file.parent.createDirectories()
             val temporary = file.resolveSibling("${file.fileName}.tmp")
             temporary.writeText(DefaultJson.encodeToString(serializer, value))
-            runCatching {
-                Files.move(
-                    temporary,
-                    file,
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE
-                )
-            }.getOrElse {
-                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING)
-            }
+            temporary.moveReplacing(file)
         }.onFailure {
             WeLogger.e(tag, "failed to save $file", it)
         }
@@ -159,7 +152,7 @@ internal class AtomicJsonConfigStore<T>(
 }
 
 @Composable
-internal fun AutomationContactSettingsSelector(
+fun AutomationContactSettingsSelector(
     title: String,
     contacts: List<IWeContact>,
     selectionKey: Any,
@@ -205,10 +198,10 @@ internal fun AutomationContactSettingsSelector(
     )
 }
 
-internal fun formatAutomationMinute(value: Int): String = formatMinuteOfDay(value)
+fun formatAutomationMinute(value: Int): String = formatMinuteOfDay(value)
 
 @Composable
-internal fun automationKeywordSummary(rule: AutomationKeywordRule, unrestrictedText: String): String {
+fun automationKeywordSummary(rule: AutomationKeywordRule, unrestrictedText: String): String {
     if (!rule.enabled) return unrestrictedText
     return when (rule.mode) {
         AutomationKeywordMode.STRING_LIST -> pluralStringResource(

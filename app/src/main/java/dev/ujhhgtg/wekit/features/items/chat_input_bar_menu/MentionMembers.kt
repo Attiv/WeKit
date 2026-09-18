@@ -24,7 +24,6 @@ import dev.ujhhgtg.wekit.features.api.net.models.protobuf.UserNameProto
 import dev.ujhhgtg.wekit.features.api.net.models.protobuf.WeProto
 import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarMenuApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
@@ -58,13 +57,12 @@ import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
  *   其内部调用 msgInfo 的 msgsource setter 并置脏, 随入库写入 lvbuffer,
  *   doScene 组装出网请求时 MsgSource 同样携带该节点。
  */
-@Feature(
-    id = "@所有人",
-    nameRes = "feature_mention_members_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_mention_members_description",
-)
 object MentionMembers : SwitchFeature(), IResolveDex {
+
+    override val technicalId = "@所有人"
+    override val nameRes = R.string.feature_mention_members_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_mention_members_description
 
     /** 微信服务器对 atuserlist 人数的上限, 超出部分静默截断 */
     private const val MAX_AT_USERS = 200
@@ -75,16 +73,6 @@ object MentionMembers : SwitchFeature(), IResolveDex {
     // 之后的异步流程里, 由入库钩子消费。发送失败残留的标记由 talker 不匹配兜底丢弃。
     @Volatile
     private var pendingStealthAt: Pair<String, String>? = null
-
-    // 消息入库方法 (文本发送 NetSceneSendMsg 构造时调用), (msgInfo, boolean) -> long
-    private val methodInsertMessage by dexMethod {
-        searchPackages("com.tencent.mm.storage")
-        matcher {
-            usingEqStrings("Error insert message msg:%s talker:%s")
-            paramCount(2)
-            returnType("long")
-        }
-    }
 
     // MsgSourceHelper 节点合并方法: static (msgInfo, String nodeXml, boolean) -> void
     private val methodMergeMsgSourceNode by dexMethod {
@@ -254,7 +242,7 @@ object MentionMembers : SwitchFeature(), IResolveDex {
     }
 
     override fun onEnable() {
-        methodInsertMessage.hookBefore {
+        WeMessageApi.methodMsgInfoHandleApiInsertMessage.hookBefore {
             val msgInfo = MessageInfo(args[0]!!)
 
             // 只处理自己发送的文本消息 (isSend=1, type=1)

@@ -16,8 +16,9 @@ build/
 local.properties
 
 /target
-/.wekit/dex-test/
+/.wekit/
 /dex-test-results/
+/monet-test-results/
 
 # Project exclude paths
 /.spec-workflow/
@@ -30,6 +31,7 @@ local.properties
 /app/nul
 /.idea/deploymentTargetSelector.xml
 /app/src/main/jniLibs/*/libwekit_native.so
+/app/src/main/jniLibs/*/libwekit_zygisk.so
 /app/src/main/jniLibs/*/libwekit_cloudflared.so
 /app/src/main/jniLibs/*/libinvoke_tool.so
 /app/src/main/jniLibs/*/libchroot_cleanup.so
@@ -38,9 +40,6 @@ local.properties
 /build-logic/convention/build/
 
 /decrypted_wechat.db
-/app/src/main/java/nuke/data/cipher/NativeCrypto.kt
-/app/src/main/java/dev/ujhhgtg/wekit/features/items/debug/LoadWeChatXDex.kt
-/app/src/main/java/dev/ujhhgtg/wekit/features/items/debug/MTH7851.kt
 
 # Superpowers artifacts live in /home/ujhhgtg/coding/wekit_dev/superpowers (AGENTS.md there)
 .superpowers/

@@ -1,5 +1,8 @@
 package dev.ujhhgtg.wekit.dexkit.cache
 
+import dev.ujhhgtg.wekit.utils.fs.moveReplacing
+import kotlin.io.path.createDirectories
+import kotlin.io.path.moveTo
 import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.features.core.BaseFeature
@@ -9,7 +12,6 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.fs.createDirsSafe
 import dev.ujhhgtg.wekit.utils.unreachable
 import org.json.JSONObject
-import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
@@ -118,6 +120,7 @@ object DexCacheManager {
             WeLogger.d(TAG, "cache saved for: ${item.technicalPath}")
         } catch (e: Exception) {
             WeLogger.e(TAG, "failed to save cache for: ${item.technicalPath}", e)
+            throw e
         }
     }
 
@@ -160,7 +163,7 @@ object DexCacheManager {
     fun getOutdatedItems(items: List<IResolveDex>): List<IResolveDex> =
         items.filter { !isItemCacheValid(it) }
 
-    internal fun importCloudCaches(entries: List<CloudDexCacheEntry>) {
+    fun importCloudCaches(entries: List<CloudDexCacheEntry>) {
         writeCloudCacheFiles(cacheDir, entries, System.currentTimeMillis())
     }
 
@@ -168,7 +171,7 @@ object DexCacheManager {
 
     private val META_KEYS = setOf("methodHash", "timestamp")
 
-    internal fun cacheFileName(technicalId: String): String =
+    fun cacheFileName(technicalId: String): String =
         technicalId.replace("/", "_") + CACHE_FILE_SUFFIX
 
     private fun getCacheFile(technicalId: String): Path =
@@ -176,17 +179,17 @@ object DexCacheManager {
 
     /**
      * 获取 resolveDex 方法编译时生成的哈希，用于检测实现变化。
+     * 以 technicalId 为 key，与宿主 R8 混淆后的类名解耦。
      */
-    internal fun methodHash(item: IResolveDex): String {
-        val className = item.javaClass.name
-        val hash = GeneratedMethodHashes.HASHES[className]
+    fun methodHash(item: IResolveDex): String {
+        val hash = GeneratedMethodHashes.HASHES[(item as BaseFeature).technicalId]
         if (hash.isNullOrBlank())
-            error("failed to retrieve method hash for item $className; this shouldn't happen")
+            error("failed to retrieve method hash for item ${item.technicalId}; this shouldn't happen")
         return hash
     }
 }
 
-internal fun writeCloudCacheFiles(
+fun writeCloudCacheFiles(
     cacheDir: Path,
     entries: List<CloudDexCacheEntry>,
     timestamp: Long,
@@ -196,7 +199,7 @@ internal fun writeCloudCacheFiles(
         "duplicate cloud cache technical ID"
     }
 
-    Files.createDirectories(cacheDir)
+    cacheDir.createDirectories()
     val transactionId = "${System.currentTimeMillis()}-${System.nanoTime()}"
     val staged = mutableListOf<CloudCacheStagedFile>()
     val committed = mutableSetOf<Path>()
@@ -219,25 +222,25 @@ internal fun writeCloudCacheFiles(
         }
 
         for (file in staged) {
-            if (Files.exists(file.destination)) {
-                moveReplacing(file.destination, file.backup)
+            if (file.destination.exists()) {
+                file.destination.moveReplacing(file.backup)
             }
-            moveReplacing(file.temp, file.destination)
+            file.temp.moveReplacing(file.destination)
             committed.add(file.destination)
         }
     } catch (error: Exception) {
         for (file in staged.asReversed()) {
-            if (Files.exists(file.backup)) {
-                runCatching { moveReplacing(file.backup, file.destination) }
+            if (file.backup.exists()) {
+                runCatching { file.backup.moveReplacing(file.destination) }
             } else if (file.destination in committed) {
-                runCatching { Files.deleteIfExists(file.destination) }
+                runCatching { file.destination.deleteIfExists() }
             }
         }
         throw error
     } finally {
         staged.forEach { file ->
-            runCatching { Files.deleteIfExists(file.temp) }
-            runCatching { Files.deleteIfExists(file.backup) }
+            runCatching { file.temp.deleteIfExists() }
+            runCatching { file.backup.deleteIfExists() }
         }
     }
 }
@@ -247,14 +250,6 @@ private data class CloudCacheStagedFile(
     val temp: Path,
     val backup: Path,
 )
-
-private fun moveReplacing(source: Path, destination: Path) {
-    try {
-        Files.move(source, destination, ATOMIC_MOVE, REPLACE_EXISTING)
-    } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
-        Files.move(source, destination, REPLACE_EXISTING)
-    }
-}
 
 private fun StringBuilder.appendJsonString(value: String): StringBuilder {
     append('"')

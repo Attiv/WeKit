@@ -27,6 +27,7 @@ import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
+import dev.ujhhgtg.wekit.dexkit.dsl.data
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
@@ -34,7 +35,6 @@ import dev.ujhhgtg.wekit.features.api.core.WeServiceApi
 import dev.ujhhgtg.wekit.features.api.core.models.MessageInfo
 import dev.ujhhgtg.wekit.features.api.ui.WeChatMessageViewApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -43,7 +43,7 @@ import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.content.m3.SwitchWidget
 import dev.ujhhgtg.wekit.ui.utils.EditIcon
 import dev.ujhhgtg.wekit.ui.utils.ExposurePlus1Icon
-import dev.ujhhgtg.wekit.ui.utils.FormatQuoteIcon
+import dev.ujhhgtg.wekit.ui.utils.ReplyIcon
 import dev.ujhhgtg.wekit.ui.utils.dpToPx
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.HookParam
@@ -52,18 +52,18 @@ import dev.ujhhgtg.wekit.utils.android.showToastSuspend
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import org.luckypray.dexkit.DexKitBridge
 import java.util.Collections
 import java.util.WeakHashMap
 import kotlin.math.abs
 
-@Feature(
-    id = "滑动消息快捷操作",
-    nameRes = "feature_swipe_message_operations_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_swipe_message_operations_description",
-)
 object SwipeMessageOperations : ClickableFeature(), IResolveDex,
     WeChatMessageViewApi.ICreateViewListener {
+
+    override val technicalId = "滑动消息快捷操作"
+    override val nameRes = R.string.feature_swipe_message_operations_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_swipe_message_operations_description
 
     // Mutable per-view gesture state. RecyclerView recycles message views, so chattingContext is
     // refreshed on every onBindView (see onCreateView) rather than captured once.
@@ -108,6 +108,34 @@ object SwipeMessageOperations : ClickableFeature(), IResolveDex,
                 "warn!!! cacheSize:%s sysSize:%s"
             )
         }
+    }
+
+    // ChattingUIFragment installs this listener on the chat list. On ACTION_DOWN it asks the
+    // current ChatFooter to close the keyboard/panel, then returns false so normal list handling
+    // continues. A blank-area DOWN claimed by our row never reaches that listener, so resolve the
+    // exact ChatFooter call and mirror it at the point where we claim the stream.
+    private val methodChatListOnTouch by dexMethod {
+        searchPackages("com.tencent.mm.ui.chatting")
+        matcher {
+            usingEqStrings("onTouch: touch down", "onTouch: touch up")
+            paramTypes("android.view.View", "android.view.MotionEvent")
+            returnType = "boolean"
+        }
+    }
+
+    private val methodHideChatInput by dexMethod()
+
+    override fun resolveDex(dexKit: DexKitBridge) {
+        methodHideChatInput.setDescriptor(
+            methodChatListOnTouch.data.invokes
+                .distinctBy { it.descriptor }
+                .single {
+                    it.declaredClassName == "com.tencent.mm.pluginsdk.ui.chat.ChatFooter" &&
+                        it.returnTypeName == "void" &&
+                        (it.paramTypeNames == listOf("boolean") ||
+                            it.paramTypeNames == listOf("int", "boolean"))
+                }
+        )
     }
 
     // ── lifecycle ────────────────────────────────────────────────────────────
@@ -303,6 +331,7 @@ object SwipeMessageOperations : ClickableFeature(), IResolveDex,
                     }
                     true
                 } else {
+                    hideChatInput(s.chattingContext!!)
                     false
                 }
             }
@@ -348,7 +377,7 @@ object SwipeMessageOperations : ClickableFeature(), IResolveDex,
         private val root = row.rootView as? ViewGroup
         private val size = 44.dpToPx(row.context)
         private val edgeMargin = 16.dpToPx(row.context)
-        private val quoteIcon = SwipeActionIconView(row.context, FormatQuoteIcon, SwipeActionColor.GREEN)
+        private val quoteIcon = SwipeActionIconView(row.context, ReplyIcon, SwipeActionColor.GREEN)
         private val repeatIcon = SwipeActionIconView(row.context, ExposurePlus1Icon, SwipeActionColor.BLUE)
         private val editIcon = SwipeActionIconView(row.context, EditIcon, SwipeActionColor.ORANGE)
         private val rootLocation = IntArray(2)
@@ -588,6 +617,22 @@ object SwipeMessageOperations : ClickableFeature(), IResolveDex,
     }
 
     // ── swipe actions ──────────────────────────────────────────────────────────
+
+    private fun hideChatInput(chattingContext: Any) {
+        val apiMan = chattingContext.reflekt()
+            .firstField { type = WeServiceApi.apiManagerClass }
+            .get()!!
+        val api = WeServiceApi.getApiByClass(apiMan, classChattingUiFootComponent.clazz)
+        val chatFooter = api.reflekt()
+            .firstField { type = "com.tencent.mm.pluginsdk.ui.chat.ChatFooter" }
+            .get()!! as ChatFooter
+        val method = methodHideChatInput.method
+        if (method.parameterCount == 1) {
+            method.invoke(chatFooter, true)
+        } else {
+            method.invoke(chatFooter, 0, true)
+        }
+    }
 
     private fun onSwipeQuote(originalView: View, chattingContext: Any) {
         val apiMan = chattingContext.reflekt()

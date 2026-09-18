@@ -12,6 +12,7 @@ import com.composables.icons.materialsymbols.outlinedfilled.Extension
 import com.composables.icons.materialsymbols.outlinedfilled.Favorite
 import com.composables.icons.materialsymbols.outlinedfilled.Mark_chat_read
 import com.composables.icons.materialsymbols.outlinedfilled.Movie
+import com.composables.icons.materialsymbols.outlinedfilled.Person_add
 import com.composables.icons.materialsymbols.outlinedfilled.Qr_code_scanner
 import com.composables.icons.materialsymbols.outlinedfilled.Settings
 import com.composables.icons.materialsymbols.outlinedfilled.Update
@@ -27,13 +28,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-internal data class HomeSidePanelActionSpec(
+data class HomeSidePanelActionSpec(
     val kind: HomeSidePanelActionKind,
     @StringRes val labelRes: Int,
     val icon: ImageVector,
 )
 
-internal fun homeSidePanelActionSpec(kind: HomeSidePanelActionKind): HomeSidePanelActionSpec = when (kind) {
+fun homeSidePanelActionSpec(kind: HomeSidePanelActionKind): HomeSidePanelActionSpec = when (kind) {
+    HomeSidePanelActionKind.ADD_FRIEND -> HomeSidePanelActionSpec(
+        kind,
+        R.string.home_side_panel_action_add_friend,
+        MaterialSymbols.OutlinedFilled.Person_add,
+    )
+
     HomeSidePanelActionKind.SCAN -> HomeSidePanelActionSpec(
         kind,
         R.string.fab_default_scan,
@@ -95,7 +102,7 @@ internal fun homeSidePanelActionSpec(kind: HomeSidePanelActionKind): HomeSidePan
     )
 }
 
-internal class HomeSidePanelActionExecutor(
+class HomeSidePanelActionExecutor(
     private val activity: Activity,
     private val scope: CoroutineScope,
     private val closePanel: ((() -> Unit)?) -> Unit,
@@ -126,6 +133,10 @@ internal class HomeSidePanelActionExecutor(
 
     private fun executeAfterPanelClosed(kind: HomeSidePanelActionKind) {
         when (kind) {
+            HomeSidePanelActionKind.ADD_FRIEND -> {
+                startWeChatActivity("com.tencent.mm.plugin.subapp.ui.pluginapp.AddMoreFriendsUI")
+            }
+
             HomeSidePanelActionKind.SCAN -> {
                 startWeChatActivity("com.tencent.mm.plugin.scanner.ui.BaseScanUI")
             }

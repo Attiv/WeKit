@@ -1,4 +1,3 @@
-@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 
 package dev.ujhhgtg.wekit.activity.settings
 
@@ -13,7 +12,6 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,8 +22,6 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -36,7 +32,6 @@ import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -58,6 +53,7 @@ import com.composables.icons.materialsymbols.outlined.Camera
 import com.composables.icons.materialsymbols.outlined.Chat
 import com.composables.icons.materialsymbols.outlined.Checklist
 import com.composables.icons.materialsymbols.outlined.Chevron_right
+import com.composables.icons.materialsymbols.outlined.Code
 import com.composables.icons.materialsymbols.outlined.Comedy_mask
 import com.composables.icons.materialsymbols.outlined.Contact_page
 import com.composables.icons.materialsymbols.outlined.Contacts
@@ -77,7 +73,7 @@ import com.composables.icons.materialsymbols.outlinedfilled.Home
 import com.composables.icons.materialsymbols.outlinedfilled.Settings
 import com.composables.icons.materialsymbols.outlinedfilled.Tune
 import dev.ujhhgtg.wekit.R
-import dev.ujhhgtg.wekit.activity.testsettings.NukeSettingsContent
+import dev.ujhhgtg.wekit.activity.nuke.NukeSettingsContent
 import dev.ujhhgtg.wekit.features.core.BaseFeature
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
@@ -161,6 +157,7 @@ val FEATURE_CATEGORIES = listOf(
     FeatureCategory(FeatureCategoryIds.PROFILE, R.string.feature_category_profile_title, MaterialSymbols.Outlined.Account_circle),
     FeatureCategory(FeatureCategoryIds.DEBUG, R.string.feature_category_debug_title, MaterialSymbols.Outlined.Bug_report),
     FeatureCategory(FeatureCategoryIds.SCRIPTING_JAVA, R.string.feature_category_scripting_java_title, MaterialSymbols.Outlined.Terminal),
+    FeatureCategory(FeatureCategoryIds.SCRIPTING_PYTHON, R.string.feature_category_scripting_python_title, MaterialSymbols.Outlined.Code),
     FeatureCategory(FeatureCategoryIds.ENTERTAIN, R.string.feature_category_entertain_title, MaterialSymbols.Outlined.Comedy_mask),
     FeatureCategory(FeatureCategoryIds.BATCH, R.string.feature_category_batch_title, MaterialSymbols.Outlined.Checklist),
     FeatureCategory(FeatureCategoryIds.HOME_SCREEN_MENU, R.string.feature_category_home_screen_menu_title, MaterialSymbols.Outlined.Add_circle),
@@ -169,7 +166,7 @@ val FEATURE_CATEGORIES = listOf(
 
 /**
  * Pseudo-category shown above the real ones. Deliberately kept out of [FEATURE_CATEGORIES] —
- * it isn't something a feature can declare in its `@Feature(categoryIds = ...)`.
+ * it isn't something a feature can declare in its `categoryIds` property.
  */
 const val NEW_FEATURES_CATEGORY = "new_features"
 const val ENABLED_FEATURES_CATEGORY = "enabled_features"
@@ -185,7 +182,7 @@ fun featureCategoryTitleRes(categoryId: String): Int =
 
 /**
  * Features whose source file entered the repo within [NewFeatures.WINDOW_DAYS] days of the build's
- * HEAD commit (collected at compile time by `GenerateNewFeaturesTask`), newest first.
+ * HEAD commit (joined by generated Feature source keys at compile time), newest first.
  *
  * Features that belong to no real category — the `API` internals — are dropped: they carry no
  * switch a user would meaningfully flip.

@@ -5,11 +5,12 @@ import android.widget.ImageView
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.Modifiers
 import dev.ujhhgtg.reflekt.utils.createInstance
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
+import dev.ujhhgtg.wekit.dexkit.dsl.data
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.core.ApiFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.WeLogger
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -42,13 +43,12 @@ data class TextStatusEmoji(
     val attachedText: String?,
 )
 
-@Feature(
-    id = "微信状态服务",
-    nameRes = "feature_we_text_status_api_name",
-    categoryIds = [FeatureCategoryIds.API],
-    descriptionRes = "feature_we_text_status_api_description",
-)
 object WeTextStatusApi : ApiFeature(), IResolveDex {
+
+    override val technicalId = "微信状态服务"
+    override val nameRes = R.string.feature_we_text_status_api_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
+    override val descriptionRes = R.string.feature_we_text_status_api_description
 
     private const val TAG = "WeTextStatusApi"
 
@@ -104,9 +104,7 @@ object WeTextStatusApi : ApiFeature(), IResolveDex {
     }
 
     override fun resolveDex(dexKit: DexKitBridge) {
-        val latestStatusMethod = dexKit.getMethodData(
-            methodLatestStatusByUsername.getDescriptorString()!!,
-        )!!
+        val latestStatusMethod = methodLatestStatusByUsername.data
         val storageInterface = latestStatusMethod.declaredClass!!.interfaces.single { candidate ->
             candidate.methods.any { method ->
                 method.methodName == latestStatusMethod.methodName &&
@@ -126,12 +124,8 @@ object WeTextStatusApi : ApiFeature(), IResolveDex {
             }
         }
 
-        val topicInfoMethod = dexKit.getMethodData(
-            methodTextStatusTopicInfo.getDescriptorString()!!,
-        )!!
-        val setIconMethod = dexKit.getMethodData(
-            methodSetTextStatusIcon.getDescriptorString()!!,
-        )!!
+        val topicInfoMethod = methodTextStatusTopicInfo.data
+        val setIconMethod = methodSetTextStatusIcon.data
         val iconHelperType = setIconMethod.paramTypeNames.first()
         val iconHelperAccessor = dexKit.findMethod {
             matcher {

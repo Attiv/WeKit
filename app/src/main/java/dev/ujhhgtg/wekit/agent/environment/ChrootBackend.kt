@@ -1,8 +1,15 @@
 package dev.ujhhgtg.wekit.agent.environment
 
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createDirectory
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.getOwner
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isExecutable
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.writeText
 import dev.ujhhgtg.wekit.utils.fs.asPath
-import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -36,25 +43,25 @@ class ChrootConfiguration(
 
     fun createRun(nonce: String = UUID.randomUUID().toString()): ChrootRun {
         require(nonce.matches(RUN_NONCE)) { "invalid chroot run nonce" }
-        Files.createDirectories(runsDirectory)
+        runsDirectory.createDirectories()
         val directory = runsDirectory.resolve(nonce)
-        Files.createDirectory(directory)
+        directory.createDirectory()
         try {
             directory.resolve("nonce").writeText(nonce, Charsets.UTF_8, StandardOpenOption.CREATE_NEW)
             directory.resolve("stage").writeText("CREATED", Charsets.UTF_8, StandardOpenOption.CREATE_NEW)
             return ChrootRun(nonce, directory)
         } catch (error: Throwable) {
-            Files.newDirectoryStream(directory).use { entries -> entries.forEach(Files::deleteIfExists) }
-            Files.deleteIfExists(directory)
+            directory.listDirectoryEntries().forEach(Path::deleteIfExists)
+            directory.deleteIfExists()
             throw error
         }
     }
 
     fun pendingRuns(): List<ChrootRun> {
-        if (!Files.isDirectory(runsDirectory)) return emptyList()
-        return Files.newDirectoryStream(runsDirectory).use { entries ->
-            entries.filter(Files::isDirectory).map { directory -> ChrootRun(directory.fileName.toString(), directory) }
-        }
+        if (!runsDirectory.isDirectory()) return emptyList()
+        return runsDirectory.listDirectoryEntries()
+            .filter { it.isDirectory() }
+            .map { directory -> ChrootRun(directory.fileName.toString(), directory) }
     }
 
     fun execScript(run: ChrootRun, command: String, environment: Map<String, String>): String =
@@ -109,7 +116,7 @@ class ChrootConfiguration(
         """.trimIndent()
     }
 
-    internal fun hostLaunchArgv(run: ChrootRun, suExecutable: Path, argv: List<String>, environment: Map<String, String>): List<String> {
+    fun hostLaunchArgv(run: ChrootRun, suExecutable: Path, argv: List<String>, environment: Map<String, String>): List<String> {
         require(suExecutable.isAbsolute) { "root helper executable must be absolute" }
         return listOf(
             suExecutable.toString(), "-c",
@@ -149,12 +156,12 @@ class ChrootConfiguration(
             "/storage/emulated".asPath, "/storage/self/primary".asPath, "/sdcard".asPath,
         )
 
-        internal fun shell(value: String): String = "'${value.replace("'", "'\\''")}'"
+        fun shell(value: String): String = "'${value.replace("'", "'\\''")}'"
         private val RUN_NONCE = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     }
 }
 
-class ChrootRun internal constructor(val nonce: String, val directory: Path) {
+class ChrootRun constructor(val nonce: String, val directory: Path) {
     val cmdlineMarker: String = "wekit-chroot-run-$nonce"
     val pidFile: Path = directory.resolve("pid")
     val startTimeFile: Path = directory.resolve("starttime")
@@ -163,7 +170,7 @@ class ChrootRun internal constructor(val nonce: String, val directory: Path) {
     val stageFile: Path = directory.resolve("stage")
 }
 
-internal object ArchLinuxInstanceLayout {
+object ArchLinuxInstanceLayout {
     fun canonicalInstancesRoot(): Path =
         HostInfo.application.filesDir.path.asPath.resolve("wekit-agent/environment/instances")
 
@@ -181,22 +188,22 @@ internal object ArchLinuxInstanceLayout {
         require(realInstance.parent == canonicalRoot && realRootfs.parent == realInstance) {
             "chroot rootfs escapes the canonical instance root"
         }
-        require(Files.getOwner(realInstance) == Files.getOwner(canonicalRoot)) {
+        require(realInstance.getOwner() == canonicalRoot.getOwner()) {
             "Arch instance is not app-owned"
         }
-        require(Files.isRegularFile(realInstance.resolve(ArchLinuxInstanceInstaller.PUBLISHED_MARKER), LinkOption.NOFOLLOW_LINKS)) {
+        require(realInstance.resolve(ArchLinuxInstanceInstaller.PUBLISHED_MARKER).isRegularFile(LinkOption.NOFOLLOW_LINKS)) {
             "Arch instance is not published"
         }
         require(
-            Files.isExecutable(realRootfs.resolve("bin/bash")) &&
-                Files.isExecutable(realRootfs.resolve("usr/bin/invoke_tool")) &&
-                Files.isRegularFile(realRootfs.resolve("etc/resolv.conf"), LinkOption.NOFOLLOW_LINKS)
+            realRootfs.resolve("bin/bash").isExecutable() &&
+                realRootfs.resolve("usr/bin/invoke_tool").isExecutable() &&
+                realRootfs.resolve("etc/resolv.conf").isRegularFile(LinkOption.NOFOLLOW_LINKS)
         ) { "published Arch instance is incomplete" }
         return realRootfs
     }
 }
 
-internal object ChrootMountRegistry {
+object ChrootMountRegistry {
     private val active = HashMap<String, MutableSet<String>>()
     private val deleting = HashSet<String>()
     @Synchronized fun begin(rootfs: Path, token: String) {
@@ -217,16 +224,16 @@ internal object ChrootMountRegistry {
         check(deleting.add(key)) { "chroot environment deletion is already in progress" }
     }
     @Synchronized fun endDeletion(rootfs: Path) { deleting.remove(rootfs.toString()) }
-    @Synchronized internal fun hasActiveRuns(rootfs: Path): Boolean = rootfs.toString() in active
-    @Synchronized internal fun isBusy(rootfs: Path): Boolean =
+    @Synchronized fun hasActiveRuns(rootfs: Path): Boolean = rootfs.toString() in active
+    @Synchronized fun isBusy(rootfs: Path): Boolean =
         hasActiveRuns(rootfs) || hasPersistedRuns(rootfs)
 
     private fun hasPersistedRuns(rootfs: Path): Boolean = rootfs.parent.resolve("chroot-runs").let { runs ->
-        Files.isDirectory(runs) && Files.newDirectoryStream(runs).use { it.iterator().hasNext() }
+        runs.isDirectory() && runs.listDirectoryEntries().isNotEmpty()
     }
 }
 
-class ChrootBackend internal constructor(
+class ChrootBackend constructor(
     override val snapshot: EnvironmentSnapshot,
     private val configuration: ChrootConfiguration = ChrootConfiguration(
         ArchLinuxInstanceLayout.validatePublishedRootfs(requireNotNull(snapshot.rootfsPath).asPath),
@@ -255,7 +262,7 @@ class ChrootBackend internal constructor(
     }
 
     override suspend fun checkHealth(): EnvironmentHealth {
-        if (!Files.isRegularFile(configuration.rootfs.resolve("bin/bash"))) {
+        if (!configuration.rootfs.resolve("bin/bash").isRegularFile()) {
             return EnvironmentHealth(EnvironmentHealthState.UNAVAILABLE, "Arch rootfs is corrupt")
         }
         if (!rootHelper.hasRoot()) return EnvironmentHealth(EnvironmentHealthState.UNAVAILABLE, "root access denied")

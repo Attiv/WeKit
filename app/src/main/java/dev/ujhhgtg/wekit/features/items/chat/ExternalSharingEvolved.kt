@@ -5,10 +5,11 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
+import android.os.Build
 import androidx.activity.ComponentActivity
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -19,13 +20,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.seconds
 
-@Feature(
-    id = "分享进化",
-    nameRes = "feature_external_sharing_evolved_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_external_sharing_evolved_description",
-)
 object ExternalSharingEvolved : ClickableFeature() {
+
+    override val technicalId = "分享进化"
+    override val nameRes = R.string.feature_external_sharing_evolved_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_external_sharing_evolved_description
 
     private const val TAG = "ExternalSharingEvolved"
 
@@ -63,9 +63,8 @@ object ExternalSharingEvolved : ClickableFeature() {
                 .setImportant(true)
                 .build()
 
-            ShortcutInfo.Builder(ctx, "sharing_target_${friend.wxId}")
+            val builder = ShortcutInfo.Builder(ctx, "sharing_target_${friend.wxId}")
                 .setShortLabel(displayName)
-                .setPerson(contact)
                 // 绑定到微信内置的系统分享匹配规则（通常对应其 shortcuts.xml 内置定义的 category）
                 .setCategories(setOf("android.intent.category.DEFAULT"))
                 .setIntent(
@@ -78,9 +77,11 @@ object ExternalSharingEvolved : ClickableFeature() {
                         putExtra("Intent_Direct_Share", true)
                     }
                 )
-                .setLongLived(true)
-                // 提示：如果需要展示真实头像，可以使用 Icon.createWithAdaptiveBitmap() 加载本地域名下的头像文件缓存
-                .build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                builder.setPerson(contact).setLongLived(true)
+            }
+            // 提示：如果需要展示真实头像，可以使用 Icon.createWithAdaptiveBitmap() 加载本地域名下的头像文件缓存
+            builder.build()
         }
 
         sm.dynamicShortcuts = shortcuts

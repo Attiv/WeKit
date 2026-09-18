@@ -1,20 +1,22 @@
 package dev.ujhhgtg.wekit.features.api.core
 
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
+import dev.ujhhgtg.wekit.dexkit.dsl.data
+import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexConstructor
+import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.net.WeNetSceneApi
 import dev.ujhhgtg.wekit.features.core.ApiFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.WeLogger
 
-@Feature(
-    id = "支付服务",
-    nameRes = "feature_we_payment_api_name",
-    categoryIds = [FeatureCategoryIds.API],
-    descriptionRes = "feature_we_payment_api_description",
-)
 object WePaymentApi : ApiFeature(), IResolveDex {
+
+    override val technicalId = "支付服务"
+    override val nameRes = R.string.feature_we_payment_api_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
+    override val descriptionRes = R.string.feature_we_payment_api_description
 
     private const val TAG = "WePaymentApi"
 
@@ -25,6 +27,40 @@ object WePaymentApi : ApiFeature(), IResolveDex {
                 usingEqStrings("Micromsg.NetSceneTenpayRemittanceConfirm", "/cgi-bin/mmpay-bin/transferoperation")
             }
             usingEqStrings("account click info , key is %s, value is %s")
+        }
+    }
+    val classReceiveLuckyMoney by dexClass {
+        matcher {
+            methods {
+                add {
+                    name = "<init>"
+                    usingEqStrings("MicroMsg.NetSceneReceiveLuckyMoney")
+                }
+            }
+        }
+    }
+    val classOpenLuckyMoney by dexClass {
+        matcher {
+            methods {
+                add {
+                    name = "<init>"
+                    usingEqStrings("MicroMsg.NetSceneOpenLuckyMoney")
+                }
+            }
+        }
+    }
+    val methodReceiveLuckyMoneyOnGYNetEnd by dexMethod {
+        matcher {
+            declaredClass(classReceiveLuckyMoney.data.name)
+            name = "onGYNetEnd"
+            paramCount = 3
+        }
+    }
+    val methodOpenLuckyMoneyOnGYNetEnd by dexMethod {
+        matcher {
+            declaredClass(classOpenLuckyMoney.data.name)
+            name = "onGYNetEnd"
+            paramCount = 3
         }
     }
 

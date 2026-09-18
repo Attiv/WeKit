@@ -16,10 +16,10 @@ import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
+import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.core.models.MessageInfo
 import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarMenuApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.items.chat.localizedChatString
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
@@ -55,13 +55,12 @@ import dev.ujhhgtg.wekit.utils.android.showToast
  *   "(?s)<sec_msg_node[^>]*>.*?</sec_msg_node>" 正则字面量 (8.0.72 为 az0.ia.O,
  *   8.0.65 为 zt0.t9.N), 签名均为 static (msgInfo, String, boolean) -> void。
  */
-@Feature(
-    id = "安全消息发送",
-    nameRes = "feature_send_sec_msg_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_send_sec_msg_description",
-)
 object SendSecMsg : ClickableFeature(), IResolveDex {
+
+    override val technicalId = "安全消息发送"
+    override val nameRes = R.string.feature_send_sec_msg_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_send_sec_msg_description
 
     /** 被动模式: 所有自己发出的文本消息一律注入标记 */
     private const val MODE_PASSIVE = 0
@@ -83,16 +82,6 @@ object SendSecMsg : ClickableFeature(), IResolveDex {
     // 由下一次入库时 mode 判定兜底 (菜单模式下正常发送不注入)。
     @Volatile
     private var pendingSecSend = false
-
-    // 消息入库方法 (文本发送 NetSceneSendMsg 构造时调用), (msgInfo, boolean) -> long
-    private val methodInsertMessage by dexMethod {
-        searchPackages("com.tencent.mm.storage")
-        matcher {
-            usingEqStrings("Error insert message msg:%s talker:%s")
-            paramCount(2)
-            returnType("long")
-        }
-    }
 
     // MsgSourceHelper 合并方法: static (msgInfo, String secXml, boolean) -> void
     private val methodMergeSecNode by dexMethod {
@@ -127,7 +116,7 @@ object SendSecMsg : ClickableFeature(), IResolveDex {
     }
 
     override fun onEnable() {
-        methodInsertMessage.hookBefore {
+        WeMessageApi.methodMsgInfoHandleApiInsertMessage.hookBefore {
             val msgInfo = MessageInfo(args[0]!!)
 
             // 只处理自己发送的文本消息 (isSend=1, type=1)

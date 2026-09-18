@@ -19,6 +19,9 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::workspace_root;
 
+#[path = "dex_report_diff.rs"]
+pub mod diff;
+
 const DEXKIT_REPOSITORY: &str = "https://github.com/LuckyPray/DexKit.git";
 const DEXKIT_REVISION: &str = "ffa6c51c38fe3ecfddb18d8949c30c48dbfbfd6a";
 
@@ -35,6 +38,10 @@ pub struct DexTestArgs {
     /// Comma-separated exact feature class names or fully qualified class names.
     #[arg(long, value_name = "FEATURES", value_parser = parse_feature_filter)]
     pub features: Option<String>,
+
+    /// Use the shared Android batch scheduler with this many workers (omit for per-feature runs).
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+    pub workers: Option<u16>,
 
     /// Print every successful delegate and descriptor.
     #[arg(long)]
@@ -89,6 +96,8 @@ struct DelegateReport {
 struct FeatureReport {
     class_name: String,
     display_name: String,
+    #[serde(default)]
+    technical_id: Option<String>,
     method_hash: String,
     outcome: String,
     elapsed_millis: i64,
@@ -179,7 +188,7 @@ pub fn task_dex_test(args: DexTestArgs) -> Result<()> {
     let apks = if args.apks.is_empty() {
         discover_apks()?
             .into_iter()
-            .map(|path| canonical_apk(path))
+            .map(canonical_apk)
             .collect::<Result<Vec<_>>>()?
     } else {
         normalize_explicit_apks(&args.apks)?
@@ -243,6 +252,7 @@ pub fn task_dex_test(args: DexTestArgs) -> Result<()> {
             &native,
             &report_path,
             args.features.as_deref(),
+            args.workers,
         );
         let report = match (status, read_report(&report_path)) {
             (_, Ok(report)) => report,
@@ -631,6 +641,7 @@ fn run_worker(
     native: &DexKitNative,
     report: &Path,
     features: Option<&str>,
+    workers: Option<u16>,
 ) -> Result<i32> {
     let gradle = root.join("gradlew");
     let mut properties = vec![
@@ -656,6 +667,9 @@ fn run_worker(
     if let Some(features) = features {
         properties.push(("wekit.dexTest.features", features.to_string()));
     }
+    if let Some(workers) = workers {
+        properties.push(("wekit.dexTest.workers", workers.to_string()));
+    }
     let mut command = Command::new(&gradle);
     command
         .current_dir(root)
@@ -678,7 +692,7 @@ fn read_report(path: &Path) -> Result<ApkReport> {
 
 fn infrastructure_report(apk: &Path, native: &DexKitNative, error: &anyhow::Error) -> ApkReport {
     ApkReport {
-        schema_version: 1,
+        schema_version: 2,
         worker_pid: 0,
         apk_path: apk.to_string_lossy().to_string(),
         file_name: apk
@@ -872,8 +886,8 @@ fn command_output(command: &mut Command, description: &str) -> Result<String> {
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    Ok(String::from_utf8(output.stdout)
-        .with_context(|| format!("{description} produced non-UTF-8 output"))?)
+    String::from_utf8(output.stdout)
+        .with_context(|| format!("{description} produced non-UTF-8 output"))
 }
 
 fn run_command(command: &mut Command, description: &str) -> Result<()> {

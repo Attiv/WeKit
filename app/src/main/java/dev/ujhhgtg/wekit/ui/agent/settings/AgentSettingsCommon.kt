@@ -1,4 +1,3 @@
-@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 
 package dev.ujhhgtg.wekit.ui.agent.settings
 
@@ -23,8 +22,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.LocalContentColor
@@ -68,6 +65,7 @@ val AGENT_CONTENT_BOTTOM_INSET = 32.dp
 fun AgentSettingsScaffold(
     title: String,
     onBack: (() -> Unit)?,
+    actions: @Composable RowScope.() -> Unit = {},
     content: LazyListScope.() -> Unit,
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
@@ -89,6 +87,7 @@ fun AgentSettingsScaffold(
                         }
                     }
                 },
+                actions = actions,
                 scrollBehavior = scrollBehavior,
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = barBackdrop.m3AppBarColor(),
@@ -193,17 +192,24 @@ fun AgentConfirmDialog(
  * Back guard shared by the detail screens' creation mode: while [guardActive] (a savable but
  * unsaved draft), every back attempt — scaffold back button or system gesture — opens a
  * confirm-discard dialog instead of leaving; otherwise back passes straight through. Returns the
- * guarded callback to hand to [AgentSettingsScaffold]'s onBack.
+ * guarded callback to hand to [AgentSettingsScaffold]'s onBack. Dialog copy defaults to the
+ * creation wording; override the labels for other guard kinds (e.g. discarding edits).
  */
 @Composable
-fun rememberCreationBackGuard(guardActive: Boolean, onBack: () -> Unit): () -> Unit {
+fun rememberCreationBackGuard(
+    guardActive: Boolean,
+    onBack: () -> Unit,
+    dialogTitle: String = stringResource(R.string.agent_discard_creation_title),
+    dialogMessage: String = stringResource(R.string.agent_discard_creation_message),
+    confirmLabel: String = stringResource(R.string.agent_discard_creation_confirm),
+): () -> Unit {
     var showDiscard by remember { mutableStateOf(false) }
     BackHandler(enabled = guardActive) { showDiscard = true }
     AgentConfirmDialog(
         show = showDiscard,
-        title = stringResource(R.string.agent_discard_creation_title),
-        message = stringResource(R.string.agent_discard_creation_message),
-        confirmLabel = stringResource(R.string.agent_discard_creation_confirm),
+        title = dialogTitle,
+        message = dialogMessage,
+        confirmLabel = confirmLabel,
         dismissLabel = stringResource(R.string.dialog_cancel),
         destructive = true,
         onConfirm = {

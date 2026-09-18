@@ -55,7 +55,6 @@
 //import dev.ujhhgtg.wekit.features.api.core.WeConversationApi
 //import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
 //import dev.ujhhgtg.wekit.features.core.ClickableFeature
-//import dev.ujhhgtg.wekit.features.core.Feature
 //import dev.ujhhgtg.wekit.preferences.WePrefs
 //import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 //import dev.ujhhgtg.wekit.ui.content.Button
@@ -65,14 +64,14 @@
 //import dev.ujhhgtg.wekit.ui.content.TextButton
 //import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 //import dev.ujhhgtg.wekit.utils.HostInfo
-//import dev.ujhhgtg.wekit.utils.TargetProcesses
+//import dev.ujhhgtg.wekit.utils.TargetProcess
 //import dev.ujhhgtg.wekit.utils.android.getSystemService
 //import kotlinx.coroutines.Dispatchers
 //import kotlinx.coroutines.launch
 //import kotlinx.coroutines.withContext
 //import java.io.Serializable
 //
-//@Feature(
+// Disabled feature metadata (
 //    name = "自定义对话通知",
 //    categories = ["通知"],
 //    description = "为每个对话单独设定通知方式\n• 声音:跟随全局 / 无声 / 自定义铃声\n• 振动: 跟随全局 / 短/ 长 / 禁用\n• 优先级: 跟随全局 / 低 / 中 / 高 / 紧急\n• 遵守免打扰: 跟随全局 / 关 / 开"
@@ -105,8 +104,7 @@
 //    // Own ThreadLocal — never shared with NotificationsEvolved.
 //    private val currentTalker = ThreadLocal<String?>()
 //
-//    override val shouldLoadInCurrentProcess
-//        get() = TargetProcesses.isInMain || TargetProcesses.currentType == TargetProcesses.PROC_PUSH
+//    override val targetProcesses = setOf(TargetProcess.MAIN, TargetProcess.PUSH)
 //
 //    override val alwaysEnabled = true
 //    override val noSwitchWidget = true

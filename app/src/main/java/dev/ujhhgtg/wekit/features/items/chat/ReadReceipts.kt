@@ -23,7 +23,6 @@ import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarMenuApi
 import dev.ujhhgtg.wekit.features.api.ui.WeChatMessageViewApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
@@ -74,7 +73,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.time.Duration.Companion.milliseconds
 
-internal fun readReceiptNetworkFailureCategory(failure: Throwable): String = when (failure) {
+fun readReceiptNetworkFailureCategory(failure: Throwable): String = when (failure) {
     is SocketTimeoutException -> "timeout"
     is UnknownHostException -> "dns"
     is SSLException -> "tls"
@@ -83,12 +82,12 @@ internal fun readReceiptNetworkFailureCategory(failure: Throwable): String = whe
     else -> "response"
 }
 
-internal class ReadReceiptsLocalFailure(
+class ReadReceiptsLocalFailure(
     @StringRes val messageRes: Int,
     vararg val formatArgs: Any,
 ) : IllegalStateException()
 
-internal sealed interface ReadReceiptRuntimeError {
+sealed interface ReadReceiptRuntimeError {
     fun message(context: Context): String
 
     class Resource(
@@ -112,7 +111,7 @@ internal sealed interface ReadReceiptRuntimeError {
     }
 }
 
-internal sealed interface ReadReceiptsUiText {
+sealed interface ReadReceiptsUiText {
     @Composable
     fun resolve(): String
 
@@ -149,7 +148,7 @@ internal sealed interface ReadReceiptsUiText {
 
 
 /** Owns configuration persistence across delayed connection and metadata continuations. */
-internal class ConfigurationTransactionOwnership {
+class ConfigurationTransactionOwnership {
     private var nextOwnerId = 0L
     private var currentOwnerId: Long? = null
 
@@ -166,17 +165,17 @@ internal class ConfigurationTransactionOwnership {
     }
 
     @Synchronized
-    internal fun isCurrent(ownerId: Long): Boolean = currentOwnerId == ownerId
+    fun isCurrent(ownerId: Long): Boolean = currentOwnerId == ownerId
 
     @Synchronized
-    internal fun runIfCurrent(ownerId: Long, action: () -> Unit): Boolean {
+    fun runIfCurrent(ownerId: Long, action: () -> Unit): Boolean {
         if (currentOwnerId != ownerId) return false
         action()
         return true
     }
 
     @Synchronized
-    internal fun finishIfCurrent(ownerId: Long, action: () -> Unit): Boolean {
+    fun finishIfCurrent(ownerId: Long, action: () -> Unit): Boolean {
         if (currentOwnerId != ownerId) return false
         action()
         currentOwnerId = null
@@ -184,7 +183,7 @@ internal class ConfigurationTransactionOwnership {
     }
 }
 
-internal class ConfigurationTransactionOwner(
+class ConfigurationTransactionOwner(
     private val ownership: ConfigurationTransactionOwnership,
     private val ownerId: Long,
 ) {
@@ -197,7 +196,7 @@ internal class ConfigurationTransactionOwner(
 }
 
 
-internal fun finishBuiltInStackStop(
+fun finishBuiltInStackStop(
     tunnelResult: Result<Unit>,
     stopOrigin: (((Long, OriginRequestTerminal<Unit>) -> Unit) -> Unit),
     onFinished: (Long, OriginRequestTerminal<Unit>) -> Unit,
@@ -217,7 +216,7 @@ internal fun finishBuiltInStackStop(
     }
 }
 
-internal fun configurationRollbackTerminal(
+fun configurationRollbackTerminal(
     originalFailure: Throwable,
     restartTerminal: OriginRequestTerminal<Unit>,
 ): OriginRequestTerminal<Unit> = when (restartTerminal) {
@@ -237,7 +236,7 @@ internal fun configurationRollbackTerminal(
 }
 
 /** Coalesces a stack stop without collapsing [OriginRequestTerminal.Superseded] into failure. */
-internal class CoalescedOriginCallbacks<T> {
+class CoalescedOriginCallbacks<T> {
     private var callbacks: MutableList<(OriginRequestTerminal<T>) -> Unit>? = null
 
     @Synchronized
@@ -271,31 +270,30 @@ internal class CoalescedOriginCallbacks<T> {
     }
 }
 
-@Feature(
-    id = "已读追踪",
-    nameRes = "feature_read_receipts_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_read_receipts_description",
-)
 object ReadReceipts : ClickableFeature(),
     WeChatMessageViewApi.ICreateViewListener,
     WeChatMessageViewApi.IMessageViewLifecycleListener {
 
+    override val technicalId = "已读追踪"
+    override val nameRes = R.string.feature_read_receipts_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_read_receipts_description
+
     private const val TAG = "ReadReceipts"
 
     /** 被动模式: 拦截所有文本发送, 一律替换为已读回执消息 */
-    internal const val MODE_PASSIVE = 0
+    const val MODE_PASSIVE = 0
 
     /** 主动模式 (加号菜单): 长按发送按钮, 通过输入栏菜单主动发送 */
-    internal const val MODE_ACTIVE_MENU = 1
+    const val MODE_ACTIVE_MENU = 1
 
     /** 主动模式 (触发前缀): 以触发前缀开头的文本替换为已读回执消息 */
-    internal const val MODE_ACTIVE_PREFIX = 2
+    const val MODE_ACTIVE_PREFIX = 2
 
     // ── Preferences ─────────────────────────────────────────────────────────
     private var serializedConfiguration by prefOption("read_receipts_configuration", "")
-    internal var sendMode by prefOption("read_receipts_send_mode", MODE_ACTIVE_MENU)
-    internal var triggerPrefix by prefOption("read_receipts_trigger_prefix", "#rr")
+    var sendMode by prefOption("read_receipts_send_mode", MODE_ACTIVE_MENU)
+    var triggerPrefix by prefOption("read_receipts_trigger_prefix", "#rr")
     private var lastBuiltInPort by prefOption("read_receipts_last_built_in_port", 0)
     private var lastBuiltInState by prefOption(
         "read_receipts_last_built_in_state",
@@ -328,11 +326,11 @@ object ReadReceipts : ClickableFeature(),
     )
 
     @Volatile
-    internal var runtimeError: ReadReceiptRuntimeError? = null
+    var runtimeError: ReadReceiptRuntimeError? = null
 
-    internal fun originStatus(): ReadReceiptsStatus = originController.snapshot()
+    fun originStatus(): ReadReceiptsStatus = originController.snapshot()
 
-    internal fun originActive(): Boolean = originController.status().let {
+    fun originActive(): Boolean = originController.status().let {
         it != ReadReceiptsRuntimeState.STOPPED && it != ReadReceiptsRuntimeState.FAILED
     }
 
@@ -349,7 +347,7 @@ object ReadReceipts : ClickableFeature(),
         val forceRestart: Boolean,
     )
 
-    internal fun configuration(): ReadReceiptsConfiguration {
+    fun configuration(): ReadReceiptsConfiguration {
         loadedConfiguration?.let { return it }
         return synchronized(configurationLock) {
             loadedConfiguration?.let { return@synchronized it }
@@ -369,7 +367,7 @@ object ReadReceipts : ClickableFeature(),
         }
     }
 
-    internal fun saveConfiguration(value: ReadReceiptsConfiguration) {
+    fun saveConfiguration(value: ReadReceiptsConfiguration) {
         configurationTransactionOwnership.supersede()
         persistConfiguration(value)
     }
@@ -851,7 +849,7 @@ object ReadReceipts : ClickableFeature(),
         return metadata
     }
 
-    internal fun authoritativeBrowserConfiguration(
+    fun authoritativeBrowserConfiguration(
         base: ReadReceiptsConfiguration,
         expectedTunnelId: String? = null,
         expectedHostname: String? = null,
@@ -1152,7 +1150,7 @@ object ReadReceipts : ClickableFeature(),
         }
     }
 
-    internal fun applyAndStartBuiltInStack(
+    fun applyAndStartBuiltInStack(
         candidate: ReadReceiptsConfiguration,
         token: String?,
         onFinished: (OriginRequestTerminal<Unit>) -> Unit,
@@ -1226,7 +1224,7 @@ object ReadReceipts : ClickableFeature(),
         onFinished = onFinished,
     )
 
-    internal fun reconnectAuthoritativeBrowserStack(
+    fun reconnectAuthoritativeBrowserStack(
         base: ReadReceiptsConfiguration,
         onFinished: (OriginRequestTerminal<Unit>) -> Unit,
     ) {
@@ -1314,7 +1312,7 @@ object ReadReceipts : ClickableFeature(),
         }
     }
 
-    internal fun applyAndSelectBrowserStack(
+    fun applyAndSelectBrowserStack(
         candidate: ReadReceiptsConfiguration,
         onCommitPending: () -> Unit,
         onFinished: (OriginRequestTerminal<Unit>) -> Unit,
@@ -1326,7 +1324,7 @@ object ReadReceipts : ClickableFeature(),
         onFinished = onFinished,
     )
 
-    internal fun applyConfigurationAfterStoppingStack(
+    fun applyConfigurationAfterStoppingStack(
         candidate: ReadReceiptsConfiguration,
         onFinished: (OriginRequestTerminal<Unit>) -> Unit,
     ) {
@@ -1358,7 +1356,7 @@ object ReadReceipts : ClickableFeature(),
         }
     }
 
-    internal fun stopBuiltInStack(
+    fun stopBuiltInStack(
         onFinished: ((OriginRequestTerminal<Unit>) -> Unit)? = null,
     ) {
         if (!builtInStopCallbacks.register(onFinished)) return
@@ -1383,7 +1381,7 @@ object ReadReceipts : ClickableFeature(),
         }
     }
 
-    internal fun disconnectBuiltInStack(
+    fun disconnectBuiltInStack(
         onFinished: (OriginRequestTerminal<Unit>) -> Unit,
     ) {
         val owner = configurationTransactionOwnership.acquire()
@@ -1396,7 +1394,7 @@ object ReadReceipts : ClickableFeature(),
         }
     }
 
-    internal fun onTunnelServiceStopped() {
+    fun onTunnelServiceStopped() {
         if (originController.status() != ReadReceiptsRuntimeState.STOPPED) stopOrigin()
     }
 
@@ -2161,7 +2159,7 @@ object ReadReceipts : ClickableFeature(),
 
     // Settings activity support
 
-    internal fun testThirdPartyEndpoint(
+    fun testThirdPartyEndpoint(
         value: String,
         scope: CoroutineScope,
         onResult: (Result<Unit>) -> Unit,

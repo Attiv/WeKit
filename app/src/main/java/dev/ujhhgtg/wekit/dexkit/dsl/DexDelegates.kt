@@ -35,12 +35,18 @@ private const val PLACEHOLDER_DESCRIPTOR =
 /**
  * 所有 Dex 委托的公共基类，用于统一缓存读写与桌面测试诊断。
  * 每个委托负责自己的序列化/反序列化。
+ *
+ * [key] 仅需在单个 Feature 内唯一，但必须跨构建稳定：缓存与云报告都以它做字段名。
+ * 因此不能包含运行时类名（R8 混淆后每次构建都会变）——`property.name` 是编译进
+ * 代码的字符串常量，不受混淆影响。
  */
 sealed class BaseDexDelegate(val key: String) {
+    lateinit var owner: BaseFeature
+
     var diagnostic = DexResolutionDiagnostic(DexResolutionStatus.PENDING)
         private set
 
-    internal fun resetForDexTest() {
+    fun resetForResolution() {
         clearResolvedValue()
         diagnostic = DexResolutionDiagnostic(DexResolutionStatus.PENDING)
     }
@@ -77,7 +83,7 @@ sealed class BaseDexDelegate(val key: String) {
         )
     }
 
-    internal fun markBlocked(causeKey: String) {
+    fun markBlocked(causeKey: String) {
         if (diagnostic.status == DexResolutionStatus.PENDING) {
             diagnostic = DexResolutionDiagnostic(
                 status = DexResolutionStatus.BLOCKED,
@@ -86,7 +92,7 @@ sealed class BaseDexDelegate(val key: String) {
         }
     }
 
-    internal fun markIncomplete() {
+    fun markIncomplete() {
         if (diagnostic.status == DexResolutionStatus.PENDING) {
             diagnostic = DexResolutionDiagnostic(DexResolutionStatus.INCOMPLETE)
         }
@@ -116,7 +122,7 @@ sealed class BaseDexDelegate(val key: String) {
 /**
  * Dex 类委托 — 自动生成 Key，自动反射获取 Class。
  */
-class DexClassDelegate internal constructor(
+class DexClassDelegate constructor(
     key: String,
     private val inlineBlock: ((DexClassDelegate, DexKitBridge) -> Boolean)? = null
 ) : BaseDexDelegate(key), ReadOnlyProperty<BaseFeature, DexClassDelegate> {
@@ -223,7 +229,7 @@ class DexClassDelegate internal constructor(
 /**
  * Dex 字段委托 — 自动生成 Key，自动反射获取 Field。
  */
-class DexFieldDelegate internal constructor(
+class DexFieldDelegate constructor(
     key: String,
     private val inlineBlock: ((DexFieldDelegate, DexKitBridge) -> Boolean)? = null
 ) : BaseDexDelegate(key), ReadOnlyProperty<BaseFeature, DexFieldDelegate> {
@@ -344,7 +350,7 @@ class DexFieldDelegate internal constructor(
 /**
  * Dex 方法委托 — 自动生成 Key，自动反射获取 Method。
  */
-class DexMethodDelegate internal constructor(
+class DexMethodDelegate constructor(
     key: String,
     private val inlineBlock: ((DexMethodDelegate, DexKitBridge) -> Boolean)? = null
 ) : BaseDexDelegate(key), ReadOnlyProperty<BaseFeature, DexMethodDelegate> {
@@ -458,7 +464,7 @@ class DexMethodDelegate internal constructor(
 /**
  * Dex 构造函数委托 — 自动生成 Key，自动反射获取 Constructor。
  */
-class DexConstructorDelegate internal constructor(
+class DexConstructorDelegate constructor(
     key: String,
     private val inlineBlock: ((DexConstructorDelegate, DexKitBridge) -> Boolean)? = null
 ) : BaseDexDelegate(key), ReadOnlyProperty<BaseFeature, DexConstructorDelegate> {
@@ -572,7 +578,7 @@ class DexConstructorDelegate internal constructor(
  */
 fun dexConstructor(): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeature, DexConstructorDelegate>> =
     PropertyDelegateProvider { item, property ->
-        val key = "${item::class.simpleName}:${property.name}"
+        val key = property.name
         DexConstructorDelegate(key).also { item.registerDexDelegate(it) }
     }
 
@@ -581,7 +587,7 @@ fun dexConstructor(): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<Bas
  */
 fun dexClass(): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeature, DexClassDelegate>> =
     PropertyDelegateProvider { item, property ->
-        val key = "${item::class.simpleName}:${property.name}"
+        val key = property.name
         DexClassDelegate(key).also { item.registerDexDelegate(it) }
     }
 
@@ -590,7 +596,7 @@ fun dexClass(): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeatu
  */
 fun dexField(): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeature, DexFieldDelegate>> =
     PropertyDelegateProvider { item, property ->
-        val key = "${item::class.simpleName}:${property.name}"
+        val key = property.name
         DexFieldDelegate(key).also { item.registerDexDelegate(it) }
     }
 
@@ -599,7 +605,7 @@ fun dexField(): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeatu
  */
 fun dexMethod(): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeature, DexMethodDelegate>> =
     PropertyDelegateProvider { item, property ->
-        val key = "${item::class.simpleName}:${property.name}"
+        val key = property.name
         DexMethodDelegate(key).also { item.registerDexDelegate(it) }
     }
 
@@ -608,16 +614,28 @@ inline fun DexKitBridge.findClassData(clazz: String): ClassData? =
     getClassData(clazz)
 
 val DexClassDelegate.data: ClassData
-    get() = DexResolutionContext.dexKit.getClassData(getDescriptorString()!!)!!
+    get() {
+        DexResolutionContext.ensureResolved(this)
+        return DexResolutionContext.dexKit.getClassData(getDescriptorString()!!)!!
+    }
 
 val DexMethodDelegate.data: MethodData
-    get() = DexResolutionContext.dexKit.getMethodData(getDescriptorString()!!)!!
+    get() {
+        DexResolutionContext.ensureResolved(this)
+        return DexResolutionContext.dexKit.getMethodData(getDescriptorString()!!)!!
+    }
 
 val DexConstructorDelegate.data: MethodData
-    get() = DexResolutionContext.dexKit.getMethodData(getDescriptorString()!!)!!
+    get() {
+        DexResolutionContext.ensureResolved(this)
+        return DexResolutionContext.dexKit.getMethodData(getDescriptorString()!!)!!
+    }
 
 val DexFieldDelegate.data: FieldData
-    get() = DexResolutionContext.dexKit.getFieldData(getDescriptorString()!!)!!
+    get() {
+        DexResolutionContext.ensureResolved(this)
+        return DexResolutionContext.dexKit.getFieldData(getDescriptorString()!!)!!
+    }
 
 // ---------------------------------------------------------------------------
 // 内联查找委托工厂函数
@@ -633,7 +651,7 @@ fun dexConstructor(
     block: FindMethod.() -> Unit
 ): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeature, DexConstructorDelegate>> =
     PropertyDelegateProvider { item, property ->
-        val key = "${item::class.simpleName}:${property.name}"
+        val key = property.name
         DexConstructorDelegate(key) { delegate, dexKit ->
             delegate.find(dexKit, allowMultiple, throwOnFailure, resultIndex, block)
         }.also { item.registerDexDelegate(it) }
@@ -649,7 +667,7 @@ fun dexClass(
     block: FindClass.() -> Unit
 ): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeature, DexClassDelegate>> =
     PropertyDelegateProvider { item, property ->
-        val key = "${item::class.simpleName}:${property.name}"
+        val key = property.name
         DexClassDelegate(key) { delegate, dexKit ->
             delegate.find(dexKit, allowMultiple, allowFailure, multipleIndex, block)
         }.also { item.registerDexDelegate(it) }
@@ -665,7 +683,7 @@ fun dexField(
     block: FindField.() -> Unit
 ): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeature, DexFieldDelegate>> =
     PropertyDelegateProvider { item, property ->
-        val key = "${item::class.simpleName}:${property.name}"
+        val key = property.name
         DexFieldDelegate(key) { delegate, dexKit ->
             delegate.find(dexKit, allowMultiple, allowFailure, resultIndex, block)
         }.also { item.registerDexDelegate(it) }
@@ -681,7 +699,7 @@ fun dexMethod(
     block: FindMethod.() -> Unit
 ): PropertyDelegateProvider<BaseFeature, ReadOnlyProperty<BaseFeature, DexMethodDelegate>> =
     PropertyDelegateProvider { item, property ->
-        val key = "${item::class.simpleName}:${property.name}"
+        val key = property.name
         DexMethodDelegate(key) { delegate, dexKit ->
             delegate.find(dexKit, allowMultiple, allowFailure, resultIndex, block)
         }.also { item.registerDexDelegate(it) }

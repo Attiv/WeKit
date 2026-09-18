@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonGroupDefaults
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.ToggleButton
@@ -41,7 +40,6 @@ import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeConversationApi
 import dev.ujhhgtg.wekit.features.api.ui.WeChatMessageViewApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -57,14 +55,13 @@ import dev.ujhhgtg.wekit.utils.collections.LruCache
 import dev.ujhhgtg.wekit.utils.unreachable
 import kotlin.math.roundToInt
 
-@Feature(
-    id = "显示群成员身份",
-    nameRes = "feature_display_group_member_roles_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_display_group_member_roles_description",
-)
 object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
     WeChatMessageViewApi.ICreateViewListener {
+
+    override val technicalId = "显示群成员身份"
+    override val nameRes = R.string.feature_display_group_member_roles_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_display_group_member_roles_description
 
     private val methodGetChatroomData by dexMethod {
         matcher {
@@ -110,7 +107,6 @@ object DisplayGroupMemberRoles : ClickableFeature(), IResolveDex,
     private fun roleText(value: String, defaultRes: Int): String =
         value.ifBlank { localizedChatString(defaultRes) }
 
-    @OptIn(ExperimentalMaterial3ExpressiveApi::class)
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {
             var ob by remember { mutableStateOf(ownerBg) }

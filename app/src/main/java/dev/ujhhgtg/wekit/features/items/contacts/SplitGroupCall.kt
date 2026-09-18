@@ -3,6 +3,7 @@ package dev.ujhhgtg.wekit.features.items.contacts
 import android.app.Activity
 import android.content.Context
 import androidx.activity.ComponentActivity
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ButtonGroupDefaults
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.ToggleButton
@@ -19,15 +19,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.res.stringResource
-import androidx.annotation.StringRes
-import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.reflekt.reflekt
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.data
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
@@ -35,12 +34,10 @@ import dev.ujhhgtg.wekit.dexkit.dsl.dexConstructor
 import dev.ujhhgtg.wekit.dexkit.dsl.dexField
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
-import dev.ujhhgtg.wekit.features.api.core.WeUnsafeApi
 import dev.ujhhgtg.wekit.features.api.ui.WeContactPrefsScreenApi
 import dev.ujhhgtg.wekit.features.api.ui.WeContactPrefsScreenApi.IContactInfoProvider
 import dev.ujhhgtg.wekit.features.api.ui.WeContactPrefsScreenApi.PreferenceItem
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.items.contacts.SplitGroupCall.resolveDex
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -55,6 +52,7 @@ import dev.ujhhgtg.wekit.utils.android.runOnUiThread
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.reflection.BString
 import dev.ujhhgtg.wekit.utils.reflection.int
+import dev.ujhhgtg.wekit.utils.unsafe.TheUnsafe
 import org.luckypray.dexkit.DexKitBridge
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
@@ -63,13 +61,12 @@ import kotlin.random.Random
 import androidx.compose.ui.Modifier as UiModifier
 import java.lang.reflect.Modifier as ReflectModifier
 
-@Feature(
-    id = "分裂群组通话",
-    nameRes = "feature_split_group_call_name",
-    categoryIds = [FeatureCategoryIds.ENTERTAIN],
-    descriptionRes = "feature_split_group_call_description",
-)
 object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
+
+    override val technicalId = "分裂群组通话"
+    override val nameRes = R.string.feature_split_group_call_name
+    override val categoryIds = listOf(FeatureCategoryIds.ENTERTAIN)
+    override val descriptionRes = R.string.feature_split_group_call_description
 
     private const val TAG = "SplitGroupCall"
     private const val PREF_KEY = "split_group_call"
@@ -86,7 +83,7 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
     private val classSubCoreMultiTalk by dexClass()
 
     /** com.tencent.mm.plugin.multitalk.model.v0 —— MultiTalkManager. */
-    private val methodExitMultiTalk by dexMethod()
+    val methodExitMultiTalk by dexMethod()
 
     /** com.tencent.mm.plugin.multitalk.ilinkservice.i4 —— ILinkService (enum, 单例 INSTANCE). */
     private val classILinkService by dexClass()
@@ -98,7 +95,7 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
     private val classInviteTask by dexClass()
 
     /** e3.Ri() —— 获取 MultiTalkManager 单例. */
-    private val methodGetMultiTalkManager by dexMethod()
+    val methodGetMultiTalkManager by dexMethod()
 
     /** v0.D(e4) —— 设置通话状态 (onChangeMultiTalkStatus). */
     private val methodSetStatus by dexMethod()
@@ -234,7 +231,7 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
 
         methodGetMultiTalkManager.find(dexKit) {
             matcher {
-                declaredClass = classSubCoreMultiTalk.getDescriptorString()!!
+                declaredClass = classSubCoreMultiTalk.data.name
                 modifiers = ReflectModifier.STATIC or ReflectModifier.PUBLIC
                 returnType = methodExitMultiTalk.data.declaredClassName
             }
@@ -258,7 +255,7 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
 
         methodSetName.find(dexKit) {
             matcher {
-                declaredClass = classILinkService.getDescriptorString()!!
+                declaredClass = classILinkService.data.name
                 paramCount = 2
                 usingStrings("set name=%s, uin=%d")
             }
@@ -266,7 +263,7 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
 
         methodPostTask.find(dexKit) {
             matcher {
-                declaredClass = classILinkService.getDescriptorString()!!
+                declaredClass = classILinkService.data.name
                 paramCount = 1
                 paramTypes("java.lang.Runnable")
             }
@@ -274,10 +271,10 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
 
         ctorInviteTask.find(dexKit) {
             matcher {
-                declaredClass = classInviteTask.getDescriptorString()!!
+                declaredClass = classInviteTask.data.name
                 paramCount = 3
                 paramTypes(
-                    classILinkService.getDescriptorString()!!,
+                    classILinkService.data.name,
                     "java.util.ArrayList",
                     "java.lang.String",
                 )
@@ -290,14 +287,14 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
                     usingStrings("Hangup ret:")
                 }
                 paramCount = 2
-                paramTypes(classILinkService.getDescriptorString()!!, "int")
+                paramTypes(classILinkService.data.name, "int")
             }
         }
 
         fieldILinkInstance.find(dexKit) {
             matcher {
-                declaredClass = classILinkService.getDescriptorString()!!
-                type = classILinkService.getDescriptorString()!!
+                declaredClass = classILinkService.data.name
+                type = classILinkService.data.name
                 modifiers = ReflectModifier.PUBLIC or ReflectModifier.STATIC or ReflectModifier.FINAL
             }
         }
@@ -305,7 +302,7 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
         val iLinkServiceName = classILinkService.data.name
         val readerMethod = dexKit.findMethod {
             matcher {
-                declaredClass = classILinkService.getDescriptorString()!!
+                declaredClass = classILinkService.data.name
                 usingStrings("start audio device failed")
             }
         }.single()
@@ -366,7 +363,6 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
         return "${rawId}${cjkChars}@chatroom"
     }
 
-    @OptIn(ExperimentalMaterial3ExpressiveApi::class)
     private fun showSplitCallDialog(context: Activity, wxId: String) {
         showComposeDialog(context) {
             var repeatCount by remember { mutableStateOf("1") }
@@ -633,7 +629,7 @@ object SplitGroupCall : ClickableFeature(), IContactInfoProvider, IResolveDex {
 
         val memberList = ArrayList<Any>(memberWxIds.size)
         for (memberWxId in memberWxIds) {
-            val member = WeUnsafeApi.allocateInstance(classILinkMember.clazz)!!
+            val member = TheUnsafe.allocateInstance(classILinkMember.clazz)!!
             member.reflekt().apply {
                 // w 的 String 字段顺序: [openId, mUserName, mInviteUserName] -> [1] = mUserName
                 fields { type = BString }[1].set(memberWxId)

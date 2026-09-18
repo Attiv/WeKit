@@ -6,12 +6,12 @@ import android.graphics.drawable.Drawable
 import android.view.ContextMenu
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.Modifiers
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.DexMethodDelegate
 import dev.ujhhgtg.wekit.dexkit.dsl.data
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.core.ApiFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -19,13 +19,12 @@ import dev.ujhhgtg.wekit.utils.reflection.BString
 import java.lang.reflect.Modifier
 import java.math.BigInteger
 
-@Feature(
-    id = "朋友圈菜单增强扩展",
-    nameRes = "feature_we_moments_context_menu_api_name",
-    categoryIds = [FeatureCategoryIds.API],
-    descriptionRes = "feature_we_moments_context_menu_api_description",
-)
 object WeMomentsContextMenuApi : ApiFeature(), IResolveDex {
+
+    override val technicalId = "朋友圈菜单增强扩展"
+    override val nameRes = R.string.feature_we_moments_context_menu_api_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
+    override val descriptionRes = R.string.feature_we_moments_context_menu_api_description
 
     private const val TAG = "WeMomentsContextMenuApi"
 
@@ -123,19 +122,6 @@ object WeMomentsContextMenuApi : ApiFeature(), IResolveDex {
             returnType("com.tencent.mm.plugin.sns.storage.SnsInfo")
         }
     }
-    private val methodGetSnsInfoStorage by dexMethod {
-        searchPackages("com.tencent.mm.plugin.sns.model")
-        matcher {
-            modifiers = Modifier.STATIC
-            returnType(methodSnsInfoStorage.data.declaredClassName)
-            paramCount(0)
-            usingStrings(
-                "com.tencent.mm.plugin.sns.model.SnsCore",
-                "getSnsInfoStorage"
-            )
-        }
-    }
-
     override fun onEnable() {
         methodOnCreateMenu.method.hookAfter {
             handleCreateMenu(this)
@@ -269,7 +255,7 @@ object WeMomentsContextMenuApi : ApiFeature(), IResolveDex {
     private fun getSnsInfoByLocalId(localId: String): Any? {
         if (localId.isBlank()) return null
         return runCatching {
-            val storage = methodGetSnsInfoStorage.method.invoke(null)
+            val storage = WeMomentsApi.methodGetSnsInfoStorage.method.invoke(null)
             methodSnsInfoStorage.method.invoke(storage, localId)
         }.getOrElse { error ->
             WeLogger.e(TAG, "failed to get Moments snsInfo by localId=$localId", error)

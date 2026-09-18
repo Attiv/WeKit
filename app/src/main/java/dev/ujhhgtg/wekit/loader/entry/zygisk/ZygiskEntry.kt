@@ -17,13 +17,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Zygisk JVM entry point.
  *
- * Called from C++ postAppSpecialize:
+ * Called from native postAppSpecialize:
  *   ZygiskEntry.init(processName, dataDir, copiedApkPath)
  *
- * The C++ side has only:
- *   1. Copied the active module's APK and every classes*.dex payload into
+ * The native side has only:
+ *   1. Copied the active module's APK into
  *      this app's data directory during postAppSpecialize.
- *   2. Loaded the copied DEX files through InMemoryDexClassLoader and called
+ *   2. Read DEX directly from that APK through InMemoryDexClassLoader and called
  *      this entry point.
  *
  * This Java entry then initializes its native hook runtime,
@@ -116,12 +116,12 @@ object ZygiskEntry {
      * The native bootstrap creates this connection before app specialization,
      * when Zygisk is still allowed to connect to its root companion.
      */
-    internal fun hasTelegramRootCompanion(): Boolean = nativeHasTelegramRootCompanion()
+    fun hasTelegramRootCompanion(): Boolean = nativeHasTelegramRootCompanion()
 
-    internal fun listTelegramRootInstances(): List<String> = nativeListTelegramInstances().toList()
+    fun listTelegramRootInstances(): List<String> = nativeListTelegramInstances().toList()
 
     /** Bit 0 and bit 1 indicate that the source had a WAL and SHM sidecar. */
-    internal fun copyTelegramRootDatabaseSnapshot(
+    fun copyTelegramRootDatabaseSnapshot(
         packageName: String,
         databaseFd: Int,
         walFd: Int,

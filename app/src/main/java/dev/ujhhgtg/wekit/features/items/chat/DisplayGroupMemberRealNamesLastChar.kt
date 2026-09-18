@@ -22,7 +22,6 @@ import dev.ujhhgtg.wekit.features.api.ui.WeContactPrefsScreenApi.IContactInfoPro
 import dev.ujhhgtg.wekit.features.api.ui.WeContactPrefsScreenApi.PreferenceItem
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -46,13 +45,12 @@ import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
-@Feature(
-    id = "显示群成员实名尾字",
-    nameRes = "feature_display_group_member_real_names_last_char_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_display_group_member_real_names_last_char_description",
-)
 object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoProvider {
+
+    override val technicalId = "显示群成员实名尾字"
+    override val nameRes = R.string.feature_display_group_member_real_names_last_char_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_display_group_member_real_names_last_char_description
 
     private const val TAG = "DisplayGroupMemberRealNamesLastChar"
 
@@ -198,7 +196,7 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
      *
      * The [pendingOrQueried] gate ensures at most one in-flight request per wxId.
      */
-    internal fun fetchRealName(senderId: String, groupId: String, onFound: (String) -> Unit) {
+    fun fetchRealName(senderId: String, groupId: String, onFound: (String) -> Unit) {
         // add() returns true only when the element was absent → fetch dispatched exactly once
         if (!pendingOrQueried.add(senderId)) return
 

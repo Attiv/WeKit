@@ -1,17 +1,14 @@
 package dev.ujhhgtg.wekit.extensions
 
+import dev.ujhhgtg.wekit.utils.fs.copyFrom
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Cloud
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.features.items.chat.ReadReceipts
 import dev.ujhhgtg.wekit.features.items.chat.ReadReceiptsServerMode
-import dev.ujhhgtg.wekit.loader.utils.NativeLoader
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -20,11 +17,12 @@ class CloudflaredPackNotInstalledException(message: String) : RuntimeException(m
 
 /**
  * Cloudflared 扩展包：解压 arm64-v8a 的 libwekit_cloudflared.so
- * 到应用内部存储(dlopen 要求),由 NativeLoader.ensureCloudflaredLoaded() System.load。
+ * 到应用内部存储(dlopen 要求),由 CloudflaredNativeLoader.ensureLoaded() System.load。
  */
 object CloudflaredPack : ExtensionPack {
 
     override val id = "cloudflared"
+    override val displayOrder = 2
     override val nameRes = R.string.extensions_pack_cloudflared_name
     override val descriptionRes = R.string.extensions_pack_cloudflared_desc
     override val icon: ImageVector = MaterialSymbols.Outlined.Cloud
@@ -51,34 +49,19 @@ object CloudflaredPack : ExtensionPack {
     }
 
     override fun isInUse(): Boolean =
-        NativeLoader.isCloudflaredLoaded() ||
+        CloudflaredNativeLoader.isLoaded() ||
             ReadReceipts.configuration().mode == ReadReceiptsServerMode.BUILT_IN
 
     override fun install(verifiedTmp: File, version: String, sha256: String, meta: String?) {
-        val versionDir = baseDir.resolve(version)
-        versionDir.deleteRecursively()
-        versionDir.mkdirs()
+        val versionDir = baseDir.resolve(version).apply { deleteRecursively(); mkdirs() }
 
         ZipFile(verifiedTmp).use { zip ->
-            // Inner manifest (written by xtask): per-file sha256 for post-extraction re-verification.
-            val manifestEntry = zip.getEntry("manifest.json") ?: error("cloudflared pack has no inner manifest")
-            val hashes = Json.parseToJsonElement(zip.getInputStream(manifestEntry).readBytes().decodeToString())
-                .jsonObject["files"]!!.jsonObject
-                .mapValues { it.value.jsonPrimitive.content }
-
             val entry = zip.getEntry("$ABI/$LIB_NAME") ?: error("cloudflared pack has no library for $ABI")
-            val tmpSo = File(versionDir, "$LIB_NAME.tmp")
             zip.getInputStream(entry).use { input ->
-                tmpSo.outputStream().use { output -> input.copyTo(output) }
+                File(versionDir, LIB_NAME).toPath().copyFrom(input)
             }
-            if (!PackFs.verify(tmpSo, hashes.getValue("$ABI/$LIB_NAME"))) {
-                tmpSo.delete()
-                error("inner manifest SHA-256 mismatch for $ABI/$LIB_NAME")
-            }
-            val dst = File(versionDir, LIB_NAME)
-            tmpSo.setReadable(true, true)
-            tmpSo.setExecutable(true, true)
-            PackFs.atomicReplace(tmpSo, dst)
+            File(versionDir, LIB_NAME).setReadable(true, true)
+            File(versionDir, LIB_NAME).setExecutable(true, true)
         }
         PackFs.writeManifest(
             versionDir,

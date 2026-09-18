@@ -2,8 +2,6 @@ package dev.ujhhgtg.wekit.agent.data
 
 import dev.ujhhgtg.wekit.utils.fs.asPath
 import androidx.room.withTransaction
-import dev.ujhhgtg.wekit.agent.data.WeAgentRepository.getExternalServiceKey
-import dev.ujhhgtg.wekit.agent.data.WeAgentRepository.permissionCache
 import dev.ujhhgtg.wekit.agent.data.entity.ConditionalPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ExternalServiceEntity
 import dev.ujhhgtg.wekit.agent.data.entity.MessageEntity
@@ -18,7 +16,6 @@ import dev.ujhhgtg.wekit.agent.data.entity.ProviderEntity
 import dev.ujhhgtg.wekit.agent.data.entity.SessionEntity
 import dev.ujhhgtg.wekit.agent.data.entity.SystemPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ToolCallEntity
-import dev.ujhhgtg.wekit.agent.data.entity.ToolPermissionEntity
 import dev.ujhhgtg.wekit.agent.model.LlmMessage
 import dev.ujhhgtg.wekit.agent.model.LlmRole
 import dev.ujhhgtg.wekit.agent.model.LlmToolCall
@@ -30,10 +27,7 @@ import dev.ujhhgtg.wekit.agent.environment.LinuxEnvironmentSessionState
 import dev.ujhhgtg.wekit.agent.environment.LinuxEnvironmentSessionTransition
 import dev.ujhhgtg.wekit.agent.environment.toSnapshot
 import dev.ujhhgtg.wekit.agent.environment.NATIVE_ENVIRONMENT_ID
-import dev.ujhhgtg.wekit.agent.tool.BuiltinToolProvider
-import dev.ujhhgtg.wekit.agent.tool.ProviderKind
-import dev.ujhhgtg.wekit.agent.tool.ToolMode
-import dev.ujhhgtg.wekit.agent.tool.ToolPermissionSource
+import dev.ujhhgtg.wekit.agent.tool.PermissionLevel
 import dev.ujhhgtg.wekit.utils.WeLogger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -44,10 +38,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Central data access + first-run seeding for WeAgent. Holds an in-memory permission cache so the
- * synchronous [ToolPermissionSource] used by the tool registry never blocks on the DB.
+ * Central data access + first-run seeding for WeAgent.
  */
-object WeAgentRepository : ToolPermissionSource {
+object WeAgentRepository {
 
     private const val TAG = "WeAgentRepository"
 
@@ -58,16 +51,6 @@ object WeAgentRepository : ToolPermissionSource {
     private const val TOOL_PAYLOAD_SEP = '\u0000'
 
     private val db get() = WeAgentDatabase.instance
-
-    // (providerId, toolName) -> mode. Kept in sync with the tool_permissions table.
-    private val permissionCache = ConcurrentHashMap<String, ToolMode>()
-
-    private fun key(providerId: String, toolName: String) = "$providerId\u0000$toolName"
-
-    // --- ToolPermissionSource ---
-
-    override fun modeFor(providerId: String, toolName: String, factoryDefault: ToolMode): ToolMode =
-        permissionCache[key(providerId, toolName)] ?: factoryDefault
 
     suspend fun appendBridgeToolAudit(entry: dev.ujhhgtg.wekit.agent.bridge.ToolBridgeSession.AuditEntry) {
         db.bridgeToolAuditDao().insert(
@@ -87,75 +70,6 @@ object WeAgentRepository : ToolPermissionSource {
         )
     }
 
-    /**
-     * Idempotent first-run/every-launch seeding:
-     *  - ensures the builtin provider row exists,
-     *  - inserts a factory-default [ToolPermissionEntity] for every builtin tool that has no row yet
-     *    (never overwrites a value the user already changed),
-     *  - loads all permissions into [permissionCache].
-     */
-    suspend fun seedAndLoad() {
-        runCatching {
-            val providerDao = db.providerDao()
-            val permDao = db.toolPermissionDao()
-
-            // One row per built-in provider (builtin-wechat / builtin-wechat-sql / builtin-fs).
-            for (provider in BuiltinToolProvider.all) {
-                if (providerDao.getById(provider.id) == null) {
-                    providerDao.upsert(
-                        ProviderEntity(
-                            id = provider.id,
-                            kind = ProviderKind.BUILTIN,
-                            name = provider.name,
-                            transport = null,
-                            endpointUrl = null,
-                            headersJson = null,
-                            enabled = true,
-                        )
-                    )
-                }
-                val existing = permDao.getForProvider(provider.id).associateBy { it.toolName }
-                val toInsert = provider.seedInfos()
-                    .filter { it.name !in existing }
-                    .map { ToolPermissionEntity(provider.id, it.name, it.defaultMode) }
-                if (toInsert.isNotEmpty()) permDao.upsertAll(toInsert)
-            }
-
-            // Load full cache
-            permissionCache.clear()
-            permDao.getAll().forEach { permissionCache[key(it.providerId, it.toolName)] = it.mode }
-            WeLogger.i(TAG, "seeded; ${permissionCache.size} tool permissions loaded")
-        }.onFailure { WeLogger.e(TAG, "seedAndLoad failed", it) }
-    }
-
-    /** Updates a tool's permission both in the DB and the in-memory cache. */
-    suspend fun setToolMode(providerId: String, toolName: String, mode: ToolMode) {
-        db.toolPermissionDao().upsert(ToolPermissionEntity(providerId, toolName, mode))
-        permissionCache[key(providerId, toolName)] = mode
-    }
-
-    /**
-     * Registers factory defaults for an MCP provider's tools.
-     *
-     * Remote tools seed as [ToolMode.MANUAL_APPROVAL], not ENABLED: the server decides what its
-     * tools do *and* what they are called and described, and those descriptions go verbatim into the
-     * model's context — so with a MESSAGE trigger a third party's chat message could otherwise steer
-     * a destructive remote tool with no approval card ever shown. Built-in side-effecting tools are
-     * gated the same way. The user can promote individual tools in the MCP server detail screen.
-     *
-     * Only tools with no row yet are seeded, so a mode the user already picked is never rewritten.
-     */
-    suspend fun seedMcpTools(providerId: String, toolNames: List<String>) {
-        val permDao = db.toolPermissionDao()
-        val existing = permDao.getForProvider(providerId).associateBy { it.toolName }
-        val toInsert = toolNames.filter { it !in existing }
-            .map { ToolPermissionEntity(providerId, it, ToolMode.MANUAL_APPROVAL) }
-        if (toInsert.isNotEmpty()) {
-            permDao.upsertAll(toInsert)
-            toInsert.forEach { permissionCache[key(it.providerId, it.toolName)] = it.mode }
-        }
-    }
-
     // --- Passthrough flows for UI (settings) ---
 
     fun observeProviders(): Flow<List<ProviderEntity>> = db.providerDao().observeAll()
@@ -165,7 +79,6 @@ object WeAgentRepository : ToolPermissionSource {
 
     fun observeModelProviders(): Flow<List<ModelProviderEntity>> = db.modelProviderDao().observeAll()
     fun observeModels(): Flow<List<ModelEntity>> = db.modelDao().observeAll()
-    fun observeToolPermissions(): Flow<List<ToolPermissionEntity>> = db.toolPermissionDao().observeAll()
 
     /**
      * Stores a model provider. Its API key is persisted **as-is** (unencrypted), matching
@@ -348,6 +261,7 @@ object WeAgentRepository : ToolPermissionSource {
                 linuxEnvironmentId = source.linuxEnvironmentId,
                 lastEffectiveLinuxEnvironmentId = source.lastEffectiveLinuxEnvironmentId,
                 modelId = source.modelId,
+                permissionLevel = source.permissionLevel,
                 favorite = source.favorite,
                 createdAt = now,
                 updatedAt = now,
@@ -411,6 +325,12 @@ object WeAgentRepository : ToolPermissionSource {
     suspend fun updateSessionModel(id: String, modelId: String?) {
         val s = db.sessionDao().getById(id) ?: return
         db.sessionDao().upsert(s.copy(modelId = modelId, updatedAt = nextStamp()))
+    }
+
+    /** Binds (or clears, level=null → "默认") the session's tool permission level. */
+    suspend fun updateSessionPermissionLevel(id: String, level: PermissionLevel?) {
+        val s = db.sessionDao().getById(id) ?: return
+        db.sessionDao().upsert(s.copy(permissionLevel = level, updatedAt = nextStamp()))
     }
 
     /**
@@ -773,7 +693,7 @@ object WeAgentRepository : ToolPermissionSource {
     }
 
     /** Package sync-only stale-row deletion that retains the normal model-deletion cascade. */
-    internal suspend fun deleteLocalLlamaModelForSync(id: String) {
+    suspend fun deleteLocalLlamaModelForSync(id: String) {
         val model = db.modelDao().getById(id) ?: return
         check(model.providerId == LocalLlama.PROVIDER_ID) {
             "sync deletion is restricted to local llama model rows"
@@ -864,7 +784,6 @@ object WeAgentRepository : ToolPermissionSource {
 
     suspend fun deleteMcpProvider(id: String) {
         db.providerDao().deleteById(id)
-        db.toolPermissionDao().deleteForProvider(id)
         dev.ujhhgtg.wekit.agent.mcp.McpClientManager.sync()
     }
 
@@ -958,7 +877,7 @@ object WeAgentRepository : ToolPermissionSource {
 
     suspend fun getAllModelsOnce(): List<ModelEntity> = db.modelDao().getAllOnce()
 
-    internal fun resolveEffectiveLinuxEnvironmentId(
+    fun resolveEffectiveLinuxEnvironmentId(
         sessionEnvironmentId: String?,
         defaultEnvironmentId: String?,
         storedEnvironmentIds: Set<String>,
@@ -970,7 +889,7 @@ object WeAgentRepository : ToolPermissionSource {
         else -> NATIVE_ENVIRONMENT_ID
     }
 
-    internal fun planLinuxEnvironmentDeletion(
+    fun planLinuxEnvironmentDeletion(
         deletedEnvironment: EnvironmentSnapshot,
         nativeEnvironment: EnvironmentSnapshot,
         defaultEnvironmentId: String?,
@@ -999,7 +918,7 @@ object WeAgentRepository : ToolPermissionSource {
         return LinuxEnvironmentDeletionPlan(replacementDefaultId, transitions)
     }
 
-    internal fun validateLinuxEnvironmentUpdate(
+    fun validateLinuxEnvironmentUpdate(
         existing: LinuxEnvironmentEntity?,
         incoming: LinuxEnvironmentEntity,
     ) {

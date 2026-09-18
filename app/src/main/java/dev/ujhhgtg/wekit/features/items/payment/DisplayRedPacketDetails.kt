@@ -8,7 +8,7 @@ import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
-import dev.ujhhgtg.wekit.features.core.Feature
+import dev.ujhhgtg.wekit.features.api.core.WePaymentApi
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.i18n.WeKitLocaleController
@@ -24,13 +24,12 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-@Feature(
-    id = "红包页面详情",
-    nameRes = "feature_display_red_packet_details_name",
-    categoryIds = [FeatureCategoryIds.PAYMENT],
-    descriptionRes = "feature_display_red_packet_details_description",
-)
 object DisplayRedPacketDetails : SwitchFeature(), IResolveDex {
+
+    override val technicalId = "红包页面详情"
+    override val nameRes = R.string.feature_display_red_packet_details_name
+    override val categoryIds = listOf(FeatureCategoryIds.PAYMENT)
+    override val descriptionRes = R.string.feature_display_red_packet_details_description
 
     private const val TAG = "DisplayRedPacketDetails"
 
@@ -39,15 +38,6 @@ object DisplayRedPacketDetails : SwitchFeature(), IResolveDex {
             usingStrings(
                 "MicroMsg.LuckyMoneyDetailUI",
                 "try get user contact: %s"
-            )
-        }
-    }
-
-    private val classNetSceneOpenLuckyMoney by dexClass {
-        matcher {
-            usingStrings(
-                "MicroMsg.NetSceneOpenLuckyMoney",
-                "/cgi-bin/mmpay-bin/openwxhb"
             )
         }
     }
@@ -90,7 +80,7 @@ object DisplayRedPacketDetails : SwitchFeature(), IResolveDex {
             }
         }
 
-        listOf(classNetSceneOpenLuckyMoney, classNetSceneLuckyMoneyDetail).forEach { dexClass ->
+        listOf(WePaymentApi.classOpenLuckyMoney, classNetSceneLuckyMoneyDetail).forEach { dexClass ->
             val method = dexClass.reflekt().firstMethod {
                 name = "onGYNetEnd"
                 parameters(int, BString, JSONObject::class.java)

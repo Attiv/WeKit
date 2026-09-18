@@ -5,6 +5,7 @@ import android.content.Intent
 import com.tencent.mm.plugin.voip.widget.VoipForegroundService
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.features.items.contacts.HideContacts
+import dev.ujhhgtg.wekit.features.items.contacts.SplitGroupCall
 import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.RuntimeConfig
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -59,7 +60,7 @@ private const val TAG = "HideContacts.Voip"
  * `ZIDL_FBV` run to completion, and only then — from its `hookAfter` — invoke `q2.Qa()`, the same
  * "rejectByShortCut" entry WeChat's own Bluetooth quick-reject uses.
  */
-internal fun HideContacts.installVoipHooks() {
+fun HideContacts.installVoipHooks() {
     installVoipMpHooks()
     installMultiTalkHooks()
     installVoipRecordHooks()
@@ -196,13 +197,13 @@ private fun readMultiTalkInvite(group: Any): Pair<String?, String?>? = runCatchi
 /** `v0.g(isReject, isMissCall, isPhoneCall, isNetworkError, boolean, boolean)`. */
 private fun rejectMultiTalk(manager: Any?, target: String) {
     if (manager == null) return
-    if (HideContacts.methodExitMultiTalk.isPlaceholder) {
+    if (SplitGroupCall.methodExitMultiTalk.isPlaceholder) {
         WeLogger.w(TAG, "exitCurrentMultiTalk wasn't resolved; cannot auto-reject group call")
         return
     }
     WeLogger.i(TAG, "auto-rejecting multitalk invite from $target")
     runCatching {
-        HideContacts.methodExitMultiTalk.method.invoke(manager, true, false, false, false, true, false)
+        SplitGroupCall.methodExitMultiTalk.method.invoke(manager, true, false, false, false, true, false)
     }.onFailure { WeLogger.w(TAG, "exitCurrentMultiTalk failed for $target", it) }
 }
 

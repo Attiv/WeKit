@@ -18,7 +18,6 @@ import com.composables.icons.materialsymbols.outlined.Auto_stories
 import com.composables.icons.materialsymbols.outlined.Bolt
 import com.composables.icons.materialsymbols.outlined.Chevron_right
 import com.composables.icons.materialsymbols.outlined.Cloud
-import com.composables.icons.materialsymbols.outlined.Construction
 import com.composables.icons.materialsymbols.outlined.Edit_note
 import com.composables.icons.materialsymbols.outlined.Extension
 import com.composables.icons.materialsymbols.outlined.Terminal
@@ -27,6 +26,7 @@ import com.composables.icons.materialsymbols.outlined.Notes
 import com.composables.icons.materialsymbols.outlined.Notifications_active
 import com.composables.icons.materialsymbols.outlined.Search
 import com.composables.icons.materialsymbols.outlined.Send
+import com.composables.icons.materialsymbols.outlined.Shield
 import com.composables.icons.materialsymbols.outlined.Smart_display
 import com.composables.icons.materialsymbols.outlined.Smart_toy
 import dev.ujhhgtg.wekit.R
@@ -34,6 +34,7 @@ import dev.ujhhgtg.wekit.activity.agent.AgentSettingsRoute
 import dev.ujhhgtg.wekit.agent.data.OverlayMode
 import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
 import dev.ujhhgtg.wekit.agent.data.WeAgentSettings
+import dev.ujhhgtg.wekit.agent.tool.PermissionLevel
 import dev.ujhhgtg.wekit.agent.tool.ToolLoadingMode
 import dev.ujhhgtg.wekit.features.api.agent.WeAgentService
 import dev.ujhhgtg.wekit.features.items.system.agent.WeAgentOverlayController
@@ -58,6 +59,7 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsRoute) -> Unit) {
     var smallModelId by remember { mutableStateOf<String?>(null) }
     var defaultModelId by remember { mutableStateOf<String?>(null) }
     var defaultSystemPromptId by remember { mutableStateOf<String?>(null) }
+    var defaultPermissionLevel by remember { mutableStateOf(PermissionLevel.REQUEST_APPROVAL) }
 
     // These must come from the live DB flows, not a one-shot read: a model/prompt/environment added
     // on a child screen has to show up in these dropdowns as soon as the user comes back, no
@@ -76,6 +78,7 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsRoute) -> Unit) {
         smallModelId = WeAgentSettings.smallModelId()
         defaultModelId = WeAgentSettings.defaultModelId()
         defaultSystemPromptId = WeAgentSettings.defaultSystemPromptId()
+        defaultPermissionLevel = WeAgentSettings.defaultPermissionLevel()
         loaded = true
     }
 
@@ -154,16 +157,6 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsRoute) -> Unit) {
         // ---------- 工具 ----------
         item {
             SegmentedColumn(title = stringResource(R.string.agent_section_tools)) {
-                item {
-                    BaseWidget(
-                        icon = MaterialSymbols.Outlined.Construction,
-                        iconPlaceholder = false,
-                        title = stringResource(R.string.agent_builtin_tools_title),
-                        description = stringResource(R.string.agent_builtin_tools_summary),
-                        onClick = { onOpen(AgentSettingsRoute.BuiltinTools) },
-                        trailingContent = { Icon(MaterialSymbols.Outlined.Chevron_right, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                    )
-                }
                 item {
                     BaseWidget(
                         icon = MaterialSymbols.Outlined.Extension,
@@ -272,6 +265,20 @@ fun WeAgentHomeScreen(onOpen: (AgentSettingsRoute) -> Unit) {
                     }
                     item {
                         DropDownMenuWidget(
+                            icon = MaterialSymbols.Outlined.Shield,
+                            iconPlaceholder = false,
+                            title = stringResource(R.string.agent_default_permission_level_title),
+                            description = null,
+                            value = defaultPermissionLevel,
+                            options = PermissionLevel.entries.map { DropdownOption(it, it.labelRes()) },
+                            onValueChange = { level ->
+                                defaultPermissionLevel = level
+                                scope.launch { WeAgentSettings.set(WeAgentSettings.KEY_DEFAULT_PERMISSION_LEVEL, level.name) }
+                            },
+                        )
+                    }
+                    item {
+                        DropDownMenuWidget(
                             icon = MaterialSymbols.Outlined.Notes,
                             iconPlaceholder = false,
                             title = stringResource(R.string.agent_default_system_prompt_title),
@@ -311,4 +318,13 @@ private fun OverlayMode.labelRes(): String = stringResource(when (this) {
 private fun WeAgentService.SendWhileRunningMode.labelRes(): String = stringResource(when (this) {
     WeAgentService.SendWhileRunningMode.QUEUE_AFTER_TURN -> R.string.agent_send_queue_after_turn
     WeAgentService.SendWhileRunningMode.QUEUE_AS_STEER -> R.string.agent_send_steer_next_request
+})
+
+/** Localized picker label for the session permission levels; declaration order is the picker order. */
+@Composable
+private fun PermissionLevel.labelRes(): String = stringResource(when (this) {
+    PermissionLevel.REQUEST_APPROVAL -> R.string.agent_permission_level_request_approval
+    PermissionLevel.AUTO_EDIT -> R.string.agent_permission_level_auto_edit
+    PermissionLevel.AUTO_APPROVAL -> R.string.agent_permission_level_auto_approval
+    PermissionLevel.FULL_ACCESS -> R.string.agent_permission_level_full_access
 })

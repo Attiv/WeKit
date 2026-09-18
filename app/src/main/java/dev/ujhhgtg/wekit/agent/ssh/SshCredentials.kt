@@ -59,7 +59,7 @@ object SshCredentialStore {
     }
 }
 
-internal object SshCredentialCodec {
+object SshCredentialCodec {
     private const val PASSWORD = 1
     private const val PRIVATE_KEY = 2
 
@@ -103,6 +103,8 @@ internal object SshCredentialCodec {
     private fun DataInputStream.readString(): String {
         val length = readInt()
         require(length in 0..16 * 1024 * 1024) { "invalid SSH credential value length" }
-        return readNBytes(length).also { require(it.size == length) }.toString(Charsets.UTF_8)
+        val bytes = ByteArray(length)
+        readFully(bytes)
+        return bytes.toString(Charsets.UTF_8)
     }
 }

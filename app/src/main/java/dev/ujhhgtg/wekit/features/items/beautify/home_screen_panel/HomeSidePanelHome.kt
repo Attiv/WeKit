@@ -66,11 +66,11 @@ import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.features.api.core.TextStatus
 import dev.ujhhgtg.wekit.features.api.core.WeTextStatusApi
 
-internal fun homeSidePanelProfileDisplayName(profile: HomeSidePanelProfile, fallback: String): String =
+fun homeSidePanelProfileDisplayName(profile: HomeSidePanelProfile, fallback: String): String =
     profile.nickname.ifBlank { fallback }
 
 @Composable
-internal fun HomeSidePanelHome(
+fun HomeSidePanelHome(
     state: HomeSidePanelUiState,
     panelState: HomeSidePanelState,
     dragState: HomeSidePanelDragState,
@@ -127,6 +127,7 @@ internal fun HomeSidePanelHome(
             HomeSidePanelProfileHeader(
                 profile = state.profile,
                 editing = state.editing,
+                saveEnabled = state.imageImportingCardIds.isEmpty(),
                 panelState = panelState,
                 modifier = Modifier.padding(start = 18.dp, top = 14.dp, end = 18.dp),
             )
@@ -157,6 +158,7 @@ internal fun HomeSidePanelHome(
                 HomeSidePanelLayoutCard(
                     card = card,
                     editMode = state.editing,
+                    imageImportingCardIds = state.imageImportingCardIds,
                     panelState = panelState,
                     dragState = dragState,
                     dragSnapshot = dragSnapshot,
@@ -203,6 +205,7 @@ internal fun HomeSidePanelHome(
 private fun HomeSidePanelLayoutCard(
     card: HomeSidePanelCardConfig,
     editMode: Boolean,
+    imageImportingCardIds: Set<String>,
     panelState: HomeSidePanelState,
     dragState: HomeSidePanelDragState,
     dragSnapshot: HomeSidePanelDragSnapshot?,
@@ -273,6 +276,19 @@ private fun HomeSidePanelLayoutCard(
                 onDeleteCard = panelState::removeCard,
             )
         }
+
+        is ImageCardConfig -> HomeSidePanelImageCard(
+            card = card,
+            imageFile = panelState.imageFile(card.id),
+            editMode = editMode,
+            importing = card.id in imageImportingCardIds,
+            modifier = modifier,
+            onSelectImage = panelState::selectImage,
+            onScaleModeChange = panelState::updateImageScaleMode,
+            onHeightChange = panelState::updateImageHeight,
+            onImageDimensionsChange = panelState::updateImageDimensions,
+            onDeleteCard = panelState::removeCard,
+        )
 
         is HorizontalActionsCardConfig -> HomeSidePanelHorizontalActionsCard(
             card = card,
@@ -358,6 +374,7 @@ private fun HomeSidePanelLayoutCard(
 private fun HomeSidePanelProfileHeader(
     profile: HomeSidePanelProfile,
     editing: Boolean,
+    saveEnabled: Boolean,
     panelState: HomeSidePanelState,
     modifier: Modifier = Modifier,
 ) {
@@ -430,6 +447,7 @@ private fun HomeSidePanelProfileHeader(
                 val saveDescription = stringResource(R.string.home_side_panel_save_editing)
                 IconButton(
                     onClick = panelState::saveEditing,
+                    enabled = saveEnabled,
                     modifier = Modifier
                         .size(40.dp)
                         .semantics { contentDescription = saveDescription },
@@ -529,7 +547,7 @@ private fun HomeSidePanelStatus(
 }
 
 @Composable
-internal fun HomeSidePanelToolbarContent(
+fun HomeSidePanelToolbarContent(
     profile: HomeSidePanelProfile,
     onAvatarClick: () -> Unit,
     onStatusClick: () -> Unit,
@@ -584,7 +602,7 @@ internal fun HomeSidePanelToolbarContent(
 }
 
 @Composable
-internal fun HomeSidePanelProfileAvatar(
+fun HomeSidePanelProfileAvatar(
     profile: HomeSidePanelProfile,
     size: Dp,
     textStyle: TextStyle,

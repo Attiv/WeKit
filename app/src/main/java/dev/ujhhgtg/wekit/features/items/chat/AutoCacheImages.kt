@@ -20,7 +20,6 @@ import dev.ujhhgtg.wekit.features.api.core.WeDatabaseListenerApi
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.core.models.MessageType
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -36,13 +35,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-@Feature(
-    id = "自动缓存图片",
-    nameRes = "feature_auto_cache_images_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_auto_cache_images_description",
-)
 object AutoCacheImages : ClickableFeature(), WeDatabaseListenerApi.IInsertListener {
+
+    override val technicalId = "自动缓存图片"
+    override val nameRes = R.string.feature_auto_cache_images_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_auto_cache_images_description
 
     private const val TAG = "AutoCacheImages"
 
@@ -100,7 +98,7 @@ object AutoCacheImages : ClickableFeature(), WeDatabaseListenerApi.IInsertListen
                         item {
                             SwitchWidget(
                                 iconPlaceholder = false,
-                                title = stringResource(if (useWhitelistState) R.string.chat_auto_cache_whitelist_selected else R.string.chat_auto_cache_blacklist_selected),
+                                title = stringResource(if (useWhitelistState) R.string.filter_list_whitelist_selected else R.string.filter_list_blacklist_selected),
                                 description = stringResource(if (useWhitelistState) R.string.chat_auto_cache_images_whitelist_description else R.string.chat_auto_cache_images_blacklist_description),
                                 checked = useWhitelistState,
                                 onCheckedChange = {
@@ -112,15 +110,15 @@ object AutoCacheImages : ClickableFeature(), WeDatabaseListenerApi.IInsertListen
                         item {
                             BaseWidget(
                                 iconPlaceholder = false,
-                                title = stringResource(if (useWhitelistState) R.string.chat_auto_cache_configure_whitelist else R.string.chat_auto_cache_configure_blacklist),
-                                description = stringResource(R.string.chat_auto_cache_select_contacts_hint),
+                                title = stringResource(if (useWhitelistState) R.string.filter_list_configure_whitelist else R.string.filter_list_configure_blacklist),
+                                description = stringResource(R.string.filter_list_select_contacts_hint),
                                 onClick = {
                                 val contacts = WeDatabaseApi.getFriends() + WeDatabaseApi.getGroups()
                                 val currentList = if (useWhitelistState) whitelist else blacklist
 
                                 showComposeDialog(context) {
                                     ContactsSelector(
-                                        title = stringResource(if (useWhitelistState) R.string.chat_auto_cache_select_whitelist else R.string.chat_auto_cache_select_blacklist),
+                                        title = stringResource(if (useWhitelistState) R.string.filter_list_select_whitelist else R.string.filter_list_select_blacklist),
                                         contacts = contacts,
                                         initialSelectedWxIds = currentList,
                                         onDismiss = onDismiss
@@ -130,7 +128,7 @@ object AutoCacheImages : ClickableFeature(), WeDatabaseListenerApi.IInsertListen
                                         } else {
                                             blacklist = selectedIds
                                         }
-                                        showToast(localizedChatQuantity(R.plurals.chat_auto_cache_contacts_saved, selectedIds.size, selectedIds.size))
+                                        showToast(localizedChatQuantity(R.plurals.filter_list_contacts_saved, selectedIds.size, selectedIds.size))
                                         onDismiss()
                                     }
                                 }

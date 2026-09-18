@@ -9,7 +9,6 @@ import dev.ujhhgtg.wekit.features.api.core.WeConversationApi
 import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
 import dev.ujhhgtg.wekit.features.api.core.models.WeGroup
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.items.contacts.DeleteFakeGroups.LEGIT_CHATROOM_REGEX
 import dev.ujhhgtg.wekit.features.items.contacts.DeleteFakeGroups.isFakeGroup
@@ -23,13 +22,12 @@ import dev.ujhhgtg.wekit.utils.android.runOnUiThread
 import dev.ujhhgtg.wekit.utils.android.showToast
 import kotlin.concurrent.thread
 
-@Feature(
-    id = "删除假群组",
-    nameRes = "feature_delete_fake_groups_name",
-    categoryIds = [FeatureCategoryIds.ENTERTAIN],
-    descriptionRes = "feature_delete_fake_groups_description",
-)
 object DeleteFakeGroups : ClickableFeature() {
+
+    override val technicalId = "删除假群组"
+    override val nameRes = R.string.feature_delete_fake_groups_name
+    override val categoryIds = listOf(FeatureCategoryIds.ENTERTAIN)
+    override val descriptionRes = R.string.feature_delete_fake_groups_description
 
     private const val TAG = "DeleteFakeGroups"
 
@@ -112,7 +110,7 @@ object DeleteFakeGroups : ClickableFeature() {
      * once after the whole batch. Callers that generated exact IDs can reuse this without scanning
      * every fake group currently present in the database.
      */
-    internal fun deleteFakeGroups(
+    fun deleteFakeGroups(
         fakeGroupIds: Collection<String>,
         displayNames: Map<String, String> = emptyMap(),
     ) {

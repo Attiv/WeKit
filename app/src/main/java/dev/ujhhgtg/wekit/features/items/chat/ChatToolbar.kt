@@ -31,15 +31,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.DropdownMenuGroup
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenuPopup
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
-import dev.ujhhgtg.wekit.ui.utils.ListItem
-import dev.ujhhgtg.wekit.ui.utils.ReorderableList
+import androidx.compose.material3.SelectableDropdownMenuItem
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -90,28 +87,30 @@ import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.agent.WeAgentService
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
+import dev.ujhhgtg.wekit.features.api.ui.WeChatInputBarMenuApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
+import dev.ujhhgtg.wekit.features.items.chat.ChatToolbar.scheduleGridInitWatchdog
 import dev.ujhhgtg.wekit.features.items.system.agent.WeAgentOverlayController
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.TextButton
-import dev.ujhhgtg.wekit.ui.utils.theme.InjectedUiTheme
 import dev.ujhhgtg.wekit.ui.utils.LifecycleOwnerProvider
+import dev.ujhhgtg.wekit.ui.utils.ListItem
+import dev.ujhhgtg.wekit.ui.utils.ReorderableList
 import dev.ujhhgtg.wekit.ui.utils.findViewByChildIndexes
 import dev.ujhhgtg.wekit.ui.utils.findViewWhich
 import dev.ujhhgtg.wekit.ui.utils.iterable
 import dev.ujhhgtg.wekit.ui.utils.setLifecycleOwner
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
+import dev.ujhhgtg.wekit.ui.utils.theme.InjectedUiTheme
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.constructor
 import dev.ujhhgtg.wekit.utils.now
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -136,13 +135,12 @@ private enum class ToolbarDisplayMode(
 }
 
 @SuppressLint("StaticFieldLeak")
-@Feature(
-    id = "聊天工具栏",
-    nameRes = "feature_chat_toolbar_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_chat_toolbar_description",
-)
 object ChatToolbar : ClickableFeature(), IResolveDex {
+
+    override val technicalId = "聊天工具栏"
+    override val nameRes = R.string.feature_chat_toolbar_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_chat_toolbar_description
 
     private const val TAG = "ChatToolbar"
 
@@ -182,13 +180,6 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
                 "MicroMsg.AppPanel",
                 "onMeasure width: %d, heigth:%d, isMeasured:%b, gridWidth:%d, gridHeight:%d"
             )
-        }
-    }
-
-    private val methodAppGridGetView by dexMethod {
-        matcher {
-            usingStrings("MicroMsg.AppGrid", "pos:", "page:")
-            name = "getView"
         }
     }
 
@@ -253,7 +244,7 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
      * AppGrid resolves native tools to an internal type before rendering them. Capture that
      * type from getView instead of using the localized TextView label as an identity.
      */
-    private fun captureAppGridToolType(appGrid: Any, itemView: View) {
+    private fun captureAppGridToolType(itemView: View) {
         val drawable = buildList {
             fun collect(view: View) {
                 if (view is ImageView && view.drawable != null) add(view.drawable)
@@ -505,9 +496,9 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
             }
         }
 
-        methodAppGridGetView.hookAfter {
+        WeChatInputBarMenuApi.methodAppGridGetView.hookAfter {
             val itemView = result as View
-            captureAppGridToolType(thisObject!!, itemView)
+            captureAppGridToolType(itemView)
         }
 
         ChatFooter::class.constructor.hookAfter {
@@ -611,7 +602,7 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
         synchronized(appGridToolTypes) { appGridToolTypes.clear() }
     }
 
-    @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3ExpressiveApi::class)
+    @OptIn(ExperimentalFoundationApi::class)
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {
             val currentOrder = remember {
@@ -648,7 +639,7 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
                                 ) {
                                     DropdownMenuGroup(shapes = MenuDefaults.groupShapes()) {
                                         ToolbarDisplayMode.entries.forEachIndexed { index, mode ->
-                                            DropdownMenuItem(
+                                            SelectableDropdownMenuItem(
                                                 selected = mode == currentDisplayMode,
                                                 onClick = {
                                                     currentDisplayMode = mode

@@ -1,19 +1,12 @@
 package dev.ujhhgtg.wekit.features.items.chat
 
 import android.content.Context
-import android.widget.ListView
+import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.StartOffset
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,14 +16,18 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DropdownMenu
@@ -38,29 +35,35 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.composables.icons.materialsymbols.MaterialSymbols
@@ -71,45 +74,56 @@ import com.composables.icons.materialsymbols.outlined.Edit
 import com.composables.icons.materialsymbols.outlined.Swap_vert
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.R
-import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
+import dev.ujhhgtg.wekit.dexkit.dsl.data
+import dev.ujhhgtg.wekit.dexkit.resolution.DexResolutionContext
+import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
+import dev.ujhhgtg.wekit.dexkit.dsl.dexField
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeConversationApi
 import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
-import dev.ujhhgtg.wekit.features.core.Feature
+import dev.ujhhgtg.wekit.features.api.ui.WeConversationListViewApi
+import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
-import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.features.items.contacts.HideContacts
+import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
+import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.ContactsSelector
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.IconButton
 import dev.ujhhgtg.wekit.ui.content.TextButton
-import dev.ujhhgtg.wekit.ui.utils.theme.InjectedUiTheme
+import dev.ujhhgtg.wekit.ui.content.m3.RadioButtonWidget
+import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.utils.LifecycleOwnerProvider
 import dev.ujhhgtg.wekit.ui.utils.setLifecycleOwner
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
+import dev.ujhhgtg.wekit.ui.utils.theme.InjectedUiTheme
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import org.luckypray.dexkit.DexKitBridge
+import java.lang.reflect.Field
+import java.lang.reflect.Method
+import java.lang.reflect.Modifier as ReflectModifier
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
-import java.lang.reflect.Modifier as JavaModifier
 
-@Feature(
-    id = "对话分组",
-    nameRes = "feature_conversation_grouping_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_conversation_grouping_description",
-)
-object ConversationGrouping : SwitchFeature(), IResolveDex {
+object ConversationGrouping : ClickableFeature(), IResolveDex {
+
+    override val technicalId = "对话分组"
+    override val nameRes = R.string.feature_conversation_grouping_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_conversation_grouping_description
 
     const val GROUP_PREFIX = "wekit_group_"
 
@@ -119,6 +133,29 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
     // ordinary ChatGroup entry (identified solely by this id) so the list order is enough to
     // remember where it sits.
     private const val ALL_TAB_ID = "${GROUP_PREFIX}all"
+
+    private enum class GroupingBackend(val value: String) {
+        ADAPTER_FILTER("adapter_filter"),
+        QUERY_REWRITE("query_rewrite");
+
+        companion object {
+            fun from(value: String): GroupingBackend =
+                entries.firstOrNull { it.value == value } ?: ADAPTER_FILTER
+        }
+    }
+
+    private var groupingBackendValue by WePrefs.prefOption(
+        "conversation_grouping_backend",
+        GroupingBackend.ADAPTER_FILTER.value,
+    )
+
+    private val groupingBackend: GroupingBackend
+        get() = GroupingBackend.from(groupingBackendValue)
+
+    private var equalWidthTabs by WePrefs.prefOption("conversation_grouping_equal_width_tabs", false)
+    private val equalWidthTabsState by lazy { mutableStateOf(equalWidthTabs) }
+
+    private val groupTabHorizontalPadding = 16.dp
 
     private fun isAllTab(id: String?): Boolean = id == ALL_TAB_ID
 
@@ -131,6 +168,40 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
     @Volatile
     private var activePredicate: String? = null
 
+    @Volatile
+    private var activeAdapterGroup: ChatGroup = allTab()
+
+    @Volatile
+    private var activeAdapterMembers: Set<String> = emptySet()
+
+    private data class AdapterCache(
+        val visiblePositions: List<Int>,
+        val rawToVisible: IntArray,
+    )
+    private data class AdapterMethods(
+        val getCount: Method,
+        val getItem: Method,
+        val getView: Method,
+        val storage: AdapterStorage,
+    )
+    private data class AdapterItemFields(
+        val username: Field?,
+        val unreadCounts: List<Field>,
+    )
+
+    private val adapterCaches = WeakHashMap<Any, AdapterCache>()
+    private var adapterMethods: List<AdapterMethods> = emptyList()
+    private val adapterSnapshotReader = ConversationAdapterSnapshotReader()
+    private val adapterItemFields = ConcurrentHashMap<Class<*>, AdapterItemFields>()
+    private val snapshotFailuresLogged = ConcurrentHashMap.newKeySet<Class<*>>()
+    private val bindingAdapter = ThreadLocal<Any?>()
+    private val recyclerLists = Collections.synchronizedSet(
+        Collections.newSetFromMap(WeakHashMap<Any, Boolean>()),
+    )
+    private val adapterPositionProvider = WeConversationListViewApi.IAdapterPositionProvider { adapter, rawPosition ->
+        adapterPositionSnapshot(adapter, rawPosition)
+    }
+
     private val groupsFile by lazy { KnownPaths.moduleData / "conversation_groups.json" }
 
     @Volatile
@@ -139,20 +210,21 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
     private val groupMembersCache = ConcurrentHashMap<String, List<String>>()
 
     override fun onEnable() {
-        hookConversationListQuery()
+        if (groupingBackend == GroupingBackend.QUERY_REWRITE) {
+            hookConversationListQuery()
+        } else {
+            hookConversationListAdapter()
+        }
 
         methodOnTabCreate.hookAfter {
-            val convListView = thisObject!!.reflekt()
-                .firstField {
-                    type = "com.tencent.mm.ui.conversation.ConversationListView"
-                }
-                .get()!! as ListView
+            val mainUi = thisObject!!
+            val conversationHostView = WeConversationListViewApi.hostView(mainUi)
 
-            val composeView = ComposeView(convListView.context).apply {
+            val composeView = ComposeView(conversationHostView.context).apply {
                 val lifecycleOwner = LifecycleOwnerProvider.lifecycleOwner
                 setLifecycleOwner(lifecycleOwner)
 
-                val context = convListView.context
+                val context = conversationHostView.context
 
                 // These values get lost when ComposeView becomes invisible, so we have to lift them
                 // out of the Composable.
@@ -223,7 +295,352 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
                     }
                 }
             }
-            convListView.addHeaderView(composeView)
+            WeConversationListViewApi.addHeaderView(mainUi, composeView)
+        }
+        if (groupingBackend == GroupingBackend.ADAPTER_FILTER) {
+            WeConversationListViewApi.addPositionProvider(adapterPositionProvider)
+        }
+    }
+
+    override fun onDisable() {
+        WeConversationListViewApi.removePositionProvider(adapterPositionProvider)
+        bindingAdapter.remove()
+        synchronized(recyclerLists) { recyclerLists.clear() }
+        clearAdapterCaches()
+        snapshotFailuresLogged.clear()
+    }
+
+    private fun hookConversationListAdapter() {
+        val viewHooks = listOf(
+            WeConversationListViewApi.methodLegacyGetView to AdapterStorage.LEGACY_CURSOR,
+            WeConversationListViewApi.methodMvvmGetView to AdapterStorage.MVVM_LIST,
+        ).filterNot { (delegate, _) -> delegate.isPlaceholder }
+        if (viewHooks.isEmpty()) {
+            error("conversation adapter filter targets were not resolved")
+        }
+        adapterMethods = viewHooks.map { (delegate, storage) ->
+            val getView = delegate.method
+            val owner = getView.declaringClass.reflekt()
+            AdapterMethods(
+                getCount = owner.firstMethod {
+                    name = "getCount"
+                    parameters()
+                    returnType = Int::class.java
+                    superclass()
+                }.self,
+                getItem = owner.firstMethod {
+                    name = "getItem"
+                    parameters(Int::class.java)
+                    returnType = Any::class.java
+                    superclass()
+                }.self,
+                getView = getView,
+                storage = storage,
+            )
+        }
+        adapterMethods.forEach { methods ->
+            methods.getCount.hookAfter {
+                if (groupingBackend != GroupingBackend.ADAPTER_FILTER) return@hookAfter
+                if (isAllTab(activeAdapterGroup.id)) return@hookAfter
+                val adapter = thisObject!!
+                // The inherited count method is also called by unrelated adapters.
+                if (!methods.getView.declaringClass.isInstance(adapter)) return@hookAfter
+                val boundCache = if (bindingAdapter.get() === adapter) {
+                    synchronized(adapterCaches) { adapterCaches[adapter] }
+                } else {
+                    null
+                }
+                if (boundCache != null) {
+                    result = boundCache.visiblePositions.size
+                    return@hookAfter
+                }
+                rebuildAdapterCache(adapter, result as Int)?.let { result = it.visiblePositions.size }
+            }
+            methods.getView.hookBefore(priority = 100) {
+                if (groupingBackend != GroupingBackend.ADAPTER_FILTER) return@hookBefore
+                if (isAllTab(activeAdapterGroup.id)) return@hookBefore
+                val adapter = thisObject!!
+                val position = args[0] as Int
+                val cache = synchronized(adapterCaches) { adapterCaches[adapter] } ?: return@hookBefore
+                bindingAdapter.set(adapter)
+                if (position in cache.visiblePositions.indices) {
+                    args[0] = cache.visiblePositions[position]
+                }
+            }
+            methods.getView.hookAfter(priority = 100) {
+                if (bindingAdapter.get() === thisObject) bindingAdapter.remove()
+            }
+        }
+
+        if (!WeConversationListViewApi.classConversationRecyclerAdapter.isPlaceholder) {
+            hookRecyclerDataSource()
+        }
+    }
+
+    private fun hookRecyclerDataSource() {
+        methodRecyclerQueryPage.hookAfter {
+            if (!classRecyclerDataSource.clazz.isInstance(thisObject)) return@hookAfter
+            val page = result!!
+            @Suppress("UNCHECKED_CAST")
+            val rows = fieldRecyclerPageItems.field.get(page) as MutableList<Any>
+            filterRecyclerRows(rows)
+        }
+
+        WeConversationListViewApi.classConversationRecyclerAdapter.clazz.constructors.forEach { constructor ->
+            constructor.hookAfter {
+                captureRecyclerList(thisObject!!)
+            }
+        }
+        WeConversationListViewApi.currentAdapter()?.let { adapter ->
+            if (WeConversationListViewApi.classConversationRecyclerAdapter.clazz.isInstance(adapter)) {
+                captureRecyclerList(adapter)
+            }
+        }
+
+        methodRecyclerSubmitUiChange.hookBefore {
+            if (!recyclerLists.contains(thisObject)) return@hookBefore
+            val pendingData = args[0]!!
+            @Suppress("UNCHECKED_CAST")
+            val rows = fieldRecyclerPendingItems.field.get(pendingData) as MutableList<Any>
+            filterRecyclerRows(rows)
+        }
+    }
+
+    private fun captureRecyclerList(adapter: Any) {
+        recyclerLists.add(fieldRecyclerMvvmList.field.get(adapter)!!)
+    }
+
+    private fun filterRecyclerRows(rows: MutableList<Any>) {
+        if (groupingBackend != GroupingBackend.ADAPTER_FILTER) return
+        val group = activeAdapterGroup
+        if (isAllTab(group.id)) return
+        rows.removeAll { row ->
+            classRecyclerRow.clazz.isInstance(row) &&
+                !adapterItemMatches(fieldRecyclerRowConversation.field.get(row), group)
+        }
+    }
+
+    private fun refreshRecyclerData(): Boolean {
+        val lists = synchronized(recyclerLists) { recyclerLists.toList() }
+        if (lists.isEmpty()) return false
+        for (list in lists) {
+            methodRecyclerRefreshAll.method.invoke(null, list, null, 1, null)
+        }
+        return true
+    }
+
+    private fun rebuildAdapterCache(adapter: Any, rawCount: Int): AdapterCache? {
+        synchronized(adapterCaches) {
+            // Never let a failed refresh leave an index built for an older backing dataset.
+            adapterCaches.remove(adapter)
+            val group = activeAdapterGroup
+            val methods = adapterMethods(adapter)
+            val items: List<Any?>? = runCatching {
+                when (methods.storage) {
+                    AdapterStorage.MVVM_LIST -> adapterSnapshotReader.read(adapter, rawCount) { index ->
+                        methods.getItem.invoke(adapter, index)
+                    }
+                    AdapterStorage.LEGACY_CURSOR -> object : AbstractList<Any?>() {
+                        override val size: Int get() = rawCount
+                        override fun get(index: Int): Any? = methods.getItem.invoke(adapter, index)
+                    }
+                }
+            }.getOrElse { error ->
+                if (snapshotFailuresLogged.add(adapter.javaClass)) {
+                    WeLogger.e(TAG, "adapter filter snapshot probe failed for ${adapter.javaClass.name}", error)
+                }
+                return null
+            }
+            if (items == null) {
+                if (snapshotFailuresLogged.add(adapter.javaClass)) {
+                    WeLogger.e(
+                        TAG,
+                        "adapter filter backing list unresolved for ${adapter.javaClass.name}; leaving it unfiltered",
+                    )
+                }
+                adapterCaches.remove(adapter)
+                return null
+            }
+            val visible = runCatching {
+                items.mapIndexedNotNull { index, item ->
+                    if (adapterItemMatches(item, group)) index else null
+                }
+            }.getOrElse { error ->
+                if (snapshotFailuresLogged.add(adapter.javaClass)) {
+                    WeLogger.e(TAG, "adapter filter snapshot failed for ${adapter.javaClass.name}", error)
+                }
+                adapterCaches.remove(adapter)
+                return null
+            }
+            val rawToVisible = IntArray(rawCount) { -1 }
+            visible.forEachIndexed { visiblePosition, rawPosition ->
+                if (rawPosition in rawToVisible.indices) rawToVisible[rawPosition] = visiblePosition
+            }
+            return AdapterCache(visible, rawToVisible).also { adapterCaches[adapter] = it }
+        }
+    }
+
+    private fun adapterPositionSnapshot(
+        adapter: Any,
+        currentRawPosition: Int,
+    ): WeConversationListViewApi.AdapterPositionSnapshot? = synchronized(adapterCaches) {
+        val cache = adapterCaches[adapter] ?: return@synchronized null
+        val visiblePosition = cache.rawToVisible.getOrNull(currentRawPosition) ?: return@synchronized null
+        if (visiblePosition < 0) return@synchronized null
+        WeConversationListViewApi.AdapterPositionSnapshot(
+            visiblePosition = visiblePosition,
+            itemCount = cache.visiblePositions.size,
+            currentRawPosition = currentRawPosition,
+            previousRawPosition = cache.visiblePositions.getOrNull(visiblePosition - 1),
+            nextRawPosition = cache.visiblePositions.getOrNull(visiblePosition + 1),
+        )
+    }
+
+    private fun clearAdapterCaches() {
+        synchronized(adapterCaches) { adapterCaches.clear() }
+    }
+
+    private fun adapterMethods(adapter: Any): AdapterMethods =
+        adapterMethods.first { it.getView.declaringClass.isInstance(adapter) }
+
+    private fun adapterItemMatches(item: Any?, group: ChatGroup): Boolean {
+        if (isAllTab(group.id)) return true
+        val username = adapterItemUsername(item) ?: return false
+        return when (group.type) {
+            GroupType.PRESET_UNREAD -> adapterItemUnread(item) > 0
+            GroupType.PRESET_GROUPS -> username.endsWith("@chatroom")
+            GroupType.PRESET_FRIENDS -> !username.endsWith("@chatroom") && !username.startsWith("gh_")
+            GroupType.MANUAL, GroupType.SQL -> activeAdapterMembers.contains(username)
+            GroupType.PRESET_OFFICIALS -> username.startsWith("gh_")
+        }
+    }
+
+    private fun adapterItemUsername(item: Any?): String? {
+        if (item == null) return null
+        if (item is Map<*, *>) return item["username"]?.toString()
+        return itemFields(item).username?.get(item) as? String
+    }
+
+    private fun adapterItemUnread(item: Any?): Int {
+        if (item == null) return 0
+        if (item is Map<*, *>) {
+            return listOf("field_unReadCount", "unReadCount", "field_unReadMuteCount", "unReadMuteCount")
+                .sumOf { (item[it] as? Number)?.toInt() ?: 0 }
+        }
+        return itemFields(item).unreadCounts.sumOf { (it.get(item) as? Number)?.toInt() ?: 0 }
+    }
+
+    private fun itemFields(item: Any): AdapterItemFields =
+        adapterItemFields.getOrPut(item.javaClass) {
+            val fields = generateSequence(item.javaClass as Class<*>?) { it.superclass }
+                .takeWhile { it != Any::class.java }
+                .flatMap { it.declaredFields.asSequence() }
+                .onEach { it.isAccessible = true }
+                .toList()
+            AdapterItemFields(
+                username = fields.firstOrNull { it.name == "field_username" || it.name == "username" },
+                unreadCounts = fields.filter {
+                    it.name == "field_unReadCount" || it.name == "unReadCount" ||
+                        it.name == "field_unReadMuteCount" || it.name == "unReadMuteCount"
+                },
+            )
+        }
+
+    override fun onClick(context: ComponentActivity) {
+        showComposeDialog(context) {
+            var selected by remember { mutableStateOf(groupingBackend) }
+            AlertDialogContent(
+                title = { Text(stringResource(R.string.feature_conversation_grouping_name)) },
+                textTopSpacing = 0.dp,
+                text = {
+                    LazyColumn(Modifier.fillMaxWidth()) {
+                        item {
+                            SegmentedColumn(
+                                title = stringResource(R.string.conversation_grouping_tab_layout_title),
+                                contentPadding = PaddingValues(0.dp),
+                                titlePadding = PaddingValues(start = 16.dp, top = 8.dp, bottom = 8.dp),
+                            ) {
+                                item {
+                                    RadioButtonWidget(
+                                        title = stringResource(R.string.conversation_grouping_tab_layout_content),
+                                        description = stringResource(R.string.conversation_grouping_tab_layout_content_description),
+                                        selected = !equalWidthTabsState.value,
+                                        onClick = {
+                                            equalWidthTabs = false
+                                            equalWidthTabsState.value = false
+                                        },
+                                    )
+                                }
+                                item {
+                                    RadioButtonWidget(
+                                        title = stringResource(R.string.conversation_grouping_tab_layout_equal),
+                                        description = stringResource(R.string.conversation_grouping_tab_layout_equal_description),
+                                        selected = equalWidthTabsState.value,
+                                        onClick = {
+                                            equalWidthTabs = true
+                                            equalWidthTabsState.value = true
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        item {
+                            SegmentedColumn(
+                                title = stringResource(R.string.conversation_grouping_backend_title),
+                                contentPadding = PaddingValues(0.dp),
+                                titlePadding = PaddingValues(start = 16.dp, top = 8.dp, bottom = 8.dp),
+                            ) {
+                                item(key = GroupingBackend.ADAPTER_FILTER.value) {
+                                    RadioButtonWidget(
+                                        iconPlaceholder = false,
+                                        title = stringResource(R.string.conversation_grouping_backend_adapter),
+                                        description = stringResource(R.string.conversation_grouping_backend_adapter_description),
+                                        selected = selected == GroupingBackend.ADAPTER_FILTER,
+                                        onClick = {
+                                            selected = GroupingBackend.ADAPTER_FILTER
+                                            selectGroupingBackend(GroupingBackend.ADAPTER_FILTER)
+                                        },
+                                    )
+                                }
+                                item(key = GroupingBackend.QUERY_REWRITE.value) {
+                                    RadioButtonWidget(
+                                        iconPlaceholder = false,
+                                        title = stringResource(R.string.conversation_grouping_backend_query),
+                                        description = stringResource(R.string.conversation_grouping_backend_query_description),
+                                        selected = selected == GroupingBackend.QUERY_REWRITE,
+                                        onClick = {
+                                            selected = GroupingBackend.QUERY_REWRITE
+                                            selectGroupingBackend(GroupingBackend.QUERY_REWRITE)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_close)) }
+                },
+            )
+        }
+    }
+
+    private fun selectGroupingBackend(backend: GroupingBackend) {
+        if (groupingBackend == backend) return
+        groupingBackendValue = backend.value
+        activePredicate = if (backend == GroupingBackend.QUERY_REWRITE &&
+            !isAllTab(activeAdapterGroup.id)
+        ) {
+            buildGroupPredicate(activeAdapterGroup)
+        } else {
+            null
+        }
+        clearAdapterCaches()
+        if (isActive) disable()
+        if (isEnabled) {
+            enable()
+            if (!isActive) return
+            refreshConversations(backend)
         }
     }
 
@@ -232,14 +649,37 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
         // groups need a DB read to materialize their member list, and doing that while WeChat is
         // already running the list query would nest reads on the same path.
         // The "全部" tab (or a null id) applies no filter.
-        activePredicate = if (groupId == null || isAllTab(groupId)) {
-            null
+        activeAdapterGroup = if (groupId == null || isAllTab(groupId)) {
+            allTab()
         } else {
-            buildGroupPredicate(groupById(groupId))
+            groupById(groupId) ?: allTab()
         }
-        // No DB writes: reloadConversations re-runs the list query on the main thread, and our
-        // query hook injects the new filter, so the visible rows change without touching any row.
-        WeConversationApi.reloadConversations()
+        activeAdapterMembers = when (activeAdapterGroup.type) {
+            GroupType.MANUAL, GroupType.SQL ->
+                getGroupMembers(activeAdapterGroup).toSet()
+            else -> emptySet()
+        }
+        activePredicate = if (groupingBackend == GroupingBackend.QUERY_REWRITE &&
+            groupId != null && !isAllTab(groupId)
+        ) {
+            buildGroupPredicate(activeAdapterGroup)
+        } else {
+            null
+        }
+        clearAdapterCaches()
+        refreshConversations(groupingBackend)
+    }
+
+    private fun refreshConversations(backend: GroupingBackend) {
+        if (backend == GroupingBackend.ADAPTER_FILTER) {
+            // The paged Recycler adapter must rebuild through its own data source so count, item,
+            // bind, click and incremental-update positions stay on the same real list. Legacy
+            // ListView adapters keep the original cached-position refresh path.
+            if (!refreshRecyclerData()) WeConversationListViewApi.refresh()
+        } else {
+            // Query Rewrite needs a fresh host query so the new SQL predicate is applied.
+            WeConversationApi.reloadConversations()
+        }
     }
 
     /**
@@ -253,6 +693,8 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
         return when (group.type) {
             GroupType.PRESET_UNREAD -> "rconversation.unReadCount>0 OR rconversation.unReadMuteCount>0"
             GroupType.PRESET_GROUPS -> "rconversation.username LIKE '%@chatroom'"
+            GroupType.PRESET_FRIENDS ->
+                "rconversation.username NOT LIKE '%@chatroom' AND rconversation.username NOT LIKE 'gh_%'"
             GroupType.PRESET_OFFICIALS -> "rconversation.username LIKE 'gh_%'"
             GroupType.MANUAL -> membersInClause(group.members)
             GroupType.SQL -> membersInClause(resolveGroupMembers(group))
@@ -271,11 +713,11 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
     // own SQLite wrapper (n3 -> i0.a(sql, args, int)). We hook that wrapper directly, the same
     // chokepoint AggregateChats uses, and append our tab predicate to the SQL before it runs.
     private fun hookConversationListQuery() {
-        if (methodSqliteWrapperRawQuery.isPlaceholder) {
+        if (WeDatabaseApi.methodSqliteWrapperRawQuery.isPlaceholder) {
             WeLogger.w(TAG, "SQLite wrapper query method not resolved; tab filtering disabled")
             return
         }
-        methodSqliteWrapperRawQuery.hookBefore {
+        WeDatabaseApi.methodSqliteWrapperRawQuery.hookBefore {
             val sql = args.firstOrNull() as? String ?: return@hookBefore
             rewriteConversationListSql(sql)?.let { args[0] = it }
         }
@@ -326,6 +768,24 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
 
     private const val TAG = "ConversationGrouping"
 
+    private val classRecyclerDataSource by dexClass()
+
+    private val methodRecyclerQueryPage by dexMethod()
+
+    private val fieldRecyclerPageItems by dexField()
+
+    private val classRecyclerRow by dexClass()
+
+    private val fieldRecyclerRowConversation by dexField()
+
+    private val methodRecyclerSubmitUiChange by dexMethod()
+
+    private val fieldRecyclerPendingItems by dexField()
+
+    private val fieldRecyclerMvvmList by dexField()
+
+    private val methodRecyclerRefreshAll by dexMethod()
+
     private val methodOnTabCreate by dexMethod {
         matcher {
             declaredClass = "com.tencent.mm.ui.conversation.MainUI"
@@ -333,17 +793,113 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
         }
     }
 
-    // WeChat's SQLite wrapper query: i0.a(String sql, String[] args, int) -> Cursor. Same anchor
-    // AggregateChats uses to intercept the homepage/folder list queries.
-    private val methodSqliteWrapperRawQuery by dexMethod(allowFailure = true) {
-        matcher {
-            modifiers = JavaModifier.PUBLIC
-            usingEqStrings("sql is null ", "DB IS CLOSED ! {%s}")
-            paramTypes("java.lang.String", "java.lang.String[]", "int")
-            returnType("android.database.Cursor")
+    override fun resolveDex(dexKit: DexKitBridge) {
+        DexResolutionContext.ensureResolved(WeConversationListViewApi.classConversationRecyclerAdapter)
+        if (WeConversationListViewApi.classConversationRecyclerAdapter.isPlaceholder) {
+            val reason = "conversation RecyclerView architecture is absent"
+            classRecyclerDataSource.setPlaceholderDescriptor(true, reason)
+            methodRecyclerQueryPage.setPlaceholderDescriptor(true, reason)
+            fieldRecyclerPageItems.setPlaceholderDescriptor(true, reason)
+            classRecyclerRow.setPlaceholderDescriptor(true, reason)
+            fieldRecyclerRowConversation.setPlaceholderDescriptor(true, reason)
+            methodRecyclerSubmitUiChange.setPlaceholderDescriptor(true, reason)
+            fieldRecyclerPendingItems.setPlaceholderDescriptor(true, reason)
+            fieldRecyclerMvvmList.setPlaceholderDescriptor(true, reason)
+            methodRecyclerRefreshAll.setPlaceholderDescriptor(true, reason)
+            return
+        }
+
+        classRecyclerDataSource.find(dexKit) {
+            matcher {
+                usingEqStrings(
+                    "MicroMsg.ConversationAdapter.ConvRecyclerDataSource",
+                    "syncFoldExpandStatus: isShowPlaceTop=",
+                )
+            }
+        }
+        methodRecyclerQueryPage.find(dexKit) {
+            matcher {
+                paramCount = 1
+                usingEqStrings(
+                    "getConvList: may getContact error, size mismatch",
+                    "getConvList ",
+                )
+            }
+        }
+        fieldRecyclerPageItems.find(dexKit) {
+            matcher {
+                declaredClass(methodRecyclerQueryPage.data.returnTypeName)
+                type = "java.util.ArrayList"
+            }
+        }
+
+        val conversationClassName = WeConversationListViewApi.methodAdapterGetItem.data.returnTypeName
+        val rowBuilders = methodRecyclerQueryPage.data.invokes.distinctBy { it.descriptor }
+            .filter { candidate ->
+                candidate.paramTypeNames.firstOrNull() == conversationClassName &&
+                    dexKit.getClassData(candidate.returnTypeName)?.fields?.any {
+                        it.typeName == conversationClassName
+                    } == true
+            }
+        require(rowBuilders.size == 1) {
+            "expected one conversation RecyclerView row builder, found: " +
+                rowBuilders.joinToString { it.descriptor }
+        }
+        val recyclerRow = dexKit.getClassData(rowBuilders.single().returnTypeName)!!
+        classRecyclerRow.setDescriptor(recyclerRow)
+        fieldRecyclerRowConversation.setDescriptor(recyclerRow.fields.single {
+            it.typeName == conversationClassName
+        })
+
+        val recyclerAdapterBase =
+            WeConversationListViewApi.classConversationRecyclerAdapter.data.superClass!!
+        require(recyclerAdapterBase.fields.size == 1) {
+            "expected one Recycler adapter base field, found: " +
+                recyclerAdapterBase.fields.joinToString { it.descriptor }
+        }
+        val recyclerMvvmListField = recyclerAdapterBase.fields.single()
+        fieldRecyclerMvvmList.setDescriptor(recyclerMvvmListField)
+
+        methodRecyclerSubmitUiChange.find(dexKit) {
+            matcher {
+                declaredClass(recyclerMvvmListField.typeName)
+                paramCount = 1
+                returnType = "void"
+                usingEqStrings(
+                    "submitUIChange callback:",
+                    " currentDataListVersion:",
+                )
+            }
+        }
+        fieldRecyclerPendingItems.find(dexKit) {
+            matcher {
+                declaredClass(methodRecyclerSubmitUiChange.data.paramTypeNames.single())
+                type = "java.util.List"
+                addReadMethod {
+                    declaredClass(methodRecyclerSubmitUiChange.data.declaredClassName)
+                    paramTypes(methodRecyclerSubmitUiChange.data.paramTypeNames.single())
+                    usingEqStrings("submitUIChange callback:", " currentDataListVersion:")
+                }
+            }
+        }
+        methodRecyclerRefreshAll.find(dexKit) {
+            matcher {
+                declaredClass(methodRecyclerSubmitUiChange.data.declaredClassName)
+                modifiers(ReflectModifier.STATIC)
+                paramTypes(
+                    methodRecyclerSubmitUiChange.data.declaredClassName,
+                    null,
+                    "int",
+                    "java.lang.Object",
+                )
+                returnType = "void"
+                usingEqStrings("submitRefreshAll")
+            }
         }
     }
 
+    // WeChat's SQLite wrapper query: i0.a(String sql, String[] args, int) -> Cursor. Same anchor
+    // AggregateChats uses to intercept the homepage/folder list queries.
     // ----------------------------------------------------------------------------------------------
     // Tab bar UI
     // ----------------------------------------------------------------------------------------------
@@ -363,7 +919,7 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
     ) {
         val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
         var menuForGroupId by remember { mutableStateOf<String?>(null) }
-        // Sort (edit) mode: tabs jiggle in place and can be long-pressed to drag-reorder.
+        // Sort (edit) mode: long-press a tab to drag-reorder.
         var sortMode by remember { mutableStateOf(false) }
         // The working order while sorting. Seeded from `groups` on entry and mutated live as the
         // user drags; committed via onReorder only when the check button is tapped.
@@ -387,101 +943,133 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
             if (sortMode) {
                 SortableTabsRow(
                     groups = orderedGroups,
+                    selectedGroupId = selectedGroupId,
                     onMove = { from, to ->
                         order = order.toMutableList().apply { add(to, removeAt(from)) }
                     }
                 )
             } else {
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(
-                        space = 8.dp,
-                        alignment = Alignment.CenterHorizontally
-                    ),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    items(orderedGroups, key = { it.id }) { group ->
-                        val allTab = isAllTab(group.id)
-                        val label = groupDisplayName(group)
-                        Box {
-                            GroupTab(
-                                label = label,
-                                selected = selectedGroupId == group.id,
-                                onClick = { onTabSelected(group.id) },
-                                onLongClick = { menuForGroupId = group.id }
-                            )
+                val tabs: @Composable () -> Unit = {
+                    orderedGroups.forEach { group ->
+                        key(group.id) {
+                            val allTab = isAllTab(group.id)
+                            val label = groupDisplayName(group)
+                            Box {
+                                GroupTab(
+                                    label = label,
+                                    selected = selectedGroupId == group.id,
+                                    onClick = { onTabSelected(group.id) },
+                                    onLongClick = { menuForGroupId = group.id }
+                                )
 
-                            DropdownMenu(
-                                expanded = menuForGroupId == group.id,
-                                onDismissRequest = { menuForGroupId = null }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.conversation_group_action_new)) },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = MaterialSymbols.Outlined.Add,
-                                            contentDescription = stringResource(R.string.conversation_group_new_description),
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    },
-                                    onClick = {
-                                        menuForGroupId = null
-                                        onCreateGroup()
-                                    }
-                                )
-                                // The fixed "全部" tab can be reordered but never edited or deleted.
-                                if (!allTab) {
+                                DropdownMenu(
+                                    expanded = menuForGroupId == group.id,
+                                    onDismissRequest = { menuForGroupId = null }
+                                ) {
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.conversation_group_action_edit)) },
+                                        text = { Text(stringResource(R.string.conversation_group_action_new)) },
                                         leadingIcon = {
                                             Icon(
-                                                imageVector = MaterialSymbols.Outlined.Edit,
-                                                contentDescription = stringResource(R.string.conversation_group_action_edit),
+                                                imageVector = MaterialSymbols.Outlined.Add,
+                                                contentDescription = stringResource(R.string.conversation_group_new_description),
                                                 modifier = Modifier.size(20.dp)
                                             )
                                         },
                                         onClick = {
                                             menuForGroupId = null
-                                            onEditGroup(group)
+                                            onCreateGroup()
                                         }
                                     )
-                                }
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.conversation_group_action_reorder)) },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = MaterialSymbols.Outlined.Swap_vert,
-                                            contentDescription = stringResource(R.string.conversation_group_action_reorder),
-                                            modifier = Modifier.size(20.dp)
+                                    // The fixed "全部" tab can be reordered but never edited or deleted.
+                                    if (!allTab) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.conversation_group_action_edit)) },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = MaterialSymbols.Outlined.Edit,
+                                                    contentDescription = stringResource(R.string.conversation_group_action_edit),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            },
+                                            onClick = {
+                                                menuForGroupId = null
+                                                onEditGroup(group)
+                                            }
                                         )
-                                    },
-                                    onClick = {
-                                        menuForGroupId = null
-                                        order = groups.map { it.id }
-                                        sortMode = true
                                     }
-                                )
-                                if (!allTab) {
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.conversation_group_action_delete)) },
+                                        text = { Text(stringResource(R.string.conversation_group_action_reorder)) },
                                         leadingIcon = {
                                             Icon(
-                                                imageVector = MaterialSymbols.Outlined.Delete,
-                                                contentDescription = stringResource(R.string.conversation_group_action_delete),
+                                                imageVector = MaterialSymbols.Outlined.Swap_vert,
+                                                contentDescription = stringResource(R.string.conversation_group_action_reorder),
                                                 modifier = Modifier.size(20.dp)
                                             )
                                         },
                                         onClick = {
                                             menuForGroupId = null
-                                            onDeleteGroup(group)
+                                            order = groups.map { it.id }
+                                            sortMode = true
                                         }
                                     )
+                                    if (!allTab) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.conversation_group_action_delete)) },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = MaterialSymbols.Outlined.Delete,
+                                                    contentDescription = stringResource(R.string.conversation_group_action_delete),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            },
+                                            onClick = {
+                                                menuForGroupId = null
+                                                onDeleteGroup(group)
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-
+                }
+                val selectedTabIndex = orderedGroups.indexOfFirst { it.id == selectedGroupId }
+                    .coerceAtLeast(0)
+                if (equalWidthTabsState.value) {
+                    PrimaryTabRow(
+                        selectedTabIndex = selectedTabIndex,
+                        modifier = Modifier.fillMaxWidth(),
+                        containerColor = containerColor,
+                        divider = {},
+                        tabs = tabs,
+                    )
+                } else {
+                    val textMeasurer = rememberTextMeasurer()
+                    val density = LocalDensity.current
+                    val textStyle = MaterialTheme.typography.titleSmall
+                    val tabsWidth = orderedGroups.fold(0.dp) { width, group ->
+                        val textWidth = textMeasurer.measure(
+                            text = groupDisplayName(group),
+                            style = textStyle,
+                            maxLines = 1,
+                            softWrap = false,
+                        ).size.width
+                        width + with(density) {
+                            (textWidth + groupTabHorizontalPadding.roundToPx() * 2)
+                                .coerceAtLeast(48.dp.roundToPx()).toDp()
+                        }
+                    }
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        // Center short rows; retain only the edge inset once tabs overflow.
+                        PrimaryScrollableTabRow(
+                            selectedTabIndex = selectedTabIndex,
+                            containerColor = containerColor,
+                            edgePadding = ((maxWidth - tabsWidth) / 2).coerceAtLeast(12.dp),
+                            minTabWidth = 48.dp,
+                            divider = {},
+                            tabs = tabs,
+                        )
+                    }
                 }
             }
 
@@ -519,6 +1107,7 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
         return when (group.builtInLabel) {
             BuiltInGroupLabel.UNREAD -> context.getString(R.string.conversation_group_default_unread)
             BuiltInGroupLabel.GROUPS -> context.getString(R.string.conversation_group_default_groups)
+            BuiltInGroupLabel.FRIENDS -> context.getString(R.string.conversation_group_default_friends)
             BuiltInGroupLabel.OFFICIALS -> context.getString(R.string.conversation_group_default_officials)
             null -> ""
         }
@@ -543,17 +1132,14 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
         localizedGroupName(LocalWeKitLocalizedContext.current, group)
 
     /**
-     * The row shown while sorting: every tab jiggles in place (iOS home-screen editing feel), and a
-     * long-press on any tab picks it up so dragging left/right reorders the row. Reordering mutates
-     * the caller's working order via [onMove]; nothing is persisted until the ✓ button is tapped.
-     *
-     * We build our own drag handling rather than using a LazyRow so we can control the pickup +
-     * live swap ourselves; the tab count is small so a plain Row of measured widths is fine.
+     * Long-press a tab to drag it into a new position. The working order is persisted only when
+     * the check button is tapped.
      */
     @OptIn(ExperimentalFoundationApi::class)
     @Composable
     private fun SortableTabsRow(
         groups: List<ChatGroup>,
+        selectedGroupId: String,
         onMove: (from: Int, to: Int) -> Unit,
     ) {
         val listState = rememberLazyListState()
@@ -582,100 +1168,106 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
             return initialOffset + draggedDelta - item.offset
         }
 
-        LazyRow(
-            state = listState,
-            // Keep normal horizontal scrolling while nothing is picked up, so an overflowing tab
-            // row can be swiped left/right. Once a tab is picked up the drag consumes the gesture,
-            // and the auto-scroll below handles scrolling near the edges.
-            userScrollEnabled = draggingIndex == -1,
-            modifier = Modifier
-                .fillMaxWidth()
-                .pointerInput(Unit) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { offset ->
-                            // Hit-test the touch against the live layout to pick up the right tab.
-                            val hit = listState.layoutInfo.visibleItemsInfo.firstOrNull {
-                                offset.x.toInt() in it.offset..it.offset + it.size
-                            }
-                            if (hit != null) {
-                                draggingIndex = hit.index
-                                initialOffset = hit.offset
-                                draggedDelta = 0f
-                            }
-                        },
-                        onDragEnd = {
-                            val landed = draggingIndex
-                            val from = offsetForIndex(landed)
-                            draggingIndex = -1
-                            // Spring the residual offset back to the slot so the tab glides home.
-                            if (landed >= 0) scope.launch {
-                                settleIndex = landed
-                                settleAnim.snapTo(from)
-                                settleAnim.animateTo(
-                                    0f,
-                                    spring(
-                                        dampingRatio = Spring.DampingRatioLowBouncy,
-                                        stiffness = Spring.StiffnessMedium
+        // Reserve space for the save button outside the scrolling and drag-hit-test area.
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(end = 56.dp)) {
+            LazyRow(
+                state = listState,
+                // Keep normal horizontal scrolling while nothing is picked up, so an overflowing tab
+                // row can be swiped left/right. Once a tab is picked up the drag consumes the gesture,
+                // and the auto-scroll below handles scrolling near the edges.
+                userScrollEnabled = draggingIndex == -1,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { offset ->
+                                // Hit-test the touch against the live layout to pick up the right tab.
+                                val hit = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                                    offset.x.toInt() in it.offset..it.offset + it.size
+                                }
+                                if (hit != null) {
+                                    draggingIndex = hit.index
+                                    initialOffset = hit.offset
+                                    draggedDelta = 0f
+                                }
+                            },
+                            onDragEnd = {
+                                val landed = draggingIndex
+                                val from = offsetForIndex(landed)
+                                draggingIndex = -1
+                                // Spring the residual offset back to the slot so the tab glides home.
+                                if (landed >= 0) scope.launch {
+                                    settleIndex = landed
+                                    settleAnim.snapTo(from)
+                                    settleAnim.animateTo(
+                                        0f,
+                                        spring(
+                                            dampingRatio = Spring.DampingRatioLowBouncy,
+                                            stiffness = Spring.StiffnessMedium
+                                        )
                                     )
-                                )
-                                settleIndex = -1
+                                    settleIndex = -1
+                                }
+                            },
+                            onDragCancel = { draggingIndex = -1 },
+                            onDrag = { change, amount ->
+                                change.consume()
+                                if (draggingIndex < 0) return@detectDragGesturesAfterLongPress
+                                draggedDelta += amount.x
+                                val info = listState.layoutInfo.visibleItemsInfo
+                                val cur = info.firstOrNull { it.index == draggingIndex }
+                                    ?: return@detectDragGesturesAfterLongPress
+                                // Center of the dragged tab as it currently sits under the finger.
+                                val center = (cur.offset + offsetForIndex(draggingIndex) + cur.size / 2f).toInt()
+                                val target = info.firstOrNull { other ->
+                                    other.index != draggingIndex &&
+                                            center in other.offset..other.offset + other.size
+                                }
+                                if (target != null) {
+                                    onMove(draggingIndex, target.index)
+                                    draggingIndex = target.index
+                                }
                             }
-                        },
-                        onDragCancel = { draggingIndex = -1 },
-                        onDrag = { change, amount ->
-                            change.consume()
-                            if (draggingIndex < 0) return@detectDragGesturesAfterLongPress
-                            draggedDelta += amount.x
-                            val info = listState.layoutInfo.visibleItemsInfo
-                            val cur = info.firstOrNull { it.index == draggingIndex }
-                                ?: return@detectDragGesturesAfterLongPress
-                            // Center of the dragged tab as it currently sits under the finger.
-                            val center = (cur.offset + offsetForIndex(draggingIndex) + cur.size / 2f).toInt()
-                            val target = info.firstOrNull { other ->
-                                other.index != draggingIndex &&
-                                        center in other.offset..other.offset + other.size
-                            }
-                            if (target != null) {
-                                onMove(draggingIndex, target.index)
-                                draggingIndex = target.index
-                            }
-                        }
-                    )
-                },
-            // Leave room on the right for the overlaid ✓ button.
-            contentPadding = PaddingValues(
-                start = 12.dp, end = 56.dp, top = 8.dp, bottom = 8.dp
-            ),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            items(groups.size, key = { groups[it].id }) { index ->
-                val group = groups[index]
-                val dragging = index == draggingIndex
-                val settling = index == settleIndex
-
-                JiggleTab(
-                    label = groupDisplayName(group),
-                    // Keep the lift look through the settle so scale eases out alongside the glide.
-                    dragging = dragging || settling,
-                    // Offset the jiggle phase by index so neighbouring tabs aren't perfectly in sync.
-                    phaseIndex = index,
-                    // Read at draw time so a swap-induced layout shift is reflected without a
-                    // recomposition-timing gap. While dragging: follow the finger. While settling:
-                    // the spring value. Otherwise: 0 (its slot).
-                    dragOffsetX = {
-                        when {
-                            dragging -> offsetForIndex(index)
-                            settling -> settleAnim.value
-                            else -> 0f
-                        }
+                        )
                     },
-                    modifier = Modifier
-                        .zIndex(if (dragging || settling) 1f else 0f)
-                        // Neighbours springing aside to make room animate their placement smoothly
-                        // instead of jumping. The dragged tab is excluded (it tracks the finger).
-                        .then(if (dragging || settling) Modifier else Modifier.animateItem())
-                )
+                contentPadding = PaddingValues(horizontal = if (equalWidthTabsState.value) 0.dp else 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(0.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items(groups.size, key = { groups[it].id }) { index ->
+                    val group = groups[index]
+                    val dragging = index == draggingIndex
+                    val settling = index == settleIndex
+
+                    val scale by animateFloatAsState(
+                        targetValue = if (dragging || settling) 1.1f else 1f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMedium,
+                        ),
+                        label = "dragScale",
+                    )
+                    GroupTabContent(
+                        label = groupDisplayName(group),
+                        selected = selectedGroupId == group.id,
+                        modifier = Modifier
+                            .then(
+                                if (equalWidthTabsState.value) Modifier.width(maxWidth / groups.size)
+                                else Modifier.widthIn(min = 48.dp)
+                            )
+                            .zIndex(if (dragging || settling) 1f else 0f)
+                            .graphicsLayer {
+                                translationX = when {
+                                    dragging -> offsetForIndex(index)
+                                    settling -> settleAnim.value
+                                    else -> 0f
+                                }
+                                scaleX = scale
+                                scaleY = scale
+                            }
+                            .then(if (dragging || settling) Modifier else Modifier.animateItem()),
+                    )
+                }
             }
         }
 
@@ -706,103 +1298,40 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
         onClick: () -> Unit,
         onLongClick: () -> Unit,
     ) {
-        val backgroundColor = if (selected) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.surfaceContainerHighest
-        }
-        val contentColor = if (selected) {
-            MaterialTheme.colorScheme.onPrimary
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        }
-
-        Surface(
-            color = backgroundColor,
-            contentColor = contentColor,
-            shape = CircleShape
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                    .padding(horizontal = 18.dp, vertical = 9.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelLarge.copy(
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                    )
-                )
-            }
-        }
+        GroupTabContent(
+            label = label,
+            selected = selected,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { this.selected = selected }
+                .combinedClickable(
+                    role = Role.Tab,
+                    onClick = onClick,
+                    onLongClick = onLongClick,
+                ),
+        )
     }
 
-    /**
-     * A tab pill in sort mode: continuously rotates a couple degrees back and forth (the iOS
-     * home-screen "jiggle"), lifts and enlarges slightly while being dragged, and follows the
-     * finger horizontally via [dragOffsetX].
-     */
     @Composable
-    private fun JiggleTab(
+    private fun GroupTabContent(
         label: String,
-        dragging: Boolean,
-        phaseIndex: Int,
-        dragOffsetX: () -> Float,
+        selected: Boolean,
         modifier: Modifier = Modifier,
     ) {
-        val transition = rememberInfiniteTransition(label = "jiggle")
-        // Alternate the start phase per index so neighbouring tabs jiggle out of sync.
-        val rotation by transition.animateFloat(
-            initialValue = -2.5f,
-            targetValue = 2.5f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 160, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse,
-                initialStartOffset = StartOffset(if (phaseIndex % 2 == 0) 0 else 80)
-            ),
-            label = "rotation"
-        )
-
-        // Spring the lift scale up/down so picking up and dropping ease in and out.
-        val scale by animateFloatAsState(
-            targetValue = if (dragging) 1.1f else 1f,
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMedium
-            ),
-            label = "scale"
-        )
-        // Fade the jiggle out while lifted rather than cutting it dead.
-        val jiggleDamp by animateFloatAsState(
-            targetValue = if (dragging) 0f else 1f,
-            animationSpec = tween(durationMillis = 150),
-            label = "jiggleDamp"
-        )
-
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            shape = CircleShape,
-            modifier = modifier.graphicsLayer {
-                rotationZ = rotation * jiggleDamp
-                translationX = dragOffsetX()
-                scaleX = scale
-                scaleY = scale
-            }
+        Box(
+            modifier = modifier
+                .heightIn(min = 48.dp)
+                .padding(horizontal = groupTabHorizontalPadding, vertical = 12.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .padding(horizontal = 18.dp, vertical = 9.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
+            Text(
+                text = label,
+                color = if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 
@@ -940,6 +1469,7 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
                                     GroupType.MANUAL -> stringResource(R.string.conversation_group_mode_manual)
                                     GroupType.PRESET_UNREAD -> stringResource(R.string.conversation_group_mode_unread)
                                     GroupType.PRESET_GROUPS -> stringResource(R.string.conversation_group_mode_groups)
+                                    GroupType.PRESET_FRIENDS -> stringResource(R.string.conversation_group_mode_friends)
                                     GroupType.PRESET_OFFICIALS -> stringResource(R.string.conversation_group_mode_officials)
                                     GroupType.SQL -> stringResource(R.string.conversation_group_mode_sql)
                                 },
@@ -968,6 +1498,13 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
                                 text = { Text(stringResource(R.string.conversation_group_mode_groups)) },
                                 onClick = {
                                     type = GroupType.PRESET_GROUPS
+                                    typeExpanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.conversation_group_mode_friends)) },
+                                onClick = {
+                                    type = GroupType.PRESET_FRIENDS
                                     typeExpanded = false
                                 }
                             )
@@ -1019,6 +1556,10 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
 
                         GroupType.PRESET_GROUPS -> {
                             Text(stringResource(R.string.conversation_group_groups_match_count, matchedCount))
+                        }
+
+                        GroupType.PRESET_FRIENDS -> {
+                            Text(stringResource(R.string.conversation_group_friends_match_count, matchedCount))
                         }
 
                         GroupType.PRESET_OFFICIALS -> {
@@ -1112,6 +1653,18 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
                 }
             }
 
+            GroupType.PRESET_FRIENDS -> {
+                runCatching {
+                    val result = WeDatabaseApi.executeQuery(
+                        "SELECT r.username FROM rcontact r WHERE r.username NOT LIKE '%@chatroom' AND r.username NOT LIKE 'gh_%'"
+                    )
+                    result.mapNotNull { it["username"]?.toString() }
+                }.getOrElse {
+                    WeLogger.e(TAG, "failed to query preset friends", it)
+                    emptyList()
+                }
+            }
+
             GroupType.PRESET_OFFICIALS -> {
                 runCatching {
                     val result = WeDatabaseApi.executeQuery(
@@ -1195,17 +1748,18 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
     private fun migrateLegacyBuiltInLabel(group: ChatGroup): ChatGroup {
         if (isAllTab(group.id)) return group.copy(name = "")
         if (group.builtInLabel != null) return group
-        val label = when {
-            group.type == GroupType.PRESET_UNREAD && group.name == "未读" -> BuiltInGroupLabel.UNREAD
-            group.type == GroupType.PRESET_GROUPS && group.name == "群聊" -> BuiltInGroupLabel.GROUPS
-            group.type == GroupType.PRESET_OFFICIALS && group.name == "公众号" -> BuiltInGroupLabel.OFFICIALS
+        val label = when (group.type) {
+            GroupType.PRESET_UNREAD if group.name == "未读" -> BuiltInGroupLabel.UNREAD
+            GroupType.PRESET_GROUPS if group.name == "群聊" -> BuiltInGroupLabel.GROUPS
+            GroupType.PRESET_FRIENDS if group.name == "好友" -> BuiltInGroupLabel.FRIENDS
+            GroupType.PRESET_OFFICIALS if group.name == "公众号" -> BuiltInGroupLabel.OFFICIALS
             else -> null
         }
         return if (label == null) group else group.copy(name = "", builtInLabel = label)
     }
 
-    // The groups seeded on first run, matching the tabs this feature used to hardcode
-    // (minus 全部, which is the fixed non-deletable tab, and 好友).
+    // The groups seeded on first run, matching the fixed categories while keeping every category
+    // editable and reorderable except the non-deletable 全部 tab.
     private fun defaultGroups(): List<ChatGroup> {
         // Distinct ids so each row is independently editable / deletable. The fixed "全部" tab leads
         // by default but can be dragged elsewhere.
@@ -1224,6 +1778,11 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
             ),
             ChatGroup(
                 id = "$GROUP_PREFIX${base + 2}",
+                type = GroupType.PRESET_FRIENDS,
+                builtInLabel = BuiltInGroupLabel.FRIENDS,
+            ),
+            ChatGroup(
+                id = "$GROUP_PREFIX${base + 3}",
                 type = GroupType.PRESET_OFFICIALS,
                 builtInLabel = BuiltInGroupLabel.OFFICIALS,
             ),
@@ -1253,14 +1812,21 @@ object ConversationGrouping : SwitchFeature(), IResolveDex {
         MANUAL,
         PRESET_UNREAD,
         PRESET_GROUPS,
+        PRESET_FRIENDS,
         PRESET_OFFICIALS,
         SQL
+    }
+
+    private enum class AdapterStorage {
+        LEGACY_CURSOR,
+        MVVM_LIST,
     }
 
     @Serializable
     private enum class BuiltInGroupLabel {
         UNREAD,
         GROUPS,
+        FRIENDS,
         OFFICIALS,
     }
 

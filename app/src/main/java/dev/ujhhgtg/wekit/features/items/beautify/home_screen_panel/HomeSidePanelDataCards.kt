@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -38,7 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -80,14 +83,14 @@ import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 
-internal fun weatherCardSnapshot(state: WeatherUiState): WeatherSnapshot? = when (state) {
+fun weatherCardSnapshot(state: WeatherUiState): WeatherSnapshot? = when (state) {
     is WeatherUiState.Ready -> state.snapshot
     is WeatherUiState.Error -> state.cached
     WeatherUiState.Loading -> null
 }
 
 @Composable
-internal fun HomeSidePanelDateTimeCard(
+fun HomeSidePanelDateTimeCard(
     card: DateTimeCardConfig,
     content: DateTimeCardContent,
     editMode: Boolean,
@@ -143,19 +146,34 @@ internal fun HomeSidePanelDateTimeCard(
                     style = MaterialTheme.typography.displaySmall,
                     fontWeight = FontWeight.Bold,
                 )
-                Text(
-                    buildString {
-                        append(dateText)
-                        lunarText?.let { append(" · ").append(it) }
-                    },
+                BoxWithConstraints(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(start = 10.dp, bottom = 5.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                        .padding(start = 10.dp, bottom = 5.dp)
+                ) {
+                    val combinedText = buildString {
+                        append(dateText)
+                        lunarText?.let { append(" · ").append(it) }
+                    }
+                    if (lunarText == null) {
+                        HomeSidePanelDateText(combinedText)
+                    } else {
+                        val combinedFitsOneLine = rememberTextMeasurer().measure(
+                            text = AnnotatedString(combinedText),
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            softWrap = false,
+                        ).size.width <= constraints.maxWidth
+                        if (combinedFitsOneLine) {
+                            HomeSidePanelDateText(combinedText)
+                        } else {
+                            Column {
+                                HomeSidePanelDateText(dateText)
+                                HomeSidePanelDateText(lunarText)
+                            }
+                        }
+                    }
+                }
             }
             Text(stringResource(greetingResForHour(now.hour)), style = MaterialTheme.typography.titleMedium)
         }
@@ -163,7 +181,18 @@ internal fun HomeSidePanelDateTimeCard(
 }
 
 @Composable
-internal fun HomeSidePanelWeatherCard(
+private fun HomeSidePanelDateText(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+@Composable
+fun HomeSidePanelWeatherCard(
     card: WeatherCardConfig,
     content: WeatherCardContent,
     editMode: Boolean,
@@ -375,7 +404,7 @@ internal fun HomeSidePanelWeatherCard(
 }
 
 @Composable
-internal fun HomeSidePanelWalletCard(
+fun HomeSidePanelWalletCard(
     card: WalletCardConfig,
     content: WalletCardContent,
     editMode: Boolean,
@@ -483,7 +512,7 @@ internal fun HomeSidePanelWalletCard(
 }
 
 @Composable
-internal fun HomeSidePanelHitokotoCard(
+fun HomeSidePanelHitokotoCard(
     card: HitokotoCardConfig,
     content: HitokotoCardContent,
     editMode: Boolean,

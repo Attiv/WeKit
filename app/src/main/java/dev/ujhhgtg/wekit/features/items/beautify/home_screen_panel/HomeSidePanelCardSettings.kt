@@ -59,7 +59,7 @@ import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.content.m3.SwitchWidget
 
 @Composable
-internal fun HomeSidePanelPanelSettings(
+fun HomeSidePanelPanelSettings(
     state: HomeSidePanelUiState,
     panelState: HomeSidePanelState,
 ) {
@@ -105,7 +105,7 @@ internal fun HomeSidePanelPanelSettings(
 }
 
 @Composable
-internal fun HomeSidePanelDateTimeSettings(
+fun HomeSidePanelDateTimeSettings(
     card: DateTimeCardConfig,
     panelState: HomeSidePanelState,
 ) {
@@ -136,7 +136,7 @@ internal fun HomeSidePanelDateTimeSettings(
 }
 
 @Composable
-internal fun HomeSidePanelWeatherSettings(
+fun HomeSidePanelWeatherSettings(
     card: WeatherCardConfig,
     panelState: HomeSidePanelState,
 ) {
@@ -228,7 +228,6 @@ internal fun HomeSidePanelWeatherSettings(
                 settings.searchResults.forEachIndexed { index, city ->
                     val selected = city.cityNum == settings.selectedCity.cityNum
                     ListItem(
-                        headlineContent = { Text(city.city + city.district.orEmpty()) },
                         supportingContent = { Text("${city.province} · ${city.cityNum}") },
                         trailingContent = { RadioButton(selected = selected, onClick = null) },
                         colors = ListItemDefaults.colors(
@@ -243,7 +242,9 @@ internal fun HomeSidePanelWeatherSettings(
                             .clickable(enabled = !settings.actionInProgress) {
                                 panelState.updateWeatherCity(card.id, city)
                             },
-                    )
+                    ) {
+                        Text(city.city + city.district.orEmpty())
+                    }
                     if (index != settings.searchResults.lastIndex) {
                         HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                     }
@@ -254,7 +255,7 @@ internal fun HomeSidePanelWeatherSettings(
 }
 
 @Composable
-internal fun HomeSidePanelWalletSettings(
+fun HomeSidePanelWalletSettings(
     card: WalletCardConfig,
     panelState: HomeSidePanelState,
 ) {
@@ -287,7 +288,7 @@ internal fun HomeSidePanelWalletSettings(
 }
 
 @Composable
-internal fun HomeSidePanelHitokotoSettings(
+fun HomeSidePanelHitokotoSettings(
     card: HitokotoCardConfig,
     runtime: HitokotoUiState,
     panelState: HomeSidePanelState,
@@ -400,7 +401,7 @@ internal fun HomeSidePanelHitokotoSettings(
 }
 
 @Composable
-internal fun SettingsHeader(
+fun SettingsHeader(
     title: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,

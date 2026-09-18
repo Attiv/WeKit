@@ -3,6 +3,9 @@ package dev.ujhhgtg.wekit.loader.utils
 import dev.ujhhgtg.wekit.utils.reflection.ClassLoaders
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
+import java.util.Collections
+import java.util.IdentityHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 object HybridClassLoader : ClassLoader(ClassLoaders.BOOT) {
 
@@ -10,7 +13,10 @@ object HybridClassLoader : ClassLoader(ClassLoaders.BOOT) {
     lateinit var moduleParentClassLoader: ClassLoader
     lateinit var moduleClassLoader: ClassLoader
     lateinit var hostClassLoader: ClassLoader
-    val additionalLoaders = mutableListOf<ClassLoader>()
+    val additionalLoaders = CopyOnWriteArrayList<ClassLoader>()
+    private val resolvingAdditionalLoaders = ThreadLocal.withInitial<MutableSet<ClassLoader>> {
+        Collections.newSetFromMap(IdentityHashMap())
+    }
 
     private val moduleFindClassMethod: Method by lazy {
         ClassLoader::class.java.getDeclaredMethod("findClass", String::class.java).apply {
@@ -60,10 +66,21 @@ object HybridClassLoader : ClassLoader(ClassLoaders.BOOT) {
             } catch (_: ClassNotFoundException) {}
         }
 
-        additionalLoaders.forEach {
-            try {
-                return it.loadClass(name)
-            } catch (_: ClassNotFoundException) {}
+        // An additional loader may delegate to the module loader, whose parent is this hybrid.
+        // Skip a loader already active on this thread so a class miss cannot recurse forever.
+        val resolving = resolvingAdditionalLoaders.get()!!
+        try {
+            additionalLoaders.forEach { loader ->
+                if (!resolving.add(loader)) return@forEach
+                try {
+                    return loader.loadClass(name)
+                } catch (_: ClassNotFoundException) {
+                } finally {
+                    resolving.remove(loader)
+                }
+            }
+        } finally {
+            if (resolving.isEmpty()) resolvingAdditionalLoaders.remove()
         }
 
         throw ClassNotFoundException(name)

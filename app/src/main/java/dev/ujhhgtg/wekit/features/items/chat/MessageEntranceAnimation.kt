@@ -24,8 +24,8 @@ import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.models.MessageInfo
+import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -65,13 +65,12 @@ import java.util.WeakHashMap
  *   - 重力掉落: translationY = -250dp + scale 0.9, spring 回 0/1.0
  *     (translation stiffness=300, dampingRatio=0.5; scale stiffness=200, dampingRatio=0.6)。
  */
-@Feature(
-    id = "消息进入动画",
-    nameRes = "feature_message_entrance_animation_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_message_entrance_animation_description",
-)
 object MessageEntranceAnimation : ClickableFeature(), IResolveDex {
+
+    override val technicalId = "消息进入动画"
+    override val nameRes = R.string.feature_message_entrance_animation_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_message_entrance_animation_description
 
     /**
      * 入场动效风格: 0=弹跳入场 1=平移滑入 2=重力掉落。
@@ -139,17 +138,6 @@ object MessageEntranceAnimation : ClickableFeature(), IResolveDex {
      * 双参 (holder, int) + void 返回在所有目标版本唯一, 故用字符串锚点而非方法名。
      * 该结构在所有支持版本均存在, 按项目约定不加 allowFailure。
      */
-    private val methodChattingAdapterOnBindViewHolder by dexMethod {
-        matcher {
-            declaredClass {
-                usingEqStrings("MicroMsg.ChattingDataAdapterV3")
-            }
-            usingEqStrings("_onBindViewHolder[")
-            paramTypes(null, Int::class.java)
-            returnType("void")
-        }
-    }
-
     /**
      * ChattingDataAdapterV3.getItem(int) -> 消息存储对象 (f8/d8/f9/e9, 各版本不同),
      * 用于读取稳定的 `field_msgId` / `field_createTime` / `field_isSend` 字段。
@@ -166,7 +154,7 @@ object MessageEntranceAnimation : ClickableFeature(), IResolveDex {
     }
 
     override fun onEnable() {
-        methodChattingAdapterOnBindViewHolder.hookAfter {
+        WeMessageApi.methodChattingDataAdapterOnBindViewHolder.hookAfter {
             val adapter = thisObject!!
             // 绑定方法参数在所有目标版本均为 (ViewHolder, int)
             val holder = args[0]!!

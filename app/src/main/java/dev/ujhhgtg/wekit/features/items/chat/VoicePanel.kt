@@ -1,5 +1,7 @@
 package dev.ujhhgtg.wekit.features.items.chat
 
+import kotlin.io.path.fileSize
+import kotlin.io.path.inputStream
 import android.content.ContentResolver
 import android.content.Context
 import android.os.Bundle
@@ -11,7 +13,6 @@ import androidx.annotation.StringRes
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.features.items.chat.panel.CloneExample
@@ -44,7 +45,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import java.nio.file.Files
 import java.util.Locale
 import java.util.UUID
 import kotlin.coroutines.resume
@@ -54,9 +54,9 @@ import kotlin.io.path.div
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.writeBytes
 
-internal data class EdgeTtsVoice(val id: String, @StringRes val titleRes: Int)
+data class EdgeTtsVoice(val id: String, @StringRes val titleRes: Int)
 
-internal val EDGE_TTS_VOICES = listOf(
+val EDGE_TTS_VOICES = listOf(
     EdgeTtsVoice("zh-CN-XiaoxiaoNeural", R.string.voice_edge_xiaoxiao),
     EdgeTtsVoice("zh-CN-XiaoyiNeural", R.string.voice_edge_xiaoyi),
     EdgeTtsVoice("zh-CN-YunxiNeural", R.string.voice_edge_yunxi),
@@ -74,14 +74,13 @@ internal val EDGE_TTS_VOICES = listOf(
     EdgeTtsVoice("ja-JP-NanamiNeural", R.string.voice_edge_nanami),
 )
 
-@Feature(
-    id = "语音面板",
-    nameRes = "feature_voice_panel_name",
-    categoryIds = [FeatureCategoryIds.CHAT],
-    descriptionRes = "feature_voice_panel_description",
-)
-object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
+// Entry implementation in ChatFooterHooks.
+object VoicePanel : SwitchFeature() {
 
+    override val technicalId = "语音面板"
+    override val nameRes = R.string.feature_voice_panel_name
+    override val categoryIds = listOf(FeatureCategoryIds.CHAT)
+    override val descriptionRes = R.string.feature_voice_panel_description
     fun openPanel(anchor: View) {
         val context = anchor.context
         showVoicePanelSheet(
@@ -145,7 +144,7 @@ object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
             if (VoicePanelRepository.hasOnlineVoice(packId, item)) return@addToLocal Result.success(Unit)
             resolveVoicePath(item).mapCatching { path ->
                 try {
-                    Files.newInputStream(path.path.asPath).use { input ->
+                    path.path.asPath.inputStream().use { input ->
                         VoicePanelRepository.importOnlineVoice(packId, item, input).getOrThrow()
                     }
                 } finally {
@@ -166,8 +165,8 @@ object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
             resolveVoicePath(item).mapCatching { path ->
                 val source = path.path.asPath
                 try {
-                    Files.newInputStream(source).use { input ->
-                        CloneVoiceRepository.import(name, input, Files.size(source)).getOrThrow()
+                    source.inputStream().use { input ->
+                        CloneVoiceRepository.import(name, input, source.fileSize()).getOrThrow()
                     }
                 } finally {
                     if (path.temporary) source.deleteIfExists()
@@ -352,7 +351,7 @@ object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
         val path = PanelPaths.panelCacheDir / "$prefix-${UUID.randomUUID()}.$extension"
         try {
             generate(path)
-            require(path.isRegularFile() && Files.size(path) > 0L) { localizedChatString(R.string.chat_voice_conversion_empty) }
+            require(path.isRegularFile() && path.fileSize() > 0L) { localizedChatString(R.string.chat_voice_conversion_empty) }
             Result.success(VoicePreview(path.absolutePathString(), temporary = true))
         } catch (error: CancellationException) {
             path.deleteIfExists()
@@ -370,7 +369,7 @@ object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
                 val (voiceBytes, fileName) = CloneVoiceRepository.synthesisInput(voice).getOrThrow()
                 val audio = FunBoxCloneVoiceRepository.synthesize(text, voiceBytes, fileName).getOrThrow()
                 path.writeBytes(audio)
-                require(Files.size(path) > 0L) { localizedChatString(R.string.chat_voice_conversion_empty) }
+                require(path.fileSize() > 0L) { localizedChatString(R.string.chat_voice_conversion_empty) }
                 Result.success(VoicePreview(path.absolutePathString(), temporary = true))
             } catch (error: CancellationException) {
                 path.deleteIfExists()

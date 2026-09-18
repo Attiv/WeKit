@@ -3,26 +3,25 @@ package dev.ujhhgtg.wekit.features.api.core
 import android.content.Context
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.Modifiers
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.data
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.models.MessageInfo
 import dev.ujhhgtg.wekit.features.core.ApiFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.reflection.BString
 import org.luckypray.dexkit.DexKitBridge
 import java.lang.reflect.Modifier
 
-@Feature(
-    id = "微信服务管理服务",
-    nameRes = "feature_we_service_api_name",
-    categoryIds = [FeatureCategoryIds.API],
-    descriptionRes = "feature_we_service_api_description",
-)
 object WeServiceApi : ApiFeature(), IResolveDex {
+
+    override val technicalId = "微信服务管理服务"
+    override val nameRes = R.string.feature_we_service_api_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
+    override val descriptionRes = R.string.feature_we_service_api_description
 
     private val methodServiceManagerGetService by dexMethod {
         matcher {
@@ -64,11 +63,6 @@ object WeServiceApi : ApiFeature(), IResolveDex {
     private val classChatroomService by dexClass {
         matcher {
             usingEqStrings("MicroMsg.ChatroomService", "[isEnableRoomManager]")
-        }
-    }
-    private val methodChatroomStorageGetMemberCount by dexMethod {
-        matcher {
-            usingEqStrings("MicroMsg.ChatroomStorage", "[getMemberCount] init field_memberCount! username:%s count:%s")
         }
     }
     val classImageInfoStorage by dexClass {
@@ -205,7 +199,7 @@ object WeServiceApi : ApiFeature(), IResolveDex {
     val chatroomStorage
         get() =
             chatroomService.reflekt().firstField {
-                type = methodChatroomStorageGetMemberCount.method.declaringClass
+                type = WeConversationApi.methodChatroomStorageGetMemberCount.method.declaringClass
             }.get()!!
 
     fun getServiceByClass(clazz: Class<*>): Any {

@@ -37,7 +37,7 @@ private const val TAG = "HideContacts.Lists"
  * 定时显示 scheduler must be able to undo instantly; a destructive `removeAll` on a list the host
  * retains would make "temporarily show" unable to bring the rows back until WeChat repopulates it.
  */
-internal fun HideContacts.installListHooks() {
+fun HideContacts.installListHooks() {
     installMvvmListHooks()
     installContactCountHook()
     installGroupMemberHooks()
@@ -270,7 +270,7 @@ private fun countHiddenNormalContacts(
  *   filtered copy is equivalent. Identical on 8.0.69/8.0.74/8.0.76, the inheriting UIs are
  *   `SelectDelMemberUI` (删除成员), `SelectAddRoomManagerUI` (添加管理员),
  *   `TransferRoomOwnerUI` (转让群主) and `SeeMemberRecordUI` (群成员记录) — there is **no** invite UI
- *   among them, despite what an earlier version of this comment and the `@Feature` blurb claimed.
+ *   among them, despite what an earlier version of this comment and the feature description claimed.
  *
  * `V6()` returns `ChatroomInfo.z0()`, which **caches** the parsed member list in a field and hands
  * back the same instance every time — so this must never filter in place. A fresh `ArrayList` is

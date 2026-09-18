@@ -6,6 +6,8 @@ import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Parcel
+import android.os.SystemClock
+import androidx.core.graphics.scale
 import com.tencent.mm.api.IEmojiInfo
 import com.tencent.mm.opensdk.modelmsg.WXFileObject
 import com.tencent.mm.opensdk.modelmsg.WXMediaMessage
@@ -19,11 +21,11 @@ import com.tencent.mm.plugin.gif.MMWXGFJNI
 import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.spec.VagueType
-import dev.ujhhgtg.reflekt.spec.typeMatches
 import dev.ujhhgtg.reflekt.utils.Modifiers
 import dev.ujhhgtg.reflekt.utils.createInstance
 import dev.ujhhgtg.reflekt.utils.isBuiltin
 import dev.ujhhgtg.reflekt.utils.makeAccessible
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.data
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
@@ -36,7 +38,6 @@ import dev.ujhhgtg.wekit.features.api.core.models.MessageInfo
 import dev.ujhhgtg.wekit.features.api.core.models.MessageType
 import dev.ujhhgtg.wekit.features.api.net.WeNetSceneApi
 import dev.ujhhgtg.wekit.features.core.ApiFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.AudioUtils
 import dev.ujhhgtg.wekit.utils.HostInfo
@@ -44,6 +45,7 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.collections.emptyHashSet
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.fs.asPath
+import dev.ujhhgtg.wekit.utils.fs.moveReplacing
 import dev.ujhhgtg.wekit.utils.reflection.BString
 import dev.ujhhgtg.wekit.utils.reflection.bool
 import dev.ujhhgtg.wekit.utils.reflection.int
@@ -56,15 +58,13 @@ import org.json.JSONObject
 import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.query.matchers.base.AccessFlagsMatcher
 import org.luckypray.dexkit.result.FieldUsingType
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.lang.reflect.Constructor
-import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.FileTime
@@ -74,27 +74,33 @@ import kotlin.io.path.Path
 import kotlin.io.path.absolutePathString
 import kotlin.io.path.copyTo
 import kotlin.io.path.createDirectories
+import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.div
 import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.inputStream
+import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 import kotlin.io.path.nameWithoutExtension
 import kotlin.io.path.outputStream
 import kotlin.io.path.readBytes
+import kotlin.io.path.setLastModifiedTime
 import kotlin.io.path.writeBytes
 import kotlin.random.Random
 
 
 @SuppressLint("DiscouragedApi")
-@Feature(
-    id = "消息发送服务",
-    nameRes = "feature_we_message_api_name",
-    categoryIds = [FeatureCategoryIds.API],
-    descriptionRes = "feature_we_message_api_description",
-)
 object WeMessageApi : ApiFeature(), IResolveDex {
+
+    override val technicalId = "消息发送服务"
+    override val nameRes = R.string.feature_we_message_api_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
+    override val descriptionRes = R.string.feature_we_message_api_description
+
+    private const val NOTIFICATION_THUMBNAIL_MIN_EDGE_DP = 180
 
     // -------------------------------------------------------------------------------------
     // 基础消息类
@@ -109,7 +115,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             }
         }
     }
-    private val classNetSceneQueue by dexClass {
+    val classNetSceneQueue by dexClass {
         searchPackages("com.tencent.mm.modelbase")
         matcher {
             methods {
@@ -140,15 +146,15 @@ object WeMessageApi : ApiFeature(), IResolveDex {
     val methodGetSendMsgObject by dexMethod(allowMultiple = true) {
         matcher {
             paramCount = 0
-            returnType = classNetSceneObserverOwner.getDescriptorString() ?: ""
+            returnType = classNetSceneObserverOwner.data.name
             modifiers(AccessFlagsMatcher(Modifier.STATIC))
         }
     }
     private val methodPostToQueue by dexMethod {
         searchPackages("com.tencent.mm.modelbase")
         matcher {
-            declaredClass = classNetSceneQueue.getDescriptorString() ?: ""
-            paramTypes(classNetSceneBase.getDescriptorString() ?: "")
+            declaredClass = classNetSceneQueue.data.name
+            paramTypes(classNetSceneBase.data.name)
             returnType = "boolean"
             usingNumbers(0)
         }
@@ -172,9 +178,16 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             paramCount(3)
         }
     }
-    private val ctorNetSceneSendMsgLocation by dexConstructor {
+    private val ctorNetSceneSendMsg by dexConstructor {
         matcher {
+            declaredClass = classNetSceneSendMsg.data.name
             usingEqStrings("MicroMsg.NetSceneSendMsg", "[mergeMsgSource] rawSource:%s args is null:%s flag:%s")
+            addAnyOf {
+                paramTypes("java.lang.String", "java.lang.String", "int", "int", "java.lang.Object")
+            }
+            addAnyOf {
+                paramTypes("java.lang.String", "java.lang.String", "int", "int", "java.lang.Object", "java.lang.String")
+            }
         }
     }
     private val classImportMultiVideo by dexClass {
@@ -232,6 +245,12 @@ object WeMessageApi : ApiFeature(), IResolveDex {
     val classChattingContext by dexClass {
         matcher {
             usingEqStrings("MicroMsg.ChattingContext", "[notifyDataSetChange]")
+        }
+    }
+    val methodChattingContextGetTalker by dexMethod {
+        matcher {
+            declaredClass(classChattingContext.data.name)
+            usingEqStrings("getTalker returns null.")
         }
     }
     val classChattingDataAdapter by dexClass {
@@ -312,7 +331,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
     private val classImageServiceImpl by dexClass(allowFailure = true) {
         matcher {
             usingStrings("MicroMsg.ImgUpload.MsgImgFeatureService")
-            superClass(classMvvmBase.getDescriptorString()!!)
+            superClass(classMvvmBase.data.name)
         }
     }
     private val methodImageSendEntry by dexMethod()
@@ -320,17 +339,12 @@ object WeMessageApi : ApiFeature(), IResolveDex {
     // -------------------------------------------------------------------------------------
     // 语音发送组件
     // -------------------------------------------------------------------------------------
-    private val classVoiceParams by dexClass {
-        matcher {
-            usingEqStrings("toUserName", "fileName", "send_voice_msg")
-        }
-    }
     private val classVoiceNameGen by dexClass(allowFailure = true) {
         matcher {
             usingEqStrings("MicroMsg.VoiceLogic", "startRecord insert voicestg success")
         }
     }
-    private val classVfs by dexClass {
+    val classVfs by dexClass {
         matcher {
             usingStrings("MicroMsg.VFSFileOp", "Cannot resolve path or URI")
         }
@@ -353,22 +367,30 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             }
         }
     }
-    private val classMmKernel by dexClass {
+    val methodChattingDataAdapterOnBindViewHolder by dexMethod {
         matcher {
-            usingStrings("MicroMsg.MMKernel", "Initialize skeleton")
-        }
-    }
-    private val methodMmKernelGetStorage by dexMethod(allowMultiple = true) {
-        matcher {
-            declaredClass(classMmKernel.data.name)
-            modifiers = Modifier.PUBLIC or Modifier.STATIC
-            paramCount = 0
-            usingStrings("mCoreStorage not initialized!")
+            declaredClass {
+                usingEqStrings("MicroMsg.ChattingDataAdapterV3")
+            }
+            usingEqStrings("_onBindViewHolder[")
+            paramTypes(null, Int::class.java)
+            returnType("void")
         }
     }
     private val classVoiceLogic by dexClass {
         matcher {
             usingEqStrings("MicroMsg.VoiceLogic", "startRecord insert voicestg success")
+        }
+    }
+    private val methodSetVoice by dexMethod {
+        matcher {
+            declaredClass = classVoiceLogic.data.name
+            modifiers = Modifier.STATIC
+            returnType = "boolean"
+            addAnyOf { paramTypes("java.lang.String", "int", "int", classMsgInfo.data.name) }
+            addAnyOf {
+                paramTypes("java.lang.String", "int", "int", classMsgInfo.data.name, "java.lang.String")
+            }
         }
     }
     private val methodGetAmrFullPath by dexMethod {
@@ -395,24 +417,6 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             usingEqStrings("MicroMsg.SceneVoiceService", "run() %s")
         }
     }
-
-    private val classVoiceServiceInterface by dexClass()
-
-    private val classVoiceServiceImpl by dexClass {
-        matcher {
-            usingEqStrings(
-                "MicroMsg.VoiceMsgAsyncSendFSC",
-                "sendAsync only support BaseSendMsgTask Type"
-            )
-        }
-    }
-//    private val methodSendVoice by dexMethod(allowMultiple = true) {
-//        matcher {
-//            declaredClass(classVoiceServiceImpl.clazz)
-//            paramCount = 1
-//            returnType = "void"
-//        }
-//    }
 
     // -------------------------------------------------------------------------------------
     // 运行时缓存
@@ -460,15 +464,6 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             returnType = String::class
         }.self
     }
-    private val setVoiceMethod: Method by lazy {
-        classVoiceNameGen.reflekt().firstMethod {
-            parameterCount { it == 3 || it == 4 }
-            parameters {
-                it[0] == BString && it[1].typeMatches(int) && it[2].typeMatches(int)
-            }
-            returnType = bool
-        }.self
-    }
     private var storageAccPathMethod: Method? = null  // b0.e (动态解析)
     private val pathGenMethod: Method by lazy {
         classPathUtil.reflekt().firstMethod {
@@ -477,9 +472,6 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             returnType = String::class
         }.self
     }
-    private lateinit var voiceDurationField: Field     // 语音时长字段
-    private lateinit var voiceOffsetField: Field       // 偏移量字段
-
     private const val TAG = "WeMessageApi"
     private const val MAX_EMOJI_DIMENSION = 1024
     private const val STICKER_SEND_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000L
@@ -690,11 +682,6 @@ object WeMessageApi : ApiFeature(), IResolveDex {
                     imageFeatureServiceNewPathProbes.joinToString { it.descriptor }
             )
         }
-
-        val targetInterface = classVoiceServiceImpl.data.interfaces.first {
-            !it.name.startsWith("ki0.")
-        }
-        classVoiceServiceInterface.setDescriptor(targetInterface.name)
     }
 
     fun convertMsgInfoInstanceFromContentValues(contentValues: ContentValues): Any {
@@ -910,7 +897,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             )
             return false
         }
-        val relationInserted = result.localMsgId?.takeIf { it > 0L }?.let { localMsgId ->
+        val relationInserted = result.localMsgId?.let { localMsgId ->
             runCatching { insertQuoteRelation(localMsgId, source) }.getOrElse {
                 WeLogger.e(
                     TAG,
@@ -924,13 +911,13 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             TAG,
                 "sendNativeQuote: destination=$talker, sourceMsgId=${source.id}, " +
                 "sourceMsgSvrId=${source.serverId}, sourceTalker=${source.talker}, " +
-                "contentLength=${content.length}, statusCode=${result.statusCode}, " +
+                "contentLength=${content.length}, statusCode=0, " +
                 "localMsgId=${result.localMsgId}, relationInserted=$relationInserted",
         )
         if (relationInserted == false) {
             WeLogger.w(TAG, "sendNativeQuote: message accepted without MsgQuote relation")
         }
-        return accepted
+        return true
     }
 
     fun sendQuoteText(talker: String, quotedMsgSvrId: Long, content: String): Boolean {
@@ -1123,7 +1110,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
 
     private fun inspectStickerFile(path: Path): StickerFileInfo {
         val header = ByteArray(12)
-        val headerSize = Files.newInputStream(path).use { input ->
+        val headerSize = path.inputStream().use { input ->
             var offset = 0
             while (offset < header.size) {
                 val read = input.read(header, offset, header.size - offset)
@@ -1201,7 +1188,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             ?: "img"
         val retained = KnownPaths.moduleCache /
                 "sticker-send-image-${System.currentTimeMillis()}-${UUID.randomUUID()}.$extension"
-        Files.copy(source, retained, StandardCopyOption.REPLACE_EXISTING)
+        source.copyTo(retained, StandardCopyOption.REPLACE_EXISTING)
         WeLogger.i(TAG, "sticker send route: ordinary image ($reason), source retained in cache")
         return sendImage(toUser, retained.absolutePathString()).also { success ->
             if (!success) retained.deleteIfExists()
@@ -1211,13 +1198,11 @@ object WeMessageApi : ApiFeature(), IResolveDex {
     private fun cleanupStickerSendCache() {
         val cutoff = System.currentTimeMillis() - STICKER_SEND_CACHE_MAX_AGE_MS
         runCatching {
-            Files.list(KnownPaths.moduleCache).use { paths ->
-                paths.filter {
-                    it.isRegularFile() &&
-                            it.name.startsWith("sticker-send-") &&
-                            Files.getLastModifiedTime(it).toMillis() < cutoff
-                }.forEach(Path::deleteIfExists)
-            }
+            KnownPaths.moduleCache.listDirectoryEntries().filter {
+                it.isRegularFile() &&
+                    it.name.startsWith("sticker-send-") &&
+                    it.getLastModifiedTime().toMillis() < cutoff
+            }.forEach(Path::deleteIfExists)
         }.onFailure { WeLogger.w(TAG, "failed to clean stale sticker send cache", it) }
     }
 
@@ -1294,7 +1279,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         return try {
             WeLogger.i(TAG, "sending location: $x,$y to $toUser")
             val locJson = """{"msg":{"location":{"poiname":"$poiName","label":"$label","x":"$x","y":"$y","scale":"$scale"}}}"""
-            val netScene = ctorNetSceneSendMsgLocation.newInstance(toUser, locJson, 1, 0, null)
+            val netScene = createSendMsgScene(toUser, locJson)
             WeNetSceneApi.sendNetScene(netScene)
             true
         } catch (e: Exception) {
@@ -1312,7 +1297,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             json2.put("nickname", nickname)
             json2.put("certflag", if (cardWxId.startsWith("gh_")) 4928270286903575946L else 4928270274018674058L)
             json1.put("msg", json2)
-            val netScene = ctorNetSceneSendMsgLocation.newInstance(toUser, json1.toString(), 1, 0, null)
+            val netScene = createSendMsgScene(toUser, json1.toString())
             WeNetSceneApi.sendNetScene(netScene)
             true
         } catch (e: Exception) {
@@ -1355,19 +1340,13 @@ object WeMessageApi : ApiFeature(), IResolveDex {
                 returnType = Boolean::class
             }.self
         }
-
-        classVoiceParams.reflekt().apply {
-            val intFields = fields { type = Int::class }
-            voiceDurationField = intFields[0].self
-            voiceOffsetField = intFields[1].self
-        }
     }
 
     /**
      * 动态解析 AccPath 获取方法
      */
     private fun getAccPath(): String {
-        val storageObj = methodMmKernelGetStorage.method.invoke(null)
+        val storageObj = WeDatabaseApi.methodGetStorage.method.invoke(null)
             ?: error("Kernel.getStorage() failed (returned null)")
 
         if (storageAccPathMethod != null) {
@@ -1488,12 +1467,23 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         }
     }
 
+    private fun createSendMsgScene(toUser: String, content: String): Any {
+        val constructor = ctorNetSceneSendMsg.constructor
+        // The six-argument signature accepts an explicit msgsource. Empty preserves
+        // the host-generated source used by the original five-argument constructor.
+        return if (constructor.parameterCount == 6) {
+            constructor.newInstance(toUser, content, 1, 0, null, "")
+        } else {
+            constructor.newInstance(toUser, content, 1, 0, null)
+        }
+    }
+
     /** 发送文本消息 */
     fun sendText(toUser: String, text: String): Boolean {
         return try {
             WeLogger.i(TAG, "sending text message: $text")
             val sendMsgObject = methodGetSendMsgObject.method.invoke(null) ?: return false
-            val msgObj = classNetSceneSendMsg.clazz.createInstance(toUser, text, 1, 0, null)
+            val msgObj = createSendMsgScene(toUser, text)
             methodPostToQueue.method.invoke(sendMsgObject, msgObj) as? Boolean ?: false
         } catch (e: Exception) {
             WeLogger.e(TAG, "failed to send text message", e)
@@ -1542,54 +1532,18 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             }.invokeStatic(msgInfo.instance)
     }
 
+    private fun setVoice(fileName: String, durationMs: Int): Boolean {
+        val method = methodSetVoice.method
+        return when (method.parameterCount) {
+            4 -> method.invoke(null, fileName, durationMs, 0, null)
+            // Empty msgsource lets VoiceLogic generate the normal outgoing source.
+            5 -> method.invoke(null, fileName, durationMs, 0, null, "")
+            else -> error("unsupported VoiceLogic.setVoice signature: $method")
+        } as Boolean
+    }
+
     fun sendVoice(toUser: String, path: String, durationMs: Int): Boolean {
         var succeeded = runCatching {
-//             // 尝试通过 ServiceManager 获取
-//             var finalServiceObj: Any? = null
-//             if (getServiceMethod != null) {
-//                 try {
-//                     finalServiceObj = getServiceMethod!!.invoke(null, classVoiceServiceInterface.clazz)
-//                 } catch (e: Exception) {
-//                     WeLogger.e(TAG, "failed to retrieve ServiceManager, trying singleton fallback", e)
-//                 }
-//             }
-//
-//             // 尝试单例 Fallback
-//             if (finalServiceObj == null) {
-//                 val implClass = classVoiceServiceImpl.clazz
-//                 val instanceField = implClass.declaredFields.find {
-//                     it.name == "INSTANCE" || it.type == implClass
-//                 }
-//                 if (instanceField != null) {
-//                     instanceField.makeAccessible()
-//                     finalServiceObj = instanceField.get(null)
-//                 }
-//             }
-//
-//             if (finalServiceObj == null) error("failed to retrieve VoiceService instance")
-//
-//             // 准备文件
-//             val fileName = voiceNameGenMethod.invoke(null, selfCustomWxId, "amr_") as? String
-//                 ?: error("VoiceName Gen Failed")
-//             val accPath = getAccPath()
-//             val voice2Root = if (accPath.endsWith("/")) "${accPath}voice2/" else "$accPath/voice2/"
-//             val destFullPath =
-//                 pathGenMethod.invoke(null, voice2Root, "msg_", fileName, ".amr", 2) as? String
-//                     ?: error("Path Gen Failed")
-//
-//             if (!copyFileViaVfs(path, destFullPath)) return false
-//
-//             // 构造任务
-//             val paramsObj = classVoiceParams.clazz.createInstance(toUser, fileName)
-//             voiceDurationField.set(paramsObj, durationMs)
-//             voiceOffsetField.set(paramsObj, 0)
-//
-//             val taskObj = voiceTaskConstructor.newInstance(paramsObj)
-//                 ?: error("failed to construct voice task")
-//
-//             methodSendVoice.method.invoke(finalServiceObj, taskObj)
-//             WeLogger.i(TAG, "sent voice (Service method): $fileName")
-
             // 准备文件
             val fileName = voiceNameGenMethod.invoke(getReceiverForMethod(voiceNameGenMethod), toUser, "amr_") as? String
                 ?: error("failed to generate voice name")
@@ -1603,12 +1557,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
 
             // 设置语音信息
             val finalDurationMs = durationMs.coerceIn(1, 60_000)
-            val setVoiceReceiver = getReceiverForMethod(setVoiceMethod)
-            val setVoiceResult = if (setVoiceMethod.parameterCount == 4) {
-                setVoiceMethod.invoke(setVoiceReceiver, fileName, finalDurationMs, 0, null)
-            } else {
-                setVoiceMethod.invoke(setVoiceReceiver, fileName, finalDurationMs, 0)
-            } as? Boolean ?: false
+            val setVoiceResult = setVoice(fileName, finalDurationMs)
 
             if (!setVoiceResult) {
                 WeLogger.w(TAG, "VoiceLogic.setVoice returned false, still starting voice service: fileName=$fileName, target=$toUser")
@@ -1628,22 +1577,11 @@ object WeMessageApi : ApiFeature(), IResolveDex {
                 .invokeStatic(toUser, "amr_") as String
             val fullPath = getVoiceFullPath(partialPath)
 
-            Files.copy(Path(path), Path(fullPath), StandardCopyOption.REPLACE_EXISTING)
+            Path(path).copyTo(Path(fullPath), StandardCopyOption.REPLACE_EXISTING)
 
             val actualDuration = if (durationMs > 60000) 60000 else durationMs
 
-            val target = classVoiceLogic.clazz.reflekt()
-                .firstMethod {
-                    parameters {
-                        it[0] == BString && it[1] == int && it[2] == int
-                    }
-                    returnType = bool
-                }.self
-            if (target.parameterCount == 4) {
-                target.invoke(null, partialPath, actualDuration, 0, null)
-            } else {
-                target.invoke(null, partialPath, actualDuration, 0)
-            }
+            setVoice(partialPath, actualDuration)
 
             val service = classSceneVoiceService.clazz.reflekt()
                 .firstMethod {
@@ -1751,6 +1689,10 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             WeLogger.e(TAG, "VFS copy failed", e)
             false
         }
+    }
+
+    private fun readFileViaVfs(path: String): ByteArray? {
+        return (vfsReadMethod.invoke(null, path) as? InputStream)?.use { it.readBytes() }
     }
 
     fun shareWebpage(
@@ -2017,6 +1959,13 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         }
     }
 
+    val methodLoadEmojiFile by dexMethod {
+        matcher {
+            usingEqStrings("MicroMsg.EmojiLoader", "load emoji file ")
+            paramTypes("com.tencent.mm.storage.emotion.EmojiInfo", "boolean", null)
+        }
+    }
+
     // com.tencent.mm.pluginsdk.model.app 里的 "自动下载文件" Runnable (8069 为 b0, 8074 为 c0),
     // 构造参数为一个 MsgInfo, run() 会解析 appmsg XML、创建 appattach 行并向 CDN 发起下载任务。
     // 这正是微信里点击文件气泡"下载/缓存"所走的逻辑。
@@ -2048,9 +1997,14 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         val bigImgPath: String,
         val hevcPath: String?,
         val midImgPath: String?,
+        val thumbImgPath: String?,
+        val offset: Long,
+        val totalLen: Long,
         /** reserved1: 若 > 0, 表示存在"原图"行, 值为原图行的 id (仅基础行有意义)。 */
         val hdImgId: Long,
-    )
+    ) {
+        val isComplete: Boolean get() = offset == totalLen
+    }
 
     private fun ImgInfoRow(cursor: Cursor) = ImgInfoRow(
         localId = cursor.getLong(0),
@@ -2058,10 +2012,14 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         bigImgPath = cursor.getString(2) ?: "",
         hevcPath = cursor.getString(3),
         midImgPath = cursor.getString(4),
-        hdImgId = cursor.getLong(5),
+        thumbImgPath = cursor.getString(5),
+        offset = cursor.getLong(6),
+        totalLen = cursor.getLong(7),
+        hdImgId = cursor.getLong(8),
     )
 
-    private const val IMG_INFO_COLUMNS = "id, msgTalker, bigImgPath, hevcPath, midImgPath, reserved1"
+    private const val IMG_INFO_COLUMNS =
+        "id, msgTalker, bigImgPath, hevcPath, midImgPath, thumbImgPath, offset, totalLen, reserved1"
 
     private fun queryImgInfoRow(msgSvrId: Long): ImgInfoRow? {
         val rows = WeDatabaseApi.rawQuery(
@@ -2084,12 +2042,202 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         }
     }
 
+    private fun queryImgInfoRowUntil(
+        msgSvrId: Long,
+        deadlineElapsedRealtime: Long,
+        pollIntervalMillis: Long,
+    ): ImgInfoRow? {
+        while (SystemClock.elapsedRealtime() < deadlineElapsedRealtime) {
+            queryImgInfoRow(msgSvrId)?.let { return it }
+            sleepForPoll(deadlineElapsedRealtime, pollIntervalMillis)
+        }
+        return null
+    }
+
+    private fun sleepForPoll(deadlineElapsedRealtime: Long, pollIntervalMillis: Long) {
+        val remaining = deadlineElapsedRealtime - SystemClock.elapsedRealtime()
+        if (remaining > 0L) SystemClock.sleep(minOf(pollIntervalMillis, remaining))
+    }
+
+    private val imageThumbnailPathMethod by lazy {
+        WeServiceApi.imageInfoStorage.reflekt().firstMethod {
+            parameters {
+                it.size == 3 &&
+                        it[0] == classMsgInfo.clazz &&
+                        it[1].isEnum &&
+                        it[2] == String::class.java
+            }
+            returnType = String::class.java
+        }.self
+    }
+
+    private val imageThumbnailType by lazy {
+        imageThumbnailPathMethod.parameterTypes[1].enumConstants!!.single {
+            (it as Enum<*>).name == "THUMB_IMAGE"
+        }
+    }
+
+    data class NotificationMediaFile(val path: Path, val mimeType: String)
+
+    private fun detectImageMime(bytes: ByteArray): String? = when {
+        bytes.size >= 3 && bytes.hasMagic(0, 0xff, 0xd8, 0xff) -> "image/jpeg"
+        bytes.size >= 8 && bytes.hasMagic(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a) -> "image/png"
+        bytes.size >= 3 && bytes.hasMagic(0, 0x47, 0x49, 0x46) -> "image/gif"
+        bytes.size >= 12 &&
+                bytes.hasMagic(0, 0x52, 0x49, 0x46, 0x46) &&
+                bytes.hasMagic(8, 0x57, 0x45, 0x42, 0x50) -> "image/webp"
+
+        else -> null
+    }
+
+    private fun extensionForImageMime(mimeType: String): String = when (mimeType) {
+        "image/jpeg" -> "jpg"
+        "image/png" -> "png"
+        "image/gif" -> "gif"
+        "image/webp" -> "webp"
+        else -> error("unsupported image MIME type: $mimeType")
+    }
+
+    private fun detectImageMime(path: Path): String? {
+        if (!path.isRegularFile() || path.fileSize() <= 0L) return null
+        val header = ByteArray(12)
+        val size = path.inputStream().use { it.read(header) }
+        return detectImageMime(if (size == header.size) header else header.copyOf(size.coerceAtLeast(0)))
+    }
+
+    private fun reuseNotificationMedia(destination: Path): NotificationMediaFile? {
+        val mimeType = detectImageMime(destination) ?: return null
+        destination.setLastModifiedTime(FileTime.fromMillis(System.currentTimeMillis()))
+        return NotificationMediaFile(destination, mimeType)
+    }
+
+    private fun materializeImageBytes(
+        sourceBytes: ByteArray,
+        destination: Path,
+        deadlineElapsedRealtime: Long,
+        minimumEdgePixels: Int? = null,
+    ): NotificationMediaFile? {
+        reuseNotificationMedia(destination)?.let { return it }
+        if (SystemClock.elapsedRealtime() >= deadlineElapsedRealtime) return null
+
+        var bytes = MMWXGFJNI.wxam2PicBuf(
+            sourceBytes,
+            0,
+            MMWXGFJNI.WXAM_SCENE_MISC,
+        ) ?: sourceBytes
+        var mimeType = detectImageMime(bytes) ?: return null
+        if (minimumEdgePixels != null && mimeType != "image/gif") {
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            try {
+                val shortestEdge = minOf(bitmap.width, bitmap.height)
+                if (shortestEdge in 1 until minimumEdgePixels) {
+                    val scale = minimumEdgePixels.toFloat() / shortestEdge
+                    val scaled = bitmap.scale((bitmap.width * scale).toInt(), (bitmap.height * scale).toInt())
+                    try {
+                        val output = ByteArrayOutputStream()
+                        val format = if (mimeType == "image/jpeg") {
+                            Bitmap.CompressFormat.JPEG
+                        } else {
+                            Bitmap.CompressFormat.PNG
+                        }
+                        check(scaled.compress(format, 90, output)) {
+                            "failed to scale notification thumbnail"
+                        }
+                        bytes = output.toByteArray()
+                        mimeType = if (format == Bitmap.CompressFormat.JPEG) {
+                            "image/jpeg"
+                        } else {
+                            "image/png"
+                        }
+                    } finally {
+                        if (scaled !== bitmap) scaled.recycle()
+                    }
+                }
+            } finally {
+                bitmap.recycle()
+            }
+        }
+        if (SystemClock.elapsedRealtime() >= deadlineElapsedRealtime) return null
+        destination.parent.createDirectories()
+
+        var temporary: Path? = createTempFile(destination.parent, ".${destination.name}.", ".tmp")
+        try {
+            temporary!!.writeBytes(bytes)
+            temporary.moveReplacing(destination)
+            temporary = null
+            return NotificationMediaFile(destination, mimeType)
+        } finally {
+            temporary?.deleteIfExists()
+        }
+    }
+
+    fun materializeNotificationThumbnail(
+        message: MessageInfo,
+        destination: Path,
+        deadlineElapsedRealtime: Long,
+    ): NotificationMediaFile? {
+        reuseNotificationMedia(destination)?.let { return it }
+        var previousPath: String? = null
+        var previousBytes: ByteArray? = null
+
+        while (SystemClock.elapsedRealtime() < deadlineElapsedRealtime) {
+            val thumbImgPath = queryImgInfoRow(message.serverId)?.thumbImgPath
+            if (!thumbImgPath.isNullOrEmpty()) {
+                val resolvedPath = imageThumbnailPathMethod.invoke(
+                    WeServiceApi.imageInfoStorage,
+                    message.instance,
+                    imageThumbnailType,
+                    thumbImgPath,
+                ) as String?
+                val sourceBytes = resolvedPath?.let { path ->
+                    runCatching { readFileViaVfs(path) }.getOrNull()
+                }
+                if (sourceBytes != null) {
+                    if (resolvedPath == previousPath && sourceBytes.contentEquals(previousBytes)) {
+                        materializeImageBytes(
+                            sourceBytes,
+                            destination,
+                            deadlineElapsedRealtime,
+                            minimumEdgePixels = (
+                                    HostInfo.application.resources.displayMetrics.density *
+                                            NOTIFICATION_THUMBNAIL_MIN_EDGE_DP
+                                    ).toInt(),
+                        )?.let { return it }
+                    }
+                    previousPath = resolvedPath
+                    previousBytes = sourceBytes
+                }
+            }
+            sleepForPoll(deadlineElapsedRealtime, 50L)
+        }
+        return null
+    }
+
+    fun materializeNotificationLargeImage(
+        msgSvrId: Long,
+        destination: Path,
+        deadlineElapsedRealtime: Long,
+    ): NotificationMediaFile? {
+        reuseNotificationMedia(destination)?.let { return it }
+        val source = ensureImageCachedFile(
+            msgSvrId,
+            deadlineElapsedRealtime,
+            pollIntervalMillis = 50L,
+        ) ?: return null
+        if (SystemClock.elapsedRealtime() >= deadlineElapsedRealtime) return null
+        val sourceBytes = runCatching {
+            readFileViaVfs(source.absolutePathString())
+        }.getOrNull() ?: return null
+        return materializeImageBytes(sourceBytes, destination, deadlineElapsedRealtime)
+    }
+
     /**
      * 解析 ImgInfo2 行对应的、已真正落地到 image2/ 的大图文件。
      * 微信可能把大图存为 bigImgPath / hevcPath / midImgPath 其中之一 (原图/HEVC 场景),
      * 因此逐个尝试并要求文件确实存在且非空。
      */
     private fun resolveExistingImageFile(row: ImgInfoRow): Path? {
+        if (!row.isComplete) return null
         return listOfNotNull(row.bigImgPath, row.hevcPath, row.midImgPath)
             .filter { it.isNotEmpty() && !it.startsWith("SERVERID://") }
             .firstNotNullOfOrNull { name ->
@@ -2108,21 +2256,41 @@ object WeMessageApi : ApiFeature(), IResolveDex {
      * 未下载的行也会读到 1; 微信内部判定完成用的是 totalLen==offset。同理 bigImgPath 被下载服务
      * 在真正写入文件字节 *之前* 就从 SERVERID:// 改写为最终文件名, 所以只能以磁盘上文件是否存在为准。
      */
-    private fun ensureImageCachedFile(msgSvrId: Long): Path? {
-        val baseRow = queryImgInfoRow(msgSvrId) ?: return null
+    private fun ensureImageCachedFile(
+        msgSvrId: Long,
+        deadlineElapsedRealtime: Long,
+        pollIntervalMillis: Long,
+    ): Path? {
+        val baseRow = queryImgInfoRowUntil(
+            msgSvrId,
+            deadlineElapsedRealtime,
+            pollIntervalMillis,
+        ) ?: return null
 
         // 有原图行则优先下载原图, 否则退回基础行
-        val targetRow = baseRow.hdImgId.takeIf { it > 0 }
-            ?.let { queryImgInfoRowById(it) }
-            ?.also { WeLogger.i(TAG, "image has original (hdImgId=${baseRow.hdImgId}), downloading original") }
-            ?: baseRow
+        val targetRow = if (baseRow.hdImgId > 0L) {
+            queryImgInfoRowById(baseRow.hdImgId)
+                ?.also {
+                    WeLogger.i(
+                        TAG,
+                        "image has original (hdImgId=${baseRow.hdImgId}), downloading original",
+                    )
+                }
+                ?: baseRow
+        } else {
+            baseRow
+        }
 
         // 已在磁盘上则直接返回
         resolveExistingImageFile(targetRow)?.let { return it }
 
         // 触发 CDN 下载, 轮询直到文件真正落地。talker 用基础行的 (原图行可能未存 msgTalker)。
         if (!triggerDownload(targetRow.localId, targetRow.talker.ifEmpty { baseRow.talker })) return null
-        return pollUntilImageFileExists(targetRow.localId)
+        return pollUntilImageFileExists(
+            targetRow.localId,
+            deadlineElapsedRealtime,
+            pollIntervalMillis,
+        )
     }
 
     /**
@@ -2132,7 +2300,11 @@ object WeMessageApi : ApiFeature(), IResolveDex {
      */
     fun cacheImage(msgSvrId: Long): String? {
         return try {
-            ensureImageCachedFile(msgSvrId)?.absolutePathString()
+            ensureImageCachedFile(
+                msgSvrId,
+                SystemClock.elapsedRealtime() + 120_000L,
+                pollIntervalMillis = 1_000L,
+            )?.absolutePathString()
         } catch (e: Exception) {
             WeLogger.e(TAG, "cacheImage failed", e)
             null
@@ -2145,7 +2317,11 @@ object WeMessageApi : ApiFeature(), IResolveDex {
      */
     fun downloadImage(msgSvrId: Long): String? {
         return try {
-            val file = ensureImageCachedFile(msgSvrId) ?: return null
+            val file = ensureImageCachedFile(
+                msgSvrId,
+                SystemClock.elapsedRealtime() + 120_000L,
+                pollIntervalMillis = 1_000L,
+            ) ?: return null
             decodeAndSave(file)
         } catch (e: Exception) {
             WeLogger.e(TAG, "downloadImage failed", e)
@@ -2153,7 +2329,7 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         }
     }
 
-    private val methodToggleMessageSelection by dexMethod {
+    val methodToggleMessageSelection by dexMethod {
         matcher {
             declaredClass(classChattingDataAdapter.data.name)
             usingNumbers(100)
@@ -2190,10 +2366,13 @@ object WeMessageApi : ApiFeature(), IResolveDex {
     }
 
     /** 轮询直到该 ImgInfo2 行的图片文件真正落地到磁盘 (以文件存在为准, 而非 iscomplete 标志)。 */
-    private fun pollUntilImageFileExists(imgLocalId: Long): Path? {
-        val deadline = System.currentTimeMillis() + 120_000
-        while (System.currentTimeMillis() < deadline) {
-            Thread.sleep(1000)
+    private fun pollUntilImageFileExists(
+        imgLocalId: Long,
+        deadlineElapsedRealtime: Long,
+        pollIntervalMillis: Long,
+    ): Path? {
+        while (SystemClock.elapsedRealtime() < deadlineElapsedRealtime) {
+            sleepForPoll(deadlineElapsedRealtime, pollIntervalMillis)
             val row = queryImgInfoRowById(imgLocalId) ?: continue
             resolveExistingImageFile(row)?.let { return it }
         }
@@ -2227,21 +2406,28 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         if (bigImgPath.length < 4) return null
         val microMsgPath = HostInfo.application.filesDir.asPath.parent / "MicroMsg"
         val accountDir = microMsgPath.listDirectoryEntries()
-            .filter { Files.isDirectory(it) && it.fileName.toString().length == 32 }
-            .maxByOrNull { Files.getLastModifiedTime(it).toMillis() }
+            .filter { it.isDirectory() && it.fileName.toString().length == 32 }
+            .maxByOrNull { it.getLastModifiedTime().toMillis() }
             ?: return null
         return accountDir / "image2" / bigImgPath.take(2) / bigImgPath.substring(2, 4) / bigImgPath
     }
 
     /**
-     * 根据 md5 解密贴纸, 转为 GIF 并写入指定文件。
+     * 根据 md5 解密贴纸；WXGF 转为 GIF，标准图片格式保持原数据。
      * @return 保存后的文件路径, 失败返回 null
      */
-    fun decodeStickerToFile(md5: String, destination: Path): Path? {
+    fun decodeStickerToFile(md5: String, destination: Path): Path? =
+        decodeStickerToFile(md5, destination, logFailure = true)
+
+    private fun decodeStickerToFile(
+        md5: String,
+        destination: Path,
+        logFailure: Boolean,
+    ): Path? {
         var temporary: Path? = null
         return try {
-            if (destination.isRegularFile() && destination.fileSize() > 0L) {
-                Files.setLastModifiedTime(destination, FileTime.fromMillis(System.currentTimeMillis()))
+            if (detectImageMime(destination) != null) {
+                destination.setLastModifiedTime(FileTime.fromMillis(System.currentTimeMillis()))
                 return destination
             }
 
@@ -2259,50 +2445,113 @@ object WeMessageApi : ApiFeature(), IResolveDex {
                     returnType = ByteArray::class
                 }
                 .invoke(emojiInfo) as ByteArray
-            val gifBytes = MMWXGFJNI.nativeWxamToGif(encryptedBytes)
-            check(gifBytes.isNotEmpty()) { "converted sticker GIF is empty" }
+            val stickerBytes = if (MMWXGFJNI.isWxGF(encryptedBytes, encryptedBytes.size)) {
+                MMWXGFJNI.nativeWxamToGif(encryptedBytes)
+            } else {
+                encryptedBytes
+            }
+            check(detectImageMime(stickerBytes) != null) { "failed to decode sticker image" }
 
-            temporary = Files.createTempFile(destination.parent, ".${destination.name}.", ".tmp")
-            temporary.outputStream().use { output -> output.write(gifBytes) }
+            temporary = createTempFile(destination.parent, ".${destination.name}.", ".tmp")
+            temporary.outputStream().use { output -> output.write(stickerBytes) }
             check(temporary.isRegularFile() && temporary.fileSize() > 0L) {
                 "temporary sticker GIF is empty"
             }
 
-            try {
-                Files.move(
-                    temporary,
-                    destination,
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE,
-                )
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING)
-            }
+            temporary.moveReplacing(destination)
             temporary = null
             check(destination.isRegularFile() && destination.fileSize() > 0L) {
                 "final sticker GIF is empty"
             }
             destination
         } catch (error: Exception) {
-            WeLogger.e(TAG, "decodeStickerToFile failed for md5=$md5", error)
+            if (logFailure) WeLogger.e(TAG, "decodeStickerToFile failed for md5=$md5", error)
             null
         } finally {
             temporary?.deleteIfExists()
         }
     }
 
-    /**
-     * 根据 md5 解密贴纸, 转为 GIF 并保存到 Download/WeKit/。
-     * @return 保存后的文件路径, 失败返回 null
-     */
-    fun saveStickerByMd5(md5: String, fileName: String? = null): String? {
-        val outPath = KnownPaths.downloads /
-                (fileName ?: "sticker_${System.currentTimeMillis()}.gif")
-        return decodeStickerToFile(md5, outPath)?.absolutePathString()
+    fun materializeNotificationSticker(
+        md5: String,
+        destination: Path,
+        deadlineElapsedRealtime: Long,
+        wait: Boolean,
+    ): NotificationMediaFile? {
+        decodeStickerToFile(md5, destination, logFailure = false)?.let {
+            return NotificationMediaFile(it, detectImageMime(it)!!)
+        }
+        if (!wait) return null
+
+        startStickerLoad(md5)
+        do {
+            if (SystemClock.elapsedRealtime() >= deadlineElapsedRealtime) {
+                WeLogger.w(TAG, "notification sticker was not ready before deadline: $md5")
+                return null
+            }
+            decodeStickerToFile(md5, destination, logFailure = false)?.let {
+                if (SystemClock.elapsedRealtime() >= deadlineElapsedRealtime) return null
+                return NotificationMediaFile(it, detectImageMime(it)!!)
+            }
+            sleepForPoll(deadlineElapsedRealtime, 50L)
+        } while (true)
+    }
+
+    private fun startStickerLoad(md5: String) {
+        val loadMethod = methodLoadEmojiFile.method
+        val callbackType = loadMethod.parameterTypes[2]
+        val callback = Proxy.newProxyInstance(
+            callbackType.classLoader,
+            arrayOf(callbackType),
+        ) { proxy, callbackMethod, args ->
+            when (callbackMethod.name) {
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.get(0)
+                "toString" -> "WeKitNotificationEmojiLoadCallback"
+                else -> null
+            }
+        }
+        val receiver = if (Modifier.isStatic(loadMethod.modifiers)) {
+            null
+        } else {
+            loadMethod.declaringClass.reflekt().firstField {
+                modifiers(Modifiers.STATIC)
+                type = loadMethod.declaringClass
+            }.getStatic()!!
+        }
+        loadMethod.invoke(
+            receiver,
+            WeServiceApi.getEmojiInfoByMd5(md5),
+            true,
+            callback,
+        )
     }
 
     /**
-     * 根据 msgSvrId 解密贴纸, 转为 GIF 并保存到 Download/WeKit/。
+     * 根据 md5 解密贴纸, WXGF 转 GIF，标准图片保持原格式并保存到 Download/WeKit/。
+     * @return 保存后的文件路径, 失败返回 null
+     */
+    fun saveStickerByMd5(md5: String, fileName: String? = null): String? {
+        val temporary = KnownPaths.downloads / ".sticker-${UUID.randomUUID()}.media"
+        return try {
+            val decoded = decodeStickerToFile(md5, temporary) ?: return null
+            val mimeType = detectImageMime(decoded) ?: return null
+            val baseName = fileName?.substringBeforeLast('.', fileName)
+                ?: "sticker_${System.currentTimeMillis()}"
+            val destination = KnownPaths.downloads /
+                    "$baseName.${extensionForImageMime(mimeType)}"
+            decoded.moveReplacing(destination)
+            destination.absolutePathString()
+        } catch (error: Exception) {
+            WeLogger.e(TAG, "saveStickerByMd5 failed for md5=$md5", error)
+            null
+        } finally {
+            temporary.deleteIfExists()
+        }
+    }
+
+    /**
+     * 根据 msgSvrId 解密贴纸并以合适图片格式保存到 Download/WeKit/。
      * @return 保存后的文件路径, 失败返回 null
      */
     fun cacheAndSaveSticker(msgSvrId: Long): String? {

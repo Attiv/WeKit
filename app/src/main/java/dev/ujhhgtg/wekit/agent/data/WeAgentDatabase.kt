@@ -21,7 +21,6 @@ import dev.ujhhgtg.wekit.agent.data.dao.SessionDao
 import dev.ujhhgtg.wekit.agent.data.dao.SettingDao
 import dev.ujhhgtg.wekit.agent.data.dao.SystemPromptDao
 import dev.ujhhgtg.wekit.agent.data.dao.ToolCallDao
-import dev.ujhhgtg.wekit.agent.data.dao.ToolPermissionDao
 import dev.ujhhgtg.wekit.agent.data.dao.TriggerDao
 import dev.ujhhgtg.wekit.agent.data.dao.BridgeToolAuditDao
 import dev.ujhhgtg.wekit.agent.data.entity.ConditionalPromptEntity
@@ -37,7 +36,6 @@ import dev.ujhhgtg.wekit.agent.data.entity.SessionEntity
 import dev.ujhhgtg.wekit.agent.data.entity.SettingEntity
 import dev.ujhhgtg.wekit.agent.data.entity.SystemPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ToolCallEntity
-import dev.ujhhgtg.wekit.agent.data.entity.ToolPermissionEntity
 import dev.ujhhgtg.wekit.agent.data.entity.TriggerEntity
 import dev.ujhhgtg.wekit.agent.data.entity.BridgeToolAuditEntity
 import dev.ujhhgtg.wekit.utils.HostInfo
@@ -50,7 +48,6 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
         MessageEntity::class,
         ToolCallEntity::class,
         ProviderEntity::class,
-        ToolPermissionEntity::class,
         ModelProviderEntity::class,
         ModelEntity::class,
         SystemPromptEntity::class,
@@ -63,7 +60,7 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
         ExternalServiceEntity::class,
         BridgeToolAuditEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 9, to = 10), // adds external_services table
@@ -76,7 +73,6 @@ abstract class WeAgentDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun toolCallDao(): ToolCallDao
     abstract fun providerDao(): ProviderDao
-    abstract fun toolPermissionDao(): ToolPermissionDao
     abstract fun modelProviderDao(): ModelProviderDao
     abstract fun modelDao(): ModelDao
     abstract fun systemPromptDao(): SystemPromptDao
@@ -115,13 +111,13 @@ abstract class WeAgentDatabase : RoomDatabase() {
             }
         }
 
-        internal val MIGRATION_12_13 = object : Migration(12, 13) {
+        val MIGRATION_12_13 = object : Migration(12, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 migration12To13Sql.forEach(db::execSQL)
             }
         }
 
-        internal val migration12To13Sql = listOf(
+        val migration12To13Sql = listOf(
             "CREATE TABLE IF NOT EXISTS `linux_environments` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `type` TEXT NOT NULL, `workingDirectory` TEXT NOT NULL, `environmentVariablesJson` TEXT NOT NULL, `rootfsPath` TEXT, `rootfsContentVersion` TEXT, `createdAt` INTEGER, `sshHost` TEXT, `sshPort` INTEGER, `sshUsername` TEXT, `sshAuthenticationType` TEXT, `sshCredentialCiphertext` BLOB, `sshCredentialIv` BLOB, `sshCredentialReference` TEXT, `sshHostKeyAlgorithm` TEXT, `sshHostKeyFingerprint` TEXT, `bridgePath` TEXT, PRIMARY KEY(`id`))",
             "CREATE TABLE `sessions_new` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `systemPromptId` TEXT, `linuxEnvironmentId` TEXT, `lastEffectiveLinuxEnvironmentId` TEXT, `modelId` TEXT, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `favorite` INTEGER NOT NULL, `promptTokens` INTEGER, `completionTokens` INTEGER, `totalTokens` INTEGER, `contextWindow` INTEGER, PRIMARY KEY(`id`))",
             "INSERT INTO `sessions_new` (`id`, `title`, `systemPromptId`, `linuxEnvironmentId`, `lastEffectiveLinuxEnvironmentId`, `modelId`, `createdAt`, `updatedAt`, `favorite`, `promptTokens`, `completionTokens`, `totalTokens`, `contextWindow`) SELECT `id`, `title`, `systemPromptId`, NULL, NULL, `modelId`, `createdAt`, `updatedAt`, `favorite`, `promptTokens`, `completionTokens`, `totalTokens`, `contextWindow` FROM `sessions`",
@@ -132,16 +128,30 @@ abstract class WeAgentDatabase : RoomDatabase() {
             "DELETE FROM `tool_permissions` WHERE `providerId` = 'builtin-fs' AND `toolName` IN ('read_file', 'list_dir', 'search_files', 'write_file', 'append_file', 'delete_file', 'move_file')",
         )
 
-        internal val MIGRATION_13_14 = object : Migration(13, 14) {
+        val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 migration13To14Sql.forEach(db::execSQL)
             }
         }
 
-        internal val migration13To14Sql = listOf(
+        val migration13To14Sql = listOf(
             "CREATE TABLE IF NOT EXISTS `bridge_tool_audits` (`id` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `environmentId` TEXT NOT NULL, `parentToolCallId` TEXT, `providerId` TEXT NOT NULL, `toolName` TEXT NOT NULL, `argumentsJson` TEXT NOT NULL, `approvalStatus` TEXT, `executionOutcome` TEXT NOT NULL, `result` TEXT NOT NULL, `executedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
             "CREATE INDEX IF NOT EXISTS `index_bridge_tool_audits_sessionId` ON `bridge_tool_audits` (`sessionId`)",
             "CREATE INDEX IF NOT EXISTS `index_bridge_tool_audits_environmentId` ON `bridge_tool_audits` (`environmentId`)",
+        )
+
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                migration14To15Sql.forEach(db::execSQL)
+            }
+        }
+
+        // 14 → 15: per-tool permission rows are replaced by a session-level permission level
+        // (sessions.permissionLevel). The tool_permissions table is dropped outright — the old
+        // per-tool modes have no equivalent under the level model.
+        val migration14To15Sql = listOf(
+            "ALTER TABLE `sessions` ADD COLUMN `permissionLevel` TEXT",
+            "DROP TABLE `tool_permissions`",
         )
 
         private fun build(): WeAgentDatabase {
@@ -187,7 +197,7 @@ abstract class WeAgentDatabase : RoomDatabase() {
             // -shm/-wal sidecars that misbehave on FUSE-emulated external storage
             // (moduleData lives on /sdcard). Private storage always uses WAL.
             .setJournalMode(journalMode)
-            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
             // Destructive fallback is scoped to the pre-release schemas (1–8) only, which no
             // migration path was ever written for. From 9 onwards every step must have a
             // migration: a missing one then fails loudly at open time instead of silently

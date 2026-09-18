@@ -30,12 +30,12 @@ import com.tencent.mm.ui.LauncherUI
 import com.tencent.mm.ui.base.CustomViewPager
 import com.tencent.mm.ui.mogic.WxViewPager
 import dev.ujhhgtg.reflekt.reflekt
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.data
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.ui.WeMainActivityBeautifyApi
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.features.items.beautify.AddMainScreenFab
@@ -99,13 +99,12 @@ private fun homeSidePanelShouldReparentExternalChrome(
         parentClassName != "androidx.appcompat.widget.ActionBarOverlayLayout"
 
 @Suppress("DEPRECATION")
-@Feature(
-    id = "主页侧滑面板",
-    nameRes = "feature_home_side_panel_name",
-    categoryIds = [FeatureCategoryIds.BEAUTIFY],
-    descriptionRes = "feature_home_side_panel_description",
-)
 object HomeSidePanel : SwitchFeature(), IResolveDex {
+
+    override val technicalId = "主页侧滑面板"
+    override val nameRes = R.string.feature_home_side_panel_name
+    override val categoryIds = listOf(FeatureCategoryIds.BEAUTIFY)
+    override val descriptionRes = R.string.feature_home_side_panel_description
 
     private val classWalletCache by dexClass {
         matcher {
@@ -396,7 +395,7 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
             scope = stateScope,
             layoutStore = layoutStore,
             closePanel = { afterClosed ->
-                close(animated = true, oneShot = true, afterClosed = afterClosed)
+                close(animated = true, afterClosed = afterClosed)
             },
         )
         private val outlineProvider = ProgressOutlineProvider()
@@ -467,7 +466,7 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
             dimView.alpha = 0f
             dimView.isClickable = true
             dimView.setOnClickListener {
-                if (renderedProgress > CLOSED_EPSILON) close(animated = true, oneShot = true)
+                if (renderedProgress > CLOSED_EPSILON) close(animated = true)
             }
 
             panelView.setBackgroundColor(AndroidColor.TRANSPARENT)
@@ -825,7 +824,6 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
 
         fun close(
             animated: Boolean,
-            oneShot: Boolean = false,
             afterClosed: (() -> Unit)? = null,
         ) {
             if (suppressCloseUntilNextFrame) return
@@ -836,7 +834,7 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
             parent.requestDisallowInterceptTouchEvent(false)
             gesture.close()
             if (animated) {
-                animateTo(0f, from, oneShot, afterClosed)
+                animateTo(0f, from, afterClosed)
             } else {
                 applyProgress(0f)
                 afterClosed?.invoke()
@@ -878,7 +876,7 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
                         val target = gesture.onUp(event.eventTime)
                         dragging = false
                         parent.requestDisallowInterceptTouchEvent(false)
-                        animateTo(target, from, oneShot = target == 0f)
+                        animateTo(target, from)
                         PagerTouchResult.CONSUME
                     }
                 }
@@ -892,7 +890,7 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
                         val target = gesture.onCancel()
                         dragging = false
                         parent.requestDisallowInterceptTouchEvent(false)
-                        animateTo(target, from, oneShot = target == 0f)
+                        animateTo(target, from)
                         PagerTouchResult.CONSUME
                     }
                 }
@@ -976,7 +974,7 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
                     val target = gesture.onUp(event.eventTime)
                     dragging = false
                     parent.requestDisallowInterceptTouchEvent(false)
-                    animateTo(target, from, oneShot = target == 0f)
+                    animateTo(target, from)
                     true
                 }
 
@@ -985,7 +983,7 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
                     val target = gesture.onCancel()
                     dragging = false
                     parent.requestDisallowInterceptTouchEvent(false)
-                    animateTo(target, from, oneShot = target == 0f)
+                    animateTo(target, from)
                     true
                 }
 
@@ -1011,7 +1009,6 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
         private fun animateTo(
             target: Float,
             from: Float = renderedProgress,
-            oneShot: Boolean = false,
             afterClosed: (() -> Unit)? = null,
         ) {
             requestSync(SYNC_HIERARCHY or SYNC_GEOMETRY)
@@ -1026,11 +1023,7 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
             overlayRoot.visibility = View.VISIBLE
             var canceled = false
             animator = ValueAnimator.ofFloat(from, target).apply {
-                duration = if (oneShot && target == 0f) {
-                    (120L + 120L * kotlin.math.abs(from - target)).roundToInt().toLong()
-                } else {
-                    (180L + 180L * kotlin.math.abs(from - target)).roundToInt().toLong()
-                }
+                duration = (120L + 120L * kotlin.math.abs(from - target)).roundToInt().toLong()
                 interpolator = DecelerateInterpolator(1.4f)
                 addUpdateListener {
                     val progress = it.animatedValue as Float
@@ -1138,7 +1131,7 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
             }
             syncToolbarProfileVisibility()
             if (chattingVisible && renderedProgress > CLOSED_EPSILON) {
-                close(animated = true, oneShot = true)
+                close(animated = true)
             }
         }
 

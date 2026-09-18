@@ -6,6 +6,7 @@ import com.tencent.wcdb.DatabaseErrorHandler
 import com.tencent.wcdb.database.SQLiteCipherSpec
 import com.tencent.wcdb.database.SQLiteDatabase
 import dev.ujhhgtg.reflekt.reflekt
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.data
@@ -21,7 +22,6 @@ import dev.ujhhgtg.wekit.features.api.core.models.WeOfficialAccount
 import dev.ujhhgtg.wekit.features.api.core.models.normalizeChatroomMemberIds
 import dev.ujhhgtg.wekit.features.api.net.models.protobuf.ChatRoomDataProto
 import dev.ujhhgtg.wekit.features.core.ApiFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.reflection.BString
@@ -34,20 +34,19 @@ import java.lang.reflect.Modifier
 
 @OptIn(ExperimentalSerializationApi::class)
 @SuppressLint("DiscouragedApi")
-@Feature(
-    id = "数据库服务",
-    nameRes = "feature_we_database_api_name",
-    categoryIds = [FeatureCategoryIds.API],
-    descriptionRes = "feature_we_database_api_description",
-)
 object WeDatabaseApi : ApiFeature(), IResolveDex {
 
-    private val classMmKernel by dexClass {
+    override val technicalId = "数据库服务"
+    override val nameRes = R.string.feature_we_database_api_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
+    override val descriptionRes = R.string.feature_we_database_api_description
+
+    val classMmKernel by dexClass {
         matcher {
             usingEqStrings("MicroMsg.MMKernel", "Kernel not null, has initialized.")
         }
     }
-    private val methodGetStorage by dexMethod {
+    val methodGetStorage by dexMethod {
         matcher {
             declaredClass(classMmKernel.data.name)
             modifiers = Modifier.PUBLIC or Modifier.STATIC
@@ -72,6 +71,14 @@ object WeDatabaseApi : ApiFeature(), IResolveDex {
     private val classSqliteDbWrapper by dexClass {
         matcher {
             usingEqStrings("MicroMsg.SqliteDB", "sql is null ")
+        }
+    }
+    val methodSqliteWrapperRawQuery by dexMethod(allowFailure = true) {
+        matcher {
+            modifiers = Modifier.PUBLIC
+            usingEqStrings("sql is null ", "DB IS CLOSED ! {%s}")
+            paramTypes("java.lang.String", "java.lang.String[]", "int")
+            returnType("android.database.Cursor")
         }
     }
 

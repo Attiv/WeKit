@@ -7,13 +7,15 @@ import com.tencent.mm.network.v0
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.createInstance
 import dev.ujhhgtg.reflekt.utils.isSubclassOf
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.data
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
+import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
+import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.net.abc.WeRequestCallback
 import dev.ujhhgtg.wekit.features.core.ApiFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.reflection.ClassLoaders
@@ -30,12 +32,11 @@ import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
 
-@Feature(
-    id = "网络数据包服务",
-    nameRes = "feature_we_packet_helper_name",
-    categoryIds = [FeatureCategoryIds.API],
-)
 object WePacketHelper : ApiFeature(), IResolveDex {
+
+    override val technicalId = "网络数据包服务"
+    override val nameRes = R.string.feature_we_packet_helper_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
 
     // 核心 Protobuf 类
     private val classProtoBase by dexClass {
@@ -128,18 +129,9 @@ object WePacketHelper : ApiFeature(), IResolveDex {
     val classOplogReq by dexClass()
 
     // 网络
-    val classNetSceneBase by dexClass {
-        matcher {
-            usingStrings("MicroMsg.NetSceneBase")
-            modifiers = Modifier.ABSTRACT
-            methods {
-                add { usingNumbers(600000L) }
-            }
-        }
-    }
     val classNetScenePat by dexClass {
         matcher {
-            superClass = classNetSceneBase.data.name
+            superClass = WeMessageApi.classNetSceneBase.data.name
 
             methods {
                 add {
@@ -149,22 +141,6 @@ object WePacketHelper : ApiFeature(), IResolveDex {
                 }
             }
             usingStrings("/cgi-bin/micromsg-bin/sendpat")
-        }
-    }
-    private val classNetQueue by dexClass {
-        matcher {
-            usingStrings("MicroMsg.NetSceneQueue", "waiting2running waitingQueue_size =")
-        }
-    }
-    private val classMmKernel by dexClass {
-        matcher {
-            usingStrings(":appbrand0", ":appbrand1", ":appbrand2")
-            methods {
-                add {
-                    modifiers = Modifier.STATIC or Modifier.PUBLIC
-                    returnType = classNetQueue.data.name
-                }
-            }
         }
     }
     private val classNetDispatcher by dexClass()
@@ -178,7 +154,7 @@ object WePacketHelper : ApiFeature(), IResolveDex {
                 add {
                     name = "onSceneEnd"
                     paramCount = 4
-                    paramTypes("int", "int", "java.lang.String", classNetSceneBase.getDescriptorString()!!)
+                    paramTypes("int", "int", "java.lang.String", WeMessageApi.classNetSceneBase.data.name)
                     returnType = "void"
                 }
             }
@@ -191,7 +167,7 @@ object WePacketHelper : ApiFeature(), IResolveDex {
                 add {
                     returnType = "int"
                     paramCount = 5
-                    paramTypes("int", "int", "java.lang.String", null, classNetSceneBase.getDescriptorString()!!)
+                    paramTypes("int", "int", "java.lang.String", null, WeMessageApi.classNetSceneBase.data.name)
                 }
             }
         }
@@ -200,8 +176,8 @@ object WePacketHelper : ApiFeature(), IResolveDex {
 
     // 关键方法 //
     private val methodGetNetQueue by dexMethod {
-        val kernelName = classMmKernel.getDescriptorString() ?: ""
-        val queueName = classNetQueue.getDescriptorString() ?: ""
+        val kernelName = WeDatabaseApi.classMmKernel.data.name
+        val queueName = WeMessageApi.classNetSceneQueue.data.name
         matcher {
             declaredClass = kernelName
             modifiers = Modifier.STATIC or Modifier.PUBLIC
@@ -410,7 +386,7 @@ object WePacketHelper : ApiFeature(), IResolveDex {
 
                 // 发送逻辑
                 if (nativeNetScene != null) {
-                    val netQueue = classMmKernel.clazz.reflekt().invokeMethod(
+                    val netQueue = WeDatabaseApi.classMmKernel.clazz.reflekt().invokeMethod(
                         methodGetNetQueue.method.name, null, superclass = true
                     )!!
                     val cgiType = nativeNetScene.reflekt().invokeMethod("getType", superclass = true) as Int

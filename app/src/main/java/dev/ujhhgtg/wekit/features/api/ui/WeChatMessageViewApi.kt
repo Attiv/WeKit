@@ -2,12 +2,12 @@ package dev.ujhhgtg.wekit.features.api.ui
 
 import android.view.View
 import dev.ujhhgtg.reflekt.reflekt
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.core.models.MessageInfo
 import dev.ujhhgtg.wekit.features.core.ApiFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -15,13 +15,12 @@ import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
-@Feature(
-    id = "消息 View 创建监听服务",
-    nameRes = "feature_we_chat_message_view_api_name",
-    categoryIds = [FeatureCategoryIds.API],
-    descriptionRes = "feature_we_chat_message_view_api_description",
-)
 object WeChatMessageViewApi : ApiFeature(), IResolveDex {
+
+    override val technicalId = "消息 View 创建监听服务"
+    override val nameRes = R.string.feature_we_chat_message_view_api_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
+    override val descriptionRes = R.string.feature_we_chat_message_view_api_description
 
     fun interface ICreateViewListener {
         fun onCreateView(
@@ -170,6 +169,18 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
             .firstField { type = WeMessageApi.classChattingContext.clazz }
             .get()!!
     }
+
+    /** Returns every (view, message) pair currently bound whose message satisfies [matcher]. */
+    fun findBoundViews(matcher: (MessageInfo) -> Boolean): List<Pair<View, MessageInfo>> {
+        synchronized(currentBindings) {
+            return currentBindings.entries
+                .filter { matcher(it.value) }
+                .map { it.key to it.value }
+        }
+    }
+
+    fun getBoundMessage(view: View): MessageInfo? =
+        synchronized(currentBindings) { currentBindings[view] }
 
     fun getMsgInfoFromParam(param: HookParam): MessageInfo {
         val chattingDataAdapter = param.thisObject!!.reflekt()

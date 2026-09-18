@@ -30,11 +30,10 @@ import com.tencent.mm.view.recyclerview.WxRecyclerView
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.data
-import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexField
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
+import dev.ujhhgtg.wekit.features.api.ui.WeMomentsApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -53,13 +52,12 @@ import java.util.Collections
 import java.util.Locale
 import java.util.WeakHashMap
 
-@Feature(
-    id = "底部详细信息",
-    nameRes = "feature_display_details_name",
-    categoryIds = [FeatureCategoryIds.MOMENTS],
-    descriptionRes = "feature_display_details_description",
-)
 object DisplayDetails : ClickableFeature(), IResolveDex {
+
+    override val technicalId = "底部详细信息"
+    override val nameRes = R.string.feature_display_details_name
+    override val categoryIds = listOf(FeatureCategoryIds.MOMENTS)
+    override val descriptionRes = R.string.feature_display_details_description
 
     private const val TAG = "DisplayDetails"
 
@@ -281,65 +279,46 @@ object DisplayDetails : ClickableFeature(), IResolveDex {
             .replace(PH_USER_NAME, userName)
     }
 
-    private val classImproveSnsInfo by dexClass {
-        matcher {
-            usingEqStrings("ImproveInfo(name=")
-        }
-    }
-
-    private val classImproveInteractionLayout by dexClass {
-        matcher {
-            usingEqStrings("MicroMsg.Improve.InteractionLayout")
-        }
-    }
-
-    private val fieldInteractionSnsInfo by dexField {
-        matcher {
-            declaredClass(classImproveInteractionLayout.data.name)
-            type(classImproveSnsInfo.data.name)
-        }
-    }
-
     private val fieldSnsId by dexField {
         matcher {
-            declaredClass(classImproveSnsInfo.data.superClass!!.name)
+            declaredClass(WeMomentsApi.classImproveSnsInfo.data.superClass!!.name)
             name = "field_snsId"
         }
     }
 
     private val fieldUserName by dexField {
         matcher {
-            declaredClass(classImproveSnsInfo.data.superClass!!.name)
+            declaredClass(WeMomentsApi.classImproveSnsInfo.data.superClass!!.name)
             name = "field_userName"
         }
     }
 
     private val fieldCreateTime by dexField {
         matcher {
-            declaredClass(classImproveSnsInfo.data.superClass!!.name)
+            declaredClass(WeMomentsApi.classImproveSnsInfo.data.superClass!!.name)
             name = "field_createTime"
         }
     }
 
     private val fieldType by dexField {
         matcher {
-            declaredClass(classImproveSnsInfo.data.superClass!!.name)
+            declaredClass(WeMomentsApi.classImproveSnsInfo.data.superClass!!.name)
             name = "field_type"
         }
     }
 
     private val methodGetTimeString by dexMethod(allowFailure = true) {
         matcher {
-            declaredClass(classImproveSnsInfo.data.name)
+            declaredClass(WeMomentsApi.classImproveSnsInfo.data.name)
             usingEqStrings("getTimeString")
         }
     }
 
     private fun locateSnsInfo(itemView: View): Any? {
         val interactionView = itemView.findViewWhich {
-            classImproveInteractionLayout.clazz.isInstance(it)
+            WeMomentsApi.classImproveInteractionLayout.clazz.isInstance(it)
         } ?: return null
 
-        return fieldInteractionSnsInfo.field.get(interactionView)
+        return WeMomentsApi.fieldInteractionSnsInfo.field.get(interactionView)
     }
 }

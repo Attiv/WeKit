@@ -11,6 +11,7 @@ import java.io.File
  */
 interface ExtensionPack {
     val id: String
+    val displayOrder: Int
 
     /** UI metadata: display name resource shown on the management screen and in dialogs. */
     val nameRes: Int
@@ -40,6 +41,17 @@ interface ExtensionPack {
     /** True while the pack's payload is loaded/active — deletion is refused then. */
     fun isInUse(): Boolean
 
+    /**
+     * Deletes this pack's installed and staging files. Packs with a lifecycle-sensitive payload
+     * override this so the in-use check and filesystem mutation share the same lock.
+     */
+    fun deleteInstalled(): Boolean {
+        if (isInUse()) return false
+        installDir().deleteRecursively()
+        stagingDir().deleteRecursively()
+        return !installDir().exists() && !stagingDir().exists()
+    }
+
     /** Whether this pack is offered at all on the current device (e.g. ABI gate). */
     fun isSupported(): Boolean = true
 
@@ -55,13 +67,6 @@ interface ExtensionPack {
      * the index entry's pack-specific metadata, when the remote index carries any.
      */
     fun install(verifiedTmp: File, version: String, sha256: String, meta: String? = null)
-
-    /**
-     * Recovers a complete interrupted publication before the downloader makes
-     * another HTTP request. Implementations may finish publishing it or move
-     * its already-verified payload back to [verifiedTmp].
-     */
-    fun recoverInterruptedInstall(verifiedTmp: File, version: String, sha256: String) {}
 
     /** Hook fired by [ExtensionPacks] after a successful install. */
     fun onInstalled() {}

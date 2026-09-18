@@ -2,23 +2,22 @@ package dev.ujhhgtg.wekit.features.items.miniapps
 
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.isBuiltin
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexConstructor
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
-import dev.ujhhgtg.wekit.utils.TargetProcesses
+import dev.ujhhgtg.wekit.utils.TargetProcess
 import org.json.JSONObject
 import java.lang.reflect.Field
 
-@Feature(
-    id = "移除嵌入广告",
-    nameRes = "feature_remove_embedded_ads_name",
-    categoryIds = [FeatureCategoryIds.MINIAPPS],
-    descriptionRes = "feature_remove_embedded_ads_description",
-)
 object RemoveEmbeddedAds : SwitchFeature(), IResolveDex {
+
+    override val technicalId = "移除嵌入广告"
+    override val nameRes = R.string.feature_remove_embedded_ads_name
+    override val categoryIds = listOf(FeatureCategoryIds.MINIAPPS)
+    override val descriptionRes = R.string.feature_remove_embedded_ads_description
 
     /**
      * 奖励/激励视频广告位使用的 pos_id (微信内置广告位, 各版本稳定)。
@@ -34,7 +33,7 @@ object RemoveEmbeddedAds : SwitchFeature(), IResolveDex {
     // 广告数据请求: JS 侧通过 operateWXData / adOperateWXData 下发 webapi_getadvert,
     // 最终由 NetSceneJSOperateWxData 发出。构造时把 ad_unit_id 置空, 服务端就不会
     // 返回广告素材, 广告位自然不渲染。目标是让广告不出现, 而不是拦截点击后的跳转。
-    private val ctorNetSceneJSOperateWxData by dexConstructor {
+    val ctorNetSceneJSOperateWxData by dexConstructor {
         matcher {
             declaredClass {
                 usingEqStrings("MicroMsg.NetSceneJSOperateWxData", "doScene hash=%d, funcid=%d")
@@ -52,7 +51,7 @@ object RemoveEmbeddedAds : SwitchFeature(), IResolveDex {
 
     private lateinit var protoField: Field
 
-    override val shouldLoadInCurrentProcess get() = TargetProcesses.isInMain || TargetProcesses.currentType == TargetProcesses.PROC_APPBRAND
+    override val targetProcesses = setOf(TargetProcess.MAIN, TargetProcess.APPBRAND)
 
     override fun onEnable() {
         // 不同版本构造函数的 data 参数位置不同 (8.0.65 在 args[1], 8.0.76 在 args[3]),

@@ -2,6 +2,7 @@ package dev.ujhhgtg.wekit.features.api.core
 
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.createInstance
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.data
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
@@ -9,7 +10,6 @@ import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeConversationApi.hideConversation
 import dev.ujhhgtg.wekit.features.api.core.WeConversationApi.reloadConversations
 import dev.ujhhgtg.wekit.features.core.ApiFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -21,13 +21,12 @@ import java.lang.reflect.Modifier
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-@Feature(
-    id = "对话服务",
-    nameRes = "feature_we_conversation_api_name",
-    categoryIds = [FeatureCategoryIds.API],
-    descriptionRes = "feature_we_conversation_api_description",
-)
 object WeConversationApi : ApiFeature(), IResolveDex {
+
+    override val technicalId = "对话服务"
+    override val nameRes = R.string.feature_we_conversation_api_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
+    override val descriptionRes = R.string.feature_we_conversation_api_description
 
     private const val TAG = "WeConversationApi"
 
@@ -36,13 +35,13 @@ object WeConversationApi : ApiFeature(), IResolveDex {
 //    private const val ATTR_FLAG_8071_8072_RED_PACKET_BITS = 33280
 //    private const val TABLE_RCONVERSATION = "rconversation"
 //    private const val TABLE_ECS_CONVERSATION_RECORD = "EcsConversationRecord"
-    internal val classConversationStorage by dexClass {
+    val classConversationStorage by dexClass {
         searchPackages("com.tencent.mm.storage")
         matcher {
             usingEqStrings("rconversation", "PRAGMA table_info( rconversation)")
         }
     }
-    private val methodUpdateUnreadByTalker by dexMethod {
+    val methodUpdateUnreadByTalker by dexMethod {
         matcher {
             declaredClass(classConversationStorage.data.name)
             usingEqStrings("MicroMsg.ConversationStorage", "updateUnreadByTalker %s")
@@ -106,7 +105,7 @@ object WeConversationApi : ApiFeature(), IResolveDex {
 //            paramTypes(methodGetConvByName.method.returnType, String::class.java)
 //        }
 //    }
-    private val methodChatroomStorageGetMemberCount by dexMethod {
+    val methodChatroomStorageGetMemberCount by dexMethod {
         searchPackages("com.tencent.mm.storage")
         matcher {
             usingEqStrings("MicroMsg.ChatroomStorage", "[getMemberCount] cost:%sms")

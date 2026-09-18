@@ -2,15 +2,19 @@ package dev.ujhhgtg.wekit.features.items.beautify
 
 import android.app.Activity
 import android.os.Build
+import android.os.Process
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -23,17 +27,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.ujhhgtg.wekit.R
-import dev.ujhhgtg.wekit.extensions.ExtensionPackDialogs
-import dev.ujhhgtg.wekit.extensions.ExtensionPacks
-import dev.ujhhgtg.wekit.extensions.MonetGeneratorPack
-import dev.ujhhgtg.wekit.extensions.monet.api.MonetGenerationEvent
-import dev.ujhhgtg.wekit.extensions.monet.api.MonetGenerationListener
-import dev.ujhhgtg.wekit.extensions.monet.api.MonetGenerationRequest
-import dev.ujhhgtg.wekit.extensions.monet.api.MonetGenerationResult
-import dev.ujhhgtg.wekit.extensions.monet.api.MonetGenerationStage
-import dev.ujhhgtg.wekit.extensions.monet.api.MonetLogLevel
+import dev.ujhhgtg.wekit.utils.monet.MonetDexEvidenceCollector
+import dev.ujhhgtg.wekit.utils.monet.MonetModuleGenerator
+import dev.ujhhgtg.wekit.utils.monet.MonetBubbleStyle
+import dev.ujhhgtg.wekit.utils.monet.MonetGenerationEvent
+import dev.ujhhgtg.wekit.utils.monet.MonetGenerationOptions
+import dev.ujhhgtg.wekit.utils.monet.MonetGenerationRequest
+import dev.ujhhgtg.wekit.utils.monet.MonetGenerationResult
+import dev.ujhhgtg.wekit.utils.monet.MonetGenerationStage
+import dev.ujhhgtg.wekit.utils.monet.MonetLogLevel
+import dev.ujhhgtg.wekit.utils.monet.MonetTabStyle
+import dev.ujhhgtg.wekit.utils.monet.MonetUserScope
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
@@ -44,17 +49,14 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import kotlin.concurrent.thread
 import kotlin.io.path.div
 
-@Feature(
-    id = "莫奈引擎 (模块)",
-    nameRes = "feature_monet_module_generator_name",
-    categoryIds = [FeatureCategoryIds.BEAUTIFY],
-    descriptionRes = "feature_monet_module_generator_description",
-)
 object MonetEngineModuleGenerator : ClickableFeature() {
 
-    private const val TAG = "MonetEngineModuleGenerator"
+    override val technicalId = "莫奈引擎 (模块)"
+    override val nameRes = R.string.feature_monet_module_generator_name
+    override val categoryIds = listOf(FeatureCategoryIds.BEAUTIFY)
+    override val descriptionRes = R.string.feature_monet_module_generator_description
 
-    override val noSwitchWidget = true
+    private const val TAG = "MonetEngineModuleGenerator"
 
     override fun onClick(context: ComponentActivity) {
         val activity = context as Activity
@@ -62,12 +64,7 @@ object MonetEngineModuleGenerator : ClickableFeature() {
             showUnsupportedDialog(activity)
             return
         }
-        ExtensionPacks.refresh(MonetGeneratorPack)
-        if (!MonetGeneratorPack.isInstalled()) {
-            ExtensionPackDialogs.requireInstall(activity, MonetGeneratorPack)
-            return
-        }
-        showGeneratorDialog(activity)
+        showOptionsDialog(activity)
     }
 
     private fun showUnsupportedDialog(activity: Activity) {
@@ -82,25 +79,78 @@ object MonetEngineModuleGenerator : ClickableFeature() {
         }
     }
 
-    private fun showGeneratorDialog(activity: Activity) {
-        val resolvedPack = try {
-            requireNotNull(MonetGeneratorPack.resolve())
-        } catch (error: Throwable) {
-            WeLogger.e(TAG, "failed to load Monet generator extension", error)
-            showInvalidPackDialog(activity)
-            return
+    private fun showOptionsDialog(activity: Activity) {
+        showComposeDialog(activity) {
+            var bubbleStyle by remember { mutableStateOf(MonetBubbleStyle.MODERN) }
+            var corners by remember { mutableStateOf(true) }
+            var tabStyle by remember { mutableStateOf(MonetTabStyle.SOLID) }
+            var userScope by remember { mutableStateOf(MonetUserScope.CURRENT) }
+            AlertDialogContent(
+                title = { Text(stringResource(R.string.monet_options_title)) },
+                text = {
+                    Column {
+                        Text(stringResource(R.string.monet_bubble_style), style = MaterialTheme.typography.titleSmall)
+                        RadioOption(stringResource(R.string.monet_bubble_modern), bubbleStyle == MonetBubbleStyle.MODERN) { bubbleStyle = MonetBubbleStyle.MODERN }
+                        RadioOption(stringResource(R.string.monet_bubble_classic), bubbleStyle == MonetBubbleStyle.CLASSIC) { bubbleStyle = MonetBubbleStyle.CLASSIC }
+                        RadioOption(stringResource(R.string.monet_bubble_pro), bubbleStyle == MonetBubbleStyle.PRO) { bubbleStyle = MonetBubbleStyle.PRO }
+                        Row(
+                            Modifier.fillMaxWidth().clickable { corners = !corners }.padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(stringResource(R.string.monet_multi_scene_corners), Modifier.weight(1f))
+                            Switch(corners, { corners = it })
+                        }
+                        Text(stringResource(R.string.monet_tab_style), style = MaterialTheme.typography.titleSmall)
+                        RadioOption(stringResource(R.string.monet_tab_solid), tabStyle == MonetTabStyle.SOLID) { tabStyle = MonetTabStyle.SOLID }
+                        RadioOption(stringResource(R.string.monet_tab_blur), tabStyle == MonetTabStyle.BLUR) { tabStyle = MonetTabStyle.BLUR }
+                        Text(stringResource(R.string.monet_user_scope), style = MaterialTheme.typography.titleSmall)
+                        RadioOption(stringResource(R.string.monet_user_current), userScope == MonetUserScope.CURRENT) { userScope = MonetUserScope.CURRENT }
+                        RadioOption(stringResource(R.string.monet_user_all), userScope == MonetUserScope.ALL) { userScope = MonetUserScope.ALL }
+                    }
+                },
+                confirmButton = {
+                    Button({
+                        onDismiss()
+                        showGeneratorDialog(
+                            activity,
+                            MonetGenerationOptions(
+                                bubbleStyle = bubbleStyle,
+                                multiSceneCorners = corners,
+                                tabStyle = tabStyle,
+                                userScope = userScope,
+                                currentUserId = Process.myUid() / 100000,
+                            ),
+                        )
+                    }) { Text(stringResource(R.string.monet_generate)) }
+                },
+                dismissButton = { Button(onDismiss) { Text(stringResource(R.string.dialog_cancel)) } },
+            )
         }
+    }
 
+    private fun showGeneratorDialog(activity: Activity, options: MonetGenerationOptions) {
         showComposeDialog(activity, directlyDismissable = false) {
             var state by remember {
                 mutableStateOf<GeneratorUiState>(
-                    GeneratorUiState.Running(MonetGenerationStage.PREPARING),
+                    GeneratorUiState.Running(
+                        MonetGenerationEvent.Progress(
+                            MonetGenerationStage.LOADING_APKS,
+                            "准备生成",
+                            0,
+                            1,
+                        ),
+                    ),
                 )
             }
 
             LaunchedEffect(Unit) {
                 thread(name = "monet-module-generator") {
-                    var currentStage = MonetGenerationStage.PREPARING
+                    var currentProgress = MonetGenerationEvent.Progress(
+                        MonetGenerationStage.LOADING_APKS,
+                        "准备生成",
+                        0,
+                        1,
+                    )
                     try {
                         val resolvedOutputZip =
                             (KnownPaths.downloads / "monet_engine_module.zip").toFile()
@@ -109,34 +159,40 @@ object MonetEngineModuleGenerator : ClickableFeature() {
                             resources = HostInfo.application.resources,
                             packageName = HostInfo.packageName,
                             sourceApkPath = HostInfo.appInfo.sourceDir,
+                            sourceApkPaths = listOf(HostInfo.appInfo.sourceDir) +
+                                HostInfo.appInfo.splitSourceDirs.orEmpty(),
                             versionCode = HostInfo.versionCode,
                             versionName = HostInfo.versionName,
                             sdkInt = Build.VERSION.SDK_INT,
-                            payloadDir = resolvedPack.payloadDir,
+                            dexEvidenceProvider = MonetDexEvidenceCollector::collect,
+                            options = options,
                             workDir = workDir,
                             outputZip = resolvedOutputZip,
                         )
-                        val result = resolvedPack.generator.generate(
+                        val result = MonetModuleGenerator.generate(
                             request,
-                            MonetGenerationListener { event ->
-                                when (event) {
-                                    is MonetGenerationEvent.Progress -> {
-                                        currentStage = event.stage
-                                        window.decorView.post {
-                                            state = GeneratorUiState.Running(event.stage)
-                                        }
+                        ) { event ->
+                            when (event) {
+                                is MonetGenerationEvent.Progress -> {
+                                    currentProgress = event
+                                    window.decorView.post {
+                                        state = GeneratorUiState.Running(event)
                                     }
-
-                                    is MonetGenerationEvent.Log -> logEvent(event)
                                 }
-                            },
-                        )
+
+                                is MonetGenerationEvent.Log -> logEvent(event)
+                            }
+                        }
                         window.decorView.post { state = GeneratorUiState.Done(result) }
                     } catch (error: Throwable) {
-                        WeLogger.e(TAG, "generation failed during $currentStage", error)
+                        WeLogger.e(
+                            TAG,
+                            "generation failed during ${currentProgress.stage}: ${currentProgress.detail}",
+                            error,
+                        )
                         window.decorView.post {
                             state = GeneratorUiState.Failed(
-                                currentStage,
+                                currentProgress,
                                 error.message ?: error.toString(),
                             )
                         }
@@ -148,12 +204,12 @@ object MonetEngineModuleGenerator : ClickableFeature() {
                 title = { Text(stringResource(R.string.feature_monet_module_generator_name)) },
                 text = {
                     when (val current = state) {
-                        is GeneratorUiState.Running -> RunningContent(stageText(current.stage))
+                        is GeneratorUiState.Running -> RunningContent(current.progress)
                         is GeneratorUiState.Done -> DoneContent(current.result)
                         is GeneratorUiState.Failed -> Text(
                             stringResource(
                                 R.string.monet_generator_failed,
-                                stageText(current.stage),
+                                current.progress.detail,
                                 current.message,
                             ),
                         )
@@ -163,18 +219,6 @@ object MonetEngineModuleGenerator : ClickableFeature() {
                     if (state !is GeneratorUiState.Running) {
                         Button(onDismiss) { Text(stringResource(R.string.dialog_close)) }
                     }
-                },
-            )
-        }
-    }
-
-    private fun showInvalidPackDialog(activity: Activity) {
-        showComposeDialog(activity) {
-            AlertDialogContent(
-                title = { Text(stringResource(R.string.feature_monet_module_generator_name)) },
-                text = { Text(stringResource(R.string.monet_generator_pack_invalid)) },
-                confirmButton = {
-                    Button(onDismiss) { Text(stringResource(R.string.dialog_close)) }
                 },
             )
         }
@@ -211,27 +255,42 @@ object MonetEngineModuleGenerator : ClickableFeature() {
 }
 
 private sealed interface GeneratorUiState {
-    data class Running(val stage: MonetGenerationStage) : GeneratorUiState
+    data class Running(val progress: MonetGenerationEvent.Progress) : GeneratorUiState
     data class Done(val result: MonetGenerationResult) : GeneratorUiState
-    data class Failed(val stage: MonetGenerationStage, val message: String) : GeneratorUiState
+    data class Failed(val progress: MonetGenerationEvent.Progress, val message: String) : GeneratorUiState
 }
 
 @Composable
-private fun stageText(stage: MonetGenerationStage): String = stringResource(
-    when (stage) {
-        MonetGenerationStage.PREPARING -> R.string.monet_generator_preparing
-        MonetGenerationStage.BUILDING_OVERLAY -> R.string.monet_generator_building
-        MonetGenerationStage.SIGNING -> R.string.monet_generator_signing
-        MonetGenerationStage.PACKAGING -> R.string.monet_generator_packaging
-    },
-)
+private fun RadioOption(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onSelect).padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected, onSelect)
+        Text(label)
+    }
+}
 
 @Composable
-private fun RunningContent(status: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(16.dp))
-        Text(status)
+private fun RunningContent(progress: MonetGenerationEvent.Progress) {
+    Column {
+        Text(progress.detail)
+        Spacer(Modifier.height(8.dp))
+        val completed = progress.completed
+        val total = progress.total
+        if (completed != null && total != null) {
+            LinearProgressIndicator(
+                progress = { completed.toFloat() / total.coerceAtLeast(1) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "$completed/$total",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.align(Alignment.End).padding(top = 4.dp),
+            )
+        } else {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
     }
 }
 

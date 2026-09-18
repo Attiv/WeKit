@@ -33,6 +33,7 @@ import dev.ujhhgtg.wekit.features.core.BaseFeature
 import dev.ujhhgtg.wekit.features.core.FeaturesProvider
 import dev.ujhhgtg.wekit.features.core.NewFeatures
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
+import dev.ujhhgtg.wekit.features.core.featureCategoryComparator
 import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
 import dev.ujhhgtg.wekit.i18n.WeKitLocaleController
 import dev.ujhhgtg.wekit.preferences.WePrefs
@@ -72,7 +73,7 @@ fun FeaturesPager(onOpenCategory: (String) -> Unit) {
         Collator.getInstance(Locale.forLanguageTag(resolvedLocale.androidTag))
     }
     val searchableItems = remember(resolvedLocale) {
-        FeaturesProvider.ALL_HOOK_ITEMS
+        FeaturesProvider.ALL_FEATURES
             .filterIsInstance<SwitchFeature>()
             .sortedWith { first, second ->
                 featureNameCollator.compare(first.localizedName(context), second.localizedName(context))
@@ -146,7 +147,6 @@ fun FeaturesPager(onOpenCategory: (String) -> Unit) {
                             checked = featureChecked(feature),
                             onCheckedChange = {},
                         )
-                        feature.Ui()
                     }
                 }
             }
@@ -237,11 +237,16 @@ fun CategoryDetailScreen(categoryId: String, onBack: () -> Unit) {
         when (categoryId) {
             NEW_FEATURES_CATEGORY -> FeatureCategoryState.newItems
             ENABLED_FEATURES_CATEGORY -> FeatureCategoryState.enabledItems()
-            else -> FeaturesProvider.ALL_HOOK_ITEMS
+            else -> FeaturesProvider.ALL_FEATURES
                 .filter { categoryId in it.categoryIds }
-                .sortedWith { first, second ->
-                    featureNameCollator.compare(first.localizedName(context), second.localizedName(context))
-                }
+                .sortedWith(
+                    featureCategoryComparator { first, second ->
+                        featureNameCollator.compare(
+                            first.localizedName(context),
+                            second.localizedName(context),
+                        )
+                    },
+                )
         }
     }
 
@@ -272,7 +277,6 @@ fun CategoryDetailScreen(categoryId: String, onBack: () -> Unit) {
                         checked = featureChecked(feature),
                         onCheckedChange = {},
                     )
-                    feature.Ui()
                 }
             }
         }

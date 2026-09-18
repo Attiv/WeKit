@@ -22,8 +22,8 @@ import androidx.compose.ui.res.stringResource
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
+import dev.ujhhgtg.wekit.features.api.ui.WeMomentsApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
-import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
@@ -34,37 +34,16 @@ import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import java.util.LinkedList
 
-@Feature(
-    id = "自定义尾巴",
-    nameRes = "feature_custom_source_app_name",
-    categoryIds = [FeatureCategoryIds.MOMENTS],
-    descriptionRes = "feature_custom_source_app_description",
-)
 object CustomSourceApp : ClickableFeature(), IResolveDex {
+
+    override val technicalId = "自定义尾巴"
+    override val nameRes = R.string.feature_custom_source_app_name
+    override val categoryIds = listOf(FeatureCategoryIds.MOMENTS)
+    override val descriptionRes = R.string.feature_custom_source_app_description
 
     private const val TAG = "CustomSourceApp"
 
     private data class SourceApp(val appId: String, val appName: String)
-
-    private val methodCommitSnsInfo by dexMethod {
-        matcher {
-            usingEqStrings("MicroMsg.UploadPackHelper", "commit sns info ret %d, typeFlag %d sightMd5 %s")
-        }
-    }
-
-    private val methodSetSdkAppId by dexMethod {
-        searchPackages("com.tencent.mm.plugin.sns.model")
-        matcher {
-            usingEqStrings("setSdkId", "com.tencent.mm.plugin.sns.model.UploadPackHelper")
-        }
-    }
-
-    private val methodSetSdkAppName by dexMethod {
-        searchPackages("com.tencent.mm.plugin.sns.model")
-        matcher {
-            usingEqStrings("setSdkAppName", "com.tencent.mm.plugin.sns.model.UploadPackHelper")
-        }
-    }
 
     private val methodSnsUploadUIInitView by dexMethod {
         matcher {
@@ -86,13 +65,13 @@ object CustomSourceApp : ClickableFeature(), IResolveDex {
             })
         }
 
-        methodCommitSnsInfo.hookBefore {
+        WeMomentsApi.methodCommit.hookBefore {
             if (appId.isNotBlank()) {
-                methodSetSdkAppId.method.invoke(thisObject, appId)
+                WeMomentsApi.methodSetSdkId.method.invoke(thisObject, appId)
                 WeLogger.i(TAG, "modified app id: $appId")
             }
             if (appName.isNotBlank()) {
-                methodSetSdkAppName.method.invoke(thisObject, appName)
+                WeMomentsApi.methodSetSdkAppName.method.invoke(thisObject, appName)
                 WeLogger.i(TAG, "modified app name: $appName")
             }
         }
