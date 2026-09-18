@@ -1,5 +1,6 @@
 package dev.ujhhgtg.wekit.agent.data.dao
 
+import android.database.Cursor
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -68,6 +69,16 @@ interface AssetDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChunks(chunks: List<AssetChunkEntity>)
+
+    /**
+     * Opens a cursor over chunks for streaming large assets. Callers must close the returned
+     * cursor; unlike [getChunks], this does not materialize the complete asset in memory.
+     */
+    @Query("SELECT ordinal, bytes FROM asset_chunks WHERE assetId = :assetId ORDER BY ordinal")
+    fun openChunkCursor(assetId: String): Cursor
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertChunk(chunk: AssetChunkEntity)
 
     @Query("SELECT bytes FROM asset_chunks WHERE assetId = :assetId ORDER BY ordinal")
     suspend fun getChunks(assetId: String): List<ByteArray>
