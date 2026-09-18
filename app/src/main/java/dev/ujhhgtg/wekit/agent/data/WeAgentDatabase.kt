@@ -278,14 +278,17 @@ abstract class WeAgentDatabase : RoomDatabase() {
 
         private fun build(): WeAgentDatabase {
             val external = LegacyPaths.externalModuleRoot.resolve("agent/weagent.db").toFile()
+            val oldUnified = KnownPaths.moduleRoot.resolve("wekit.db").toFile()
             val oldPrivate = LegacyPaths.privateWeAgentDatabase.toFile()
             val source = when {
+                oldUnified.isFile -> oldUnified
                 external.isFile -> external
                 oldPrivate.isFile -> oldPrivate
-                else -> external
+                else -> null
             }
-            val unified = KnownPaths.moduleRoot.resolve("wekit.db").toFile()
-            val relocator = WeAgentDatabaseRelocator(source, unified) { sourceFile ->
+            val destination = KnownPaths.moduleRoot.resolve("wekit.db").toFile()
+            val sourceFile = source ?: external
+            val relocator = WeAgentDatabaseRelocator(sourceFile, destination) { sourceFile ->
                 android.database.sqlite.SQLiteDatabase.openDatabase(
                     sourceFile.absolutePath,
                     null,
@@ -315,6 +318,7 @@ abstract class WeAgentDatabase : RoomDatabase() {
                 throw IllegalStateException("Unable to open the unified WeKit database", t)
             }
         }
+
 
         private fun buildAt(
             dbFile: File,

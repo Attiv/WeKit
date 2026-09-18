@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import dev.ujhhgtg.wekit.BuildConfig
 import dev.ujhhgtg.wekit.extensions.ExtensionPacks
+import dev.ujhhgtg.wekit.agent.data.WeKitDatabase
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.restartHost
 import dev.ujhhgtg.wekit.utils.fs.LegacyPaths
@@ -39,7 +40,6 @@ object BackupCoordinator {
     private const val FORMAT_VERSION = 1
     private const val MANIFEST = "manifest.json"
     private const val DATABASE = "wekit.sqlite"
-    private const val LIVE_DATABASE = "wekit.db"
 
     private val managedDirectories = listOf(
         "scripts_java",
@@ -69,7 +69,7 @@ object BackupCoordinator {
     fun create(context: Context, output: File): Result {
         val root = storageRoot(context)
         require(root.isDirectory) { "WeKit 数据目录不存在" }
-        val database = File(root, LIVE_DATABASE)
+        val database = WeKitDatabase.file
         require(database.isFile) { "统一数据库不存在，无法创建完整备份" }
 
         val scratch = File(context.cacheDir, ".wekit-backup-${UUID.randomUUID()}.sqlite")
@@ -135,7 +135,7 @@ object BackupCoordinator {
             // its Room instance before the file swap without making import know its implementation.
             beforeDatabaseReplace?.invoke()
             val oldRoot = File(root.parentFile, ".wekit-before-import-${UUID.randomUUID()}")
-            replaceManagedData(root, staging, oldRoot)
+            replaceManagedData(root, staging, oldRoot, WeKitDatabase.file)
             oldRoot.deleteRecursively()
             return ImportResult(manifest.files.size)
         } finally {
@@ -420,14 +420,14 @@ object BackupCoordinator {
             arrayOf(table),
         ).use { it.moveToFirst() }
 
-    private fun replaceManagedData(root: File, staging: File, oldRoot: File) {
+    private fun replaceManagedData(root: File, staging: File, oldRoot: File, liveDatabase: File) {
         oldRoot.mkdirs()
         root.mkdirs()
         try {
-            val database = File(root, LIVE_DATABASE)
             val stagedDatabase = File(staging, DATABASE)
-            moveIfPresent(database, File(oldRoot, LIVE_DATABASE))
-            moveIfPresent(stagedDatabase, database)
+            val oldDatabase = File(oldRoot, liveDatabase.name)
+            moveIfPresent(liveDatabase, oldDatabase)
+            moveIfPresent(stagedDatabase, liveDatabase)
             for (directory in managedDirectories) {
                 val current = File(root, directory)
                 val replacement = File(staging, directory)
@@ -443,9 +443,10 @@ object BackupCoordinator {
         } catch (t: Throwable) {
             // Restore each moved item before surfacing the error. Import is replacement semantics:
             // a failed swap must leave the current installation usable.
-            if (File(oldRoot, LIVE_DATABASE).exists()) {
-                File(root, LIVE_DATABASE).delete()
-                moveIfPresent(File(oldRoot, LIVE_DATABASE), File(root, LIVE_DATABASE))
+            val oldDatabase = File(oldRoot, liveDatabase.name)
+            if (oldDatabase.exists()) {
+                liveDatabase.delete()
+                moveIfPresent(oldDatabase, liveDatabase)
             }
             for (directory in managedDirectories) {
                 val old = File(oldRoot, directory)

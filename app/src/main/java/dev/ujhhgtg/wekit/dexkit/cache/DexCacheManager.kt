@@ -3,10 +3,8 @@ package dev.ujhhgtg.wekit.dexkit.cache
 import dev.ujhhgtg.wekit.utils.fs.moveReplacing
 import kotlin.io.path.createDirectories
 import kotlin.io.path.moveTo
-import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.features.core.BaseFeature
-import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.fs.createDirsSafe
@@ -32,24 +30,13 @@ object DexCacheManager {
 
     private const val TAG = "DexCacheManager"
 
-    private const val CACHE_DIR_NAME = "dex_cache"
     private const val CACHE_FILE_SUFFIX = ".json"
-    private const val KEY_HOST_VERSION = "host_version"
 
-    private val cacheDir: Path by lazy {
-        (KnownPaths.moduleRoot / CACHE_DIR_NAME).createDirsSafe()
-    }
+    private lateinit var cacheDir: Path
 
     fun init(currentVer: String) {
-        val cachedVer = WePrefs.getString(KEY_HOST_VERSION)
-        if (cachedVer != currentVer) {
-            WeLogger.i(TAG, "host version changed: $cachedVer -> $currentVer, resetting all cache")
-            clearAllCache()
-            Preferences.noDexResolve = false
-            WeLogger.i(TAG, "disabling NO_DEX_RESOLVE due to host version change")
-        }
-
-        WePrefs.putString(KEY_HOST_VERSION, currentVer)
+        cacheDir = KnownPaths.versionedDexCacheDir(currentVer)
+        WeLogger.i(TAG, "using versioned Dex cache: $currentVer")
     }
 
     /**
@@ -154,6 +141,7 @@ object DexCacheManager {
     }
 
     fun clearAllCache() {
+        check(::cacheDir.isInitialized) { "Dex cache manager is not initialized" }
         cacheDir.listDirectoryEntries().forEach { path ->
             path.deleteIfExists()
         }

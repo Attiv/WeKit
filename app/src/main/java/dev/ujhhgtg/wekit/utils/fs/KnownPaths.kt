@@ -18,6 +18,14 @@ object KnownPaths {
         (HostInfo.application.filesDir.asPath / "wekit").createDirsSafe()
     }
 
+    fun versionedDexCacheDir(version: String): Path =
+        (moduleRoot / "dex_cache" / sanitizeVersionKey(version)).createDirsSafe()
+
+    fun hostVersionKey(): String = sanitizeVersionKey("${HostInfo.versionName}-${HostInfo.versionCode}")
+
+    private fun sanitizeVersionKey(value: String): String =
+        value.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
     val internalStorage: Path by lazy {
         Environment.getExternalStorageDirectory().asPath
     }
