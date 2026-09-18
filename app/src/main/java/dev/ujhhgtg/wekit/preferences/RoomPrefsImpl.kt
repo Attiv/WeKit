@@ -146,10 +146,24 @@ class RoomPrefsImpl(name: String) : WePrefs() {
         if (hasRows) return
         runCatching {
             sql.beginTransaction()
-            legacy.getAll().forEach { (key, value) -> putObject(key, value ?: return@forEach) }
+            legacy.rawEntries().forEach { entry ->
+                val value = legacy.getObject(entry.key)
+                if (value != null) {
+                    putObject(entry.key, value)
+                } else {
+                    writeLegacy(entry.key, entry.type ?: "legacy:unknown", entry.bytes)
+                }
+            }
             sql.setTransactionSuccessful()
         }.onFailure { WeLogger.e("RoomPrefsImpl", "failed to migrate legacy MMKV", it) }
             .also { sql.endTransaction() }
+    }
+
+    private fun writeLegacy(key: String, type: String, bytes: ByteArray?) {
+        sql.execSQL(
+            "INSERT OR REPLACE INTO preference_entries(namespace, `key`, valueType, valueBlob, encodingVersion, revision, updatedAt, exportable) VALUES (?, ?, ?, ?, 1, 1, ?, ?)",
+            arrayOf(namespace, key, type, bytes, System.currentTimeMillis(), if (key == "payment_pswd_encdata") 0 else 1),
+        )
     }
 
     private fun decode(type: String, text: String?, long: Long?, double: Double?, blob: ByteArray?, key: String): Any? = when (type) {

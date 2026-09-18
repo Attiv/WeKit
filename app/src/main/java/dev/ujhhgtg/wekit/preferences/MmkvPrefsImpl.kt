@@ -13,6 +13,17 @@ class MmkvPrefsImpl(name: String) : WePrefs() {
 
     private val mmkvInstance = MMKV.mmkvWithID(name, MMKV.MULTI_PROCESS_MODE)
 
+    data class RawEntry(val key: String, val type: String?, val bytes: ByteArray?)
+
+    /** Enumerates legacy keys without dropping unknown or corrupt type-shadow entries. */
+    fun rawEntries(): List<RawEntry> = buildList {
+        mmkvInstance.allKeys().orEmpty().forEach { key ->
+            if (key.endsWith(TYPE_SUFFIX)) return@forEach
+            val marker = mmkvInstance.getInt(key + TYPE_SUFFIX, 0)
+            add(RawEntry(key, typeName(marker), mmkvInstance.getBytes(key, null)))
+        }
+    }
+
     companion object {
         const val TYPE_SUFFIX = $$"$shadow$type"
         private const val TYPE_BOOL = 0x80 + 2
@@ -22,7 +33,20 @@ class MmkvPrefsImpl(name: String) : WePrefs() {
         private const val TYPE_STRING = 0x80 + 31
         private const val TYPE_STRING_SET = 0x80 + 32
         private const val TYPE_BYTES = 0x80 + 33
-        private const val TYPE_SERIALIZABLE = 0x80 + 41
+    private const val TYPE_SERIALIZABLE = 0x80 + 41
+
+        private fun typeName(marker: Int): String? = when (marker) {
+            TYPE_BOOL -> "bool"
+            TYPE_INT -> "int"
+            TYPE_LONG -> "long"
+            TYPE_FLOAT -> "float"
+            TYPE_STRING -> "string"
+            TYPE_STRING_SET -> "string_set"
+            TYPE_BYTES -> "bytes"
+            TYPE_SERIALIZABLE -> "serializable"
+            0 -> null
+            else -> "legacy:$marker"
+        }
     }
 
     override fun getAll(): Map<String, *> {
