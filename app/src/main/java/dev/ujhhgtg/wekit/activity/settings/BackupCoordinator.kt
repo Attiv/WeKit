@@ -364,7 +364,13 @@ object BackupCoordinator {
             android.database.sqlite.SQLiteDatabase.OPEN_READWRITE,
         )
         sqlite.use { db ->
-            for (table in listOf("preference_entries", "settings", "legacy_mmkv_entries")) {
+            for (table in listOf(
+                "preference_entries",
+                "preference_set_members",
+                "documents",
+                "settings",
+                "legacy_mmkv_entries",
+            )) {
                 if (!tableExists(db, table)) continue
                 val columns = db.rawQuery("PRAGMA table_info(\"$table\")", null).use { cursor ->
                     buildList {
