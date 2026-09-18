@@ -69,6 +69,7 @@ import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.agent.data.UnifiedDocumentStore
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.captureOriginalMethod
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
@@ -2026,8 +2027,7 @@ object ConversationAggregation : ClickableFeature(),
         foldersCache?.let { return it }
         val folders = runCatching {
             val file = foldersFile
-            if (!file.exists()) return emptyList()
-            val raw = file.readText()
+            val raw = UnifiedDocumentStore.read("chat", "folders", file.toFile()) ?: return emptyList()
             DefaultJson.decodeFromString<List<ChatFolder>>(raw)
                 .map { folder ->
                     folder.copy(members = folder.members.filter { it.isNotBlank() })
@@ -2045,7 +2045,7 @@ object ConversationAggregation : ClickableFeature(),
         folderMembersCache.clear()
         runCatching {
             val raw = DefaultJson.encodeToString(folders)
-            foldersFile.writeText(raw)
+            UnifiedDocumentStore.write("chat", "folders", raw)
         }.onFailure {
             WeLogger.w(TAG, "failed to save folders to $foldersFile", it)
         }

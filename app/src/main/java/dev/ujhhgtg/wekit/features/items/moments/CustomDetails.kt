@@ -27,6 +27,7 @@ import dev.ujhhgtg.wekit.ui.content.m3.PlaceholderChips
 import dev.ujhhgtg.wekit.ui.utils.EditIcon
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.agent.data.UnifiedDocumentStore
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
@@ -158,9 +159,9 @@ object CustomDetails : SwitchFeature(), WeMomentsContextMenuApi.IMenuItemsProvid
      */
     private fun loadCustomTexts(): Map<String, String> {
         val file = customTextsFile
-        if (!file.exists()) return emptyMap()
+        val raw = UnifiedDocumentStore.read("moments", "custom_bottom_details", file.toFile()) ?: return emptyMap()
         return runCatching {
-            DefaultJson.decodeFromString<Map<String, String>>(file.readText())
+            DefaultJson.decodeFromString<Map<String, String>>(raw)
                 .filter { (key, value) -> key.isNotBlank() && value.isNotBlank() }
         }.getOrElse { e ->
             WeLogger.e(TAG, "failed to load $customTextsFile", e)
@@ -170,7 +171,7 @@ object CustomDetails : SwitchFeature(), WeMomentsContextMenuApi.IMenuItemsProvid
 
     private fun saveCustomTexts(customTexts: Map<String, String>) {
         runCatching {
-            customTextsFile.writeText(DefaultJson.encodeToString(customTexts))
+            UnifiedDocumentStore.write("moments", "custom_bottom_details", DefaultJson.encodeToString(customTexts))
         }.onFailure { e ->
             WeLogger.e(TAG, "failed to save $customTextsFile", e)
         }

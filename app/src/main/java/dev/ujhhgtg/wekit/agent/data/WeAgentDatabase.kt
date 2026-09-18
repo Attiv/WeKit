@@ -23,6 +23,12 @@ import dev.ujhhgtg.wekit.agent.data.dao.SystemPromptDao
 import dev.ujhhgtg.wekit.agent.data.dao.ToolCallDao
 import dev.ujhhgtg.wekit.agent.data.dao.TriggerDao
 import dev.ujhhgtg.wekit.agent.data.dao.BridgeToolAuditDao
+import dev.ujhhgtg.wekit.agent.data.dao.AssetDao
+import dev.ujhhgtg.wekit.agent.data.dao.DocumentDao
+import dev.ujhhgtg.wekit.agent.data.dao.ExtensionInstallDao
+import dev.ujhhgtg.wekit.agent.data.dao.ManagedDataDao
+import dev.ujhhgtg.wekit.agent.data.dao.PreferenceDao
+import dev.ujhhgtg.wekit.agent.data.dao.ScriptCatalogDao
 import dev.ujhhgtg.wekit.agent.data.entity.ConditionalPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ExternalServiceEntity
 import dev.ujhhgtg.wekit.agent.data.entity.MessageEntity
@@ -38,8 +44,18 @@ import dev.ujhhgtg.wekit.agent.data.entity.SystemPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ToolCallEntity
 import dev.ujhhgtg.wekit.agent.data.entity.TriggerEntity
 import dev.ujhhgtg.wekit.agent.data.entity.BridgeToolAuditEntity
+import dev.ujhhgtg.wekit.agent.data.entity.AssetBindingEntity
+import dev.ujhhgtg.wekit.agent.data.entity.AssetChunkEntity
+import dev.ujhhgtg.wekit.agent.data.entity.AssetEntity
+import dev.ujhhgtg.wekit.agent.data.entity.DocumentEntity
+import dev.ujhhgtg.wekit.agent.data.entity.ExtensionInstallEntity
+import dev.ujhhgtg.wekit.agent.data.entity.ManagedDataEntryEntity
+import dev.ujhhgtg.wekit.agent.data.entity.PreferenceEntryEntity
+import dev.ujhhgtg.wekit.agent.data.entity.PreferenceSetMemberEntity
+import dev.ujhhgtg.wekit.agent.data.entity.ScriptCatalogEntity
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.utils.fs.LegacyPaths
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 
 @Database(
@@ -59,8 +75,17 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
         TriggerEntity::class,
         ExternalServiceEntity::class,
         BridgeToolAuditEntity::class,
+        PreferenceEntryEntity::class,
+        PreferenceSetMemberEntity::class,
+        DocumentEntity::class,
+        AssetEntity::class,
+        AssetChunkEntity::class,
+        AssetBindingEntity::class,
+        ScriptCatalogEntity::class,
+        ExtensionInstallEntity::class,
+        ManagedDataEntryEntity::class,
     ],
-    version = 17,
+    version = 19,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 9, to = 10), // adds external_services table
@@ -84,6 +109,12 @@ abstract class WeAgentDatabase : RoomDatabase() {
     abstract fun triggerDao(): TriggerDao
     abstract fun externalServiceDao(): ExternalServiceDao
     abstract fun bridgeToolAuditDao(): BridgeToolAuditDao
+    abstract fun preferenceDao(): PreferenceDao
+    abstract fun documentDao(): DocumentDao
+    abstract fun assetDao(): AssetDao
+    abstract fun scriptCatalogDao(): ScriptCatalogDao
+    abstract fun extensionInstallDao(): ExtensionInstallDao
+    abstract fun managedDataDao(): ManagedDataDao
 
     companion object {
         private const val TAG = "WeAgentDatabase"
@@ -95,6 +126,11 @@ abstract class WeAgentDatabase : RoomDatabase() {
             get() = INSTANCE ?: synchronized(this) {
                 INSTANCE ?: build().also { INSTANCE = it }
             }
+
+        fun close() = synchronized(this) {
+            INSTANCE?.close()
+            INSTANCE = null
+        }
 
         // 11 → 12: WEKIT_ROUTER enum value removed from ModelProviderType.
         // Any stored provider row with that type is now unreadable; delete them so the
@@ -193,12 +229,65 @@ abstract class WeAgentDatabase : RoomDatabase() {
             "DELETE FROM linux_environments WHERE type = 'CHROOT'",
         )
 
+        /**
+         * 17 → 18 adds the unified WeKit storage catalog.  These tables intentionally have no
+         * foreign keys: file-backed content may be imported in a later phase and a missing file
+         * must be reported instead of making Room silently delete its index row.
+         */
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                migration17To18Sql.forEach(db::execSQL)
+            }
+        }
+
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `linux_environments` ADD COLUMN `sshPassword` TEXT")
+                db.execSQL("ALTER TABLE `linux_environments` ADD COLUMN `sshPrivateKey` TEXT")
+                db.execSQL("ALTER TABLE `linux_environments` ADD COLUMN `sshPrivateKeyPassphrase` TEXT")
+            }
+        }
+
+        val migration17To18Sql = listOf(
+            "CREATE TABLE IF NOT EXISTS `preference_entries` (`namespace` TEXT NOT NULL, `key` TEXT NOT NULL, `valueType` TEXT NOT NULL, `valueText` TEXT, `valueLong` INTEGER, `valueDouble` REAL, `valueBlob` BLOB, `encodingVersion` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `exportable` INTEGER NOT NULL, PRIMARY KEY(`namespace`, `key`))",
+            "CREATE INDEX IF NOT EXISTS `index_preference_entries_namespace` ON `preference_entries` (`namespace`)",
+            "CREATE INDEX IF NOT EXISTS `index_preference_entries_updatedAt` ON `preference_entries` (`updatedAt`)",
+            "CREATE TABLE IF NOT EXISTS `preference_set_members` (`namespace` TEXT NOT NULL, `key` TEXT NOT NULL, `member` TEXT NOT NULL, PRIMARY KEY(`namespace`, `key`, `member`))",
+            "CREATE INDEX IF NOT EXISTS `index_preference_set_members_namespace_key` ON `preference_set_members` (`namespace`, `key`)",
+            "CREATE TABLE IF NOT EXISTS `documents` (`namespace` TEXT NOT NULL, `key` TEXT NOT NULL, `content` TEXT NOT NULL, `formatVersion` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `exportable` INTEGER NOT NULL, PRIMARY KEY(`namespace`, `key`))",
+            "CREATE INDEX IF NOT EXISTS `index_documents_namespace` ON `documents` (`namespace`)",
+            "CREATE INDEX IF NOT EXISTS `index_documents_updatedAt` ON `documents` (`updatedAt`)",
+            "CREATE TABLE IF NOT EXISTS `assets` (`assetId` TEXT NOT NULL, `mimeType` TEXT NOT NULL, `sizeBytes` INTEGER NOT NULL, `sha256` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `metadataJson` TEXT, `exportable` INTEGER NOT NULL, PRIMARY KEY(`assetId`))",
+            "CREATE INDEX IF NOT EXISTS `index_assets_sha256` ON `assets` (`sha256`)",
+            "CREATE INDEX IF NOT EXISTS `index_assets_createdAt` ON `assets` (`createdAt`)",
+            "CREATE TABLE IF NOT EXISTS `asset_chunks` (`assetId` TEXT NOT NULL, `ordinal` INTEGER NOT NULL, `bytes` BLOB NOT NULL, PRIMARY KEY(`assetId`, `ordinal`))",
+            "CREATE INDEX IF NOT EXISTS `index_asset_chunks_assetId` ON `asset_chunks` (`assetId`)",
+            "CREATE TABLE IF NOT EXISTS `asset_bindings` (`owner` TEXT NOT NULL, `slot` TEXT NOT NULL, `assetId` TEXT NOT NULL, PRIMARY KEY(`owner`, `slot`))",
+            "CREATE INDEX IF NOT EXISTS `index_asset_bindings_assetId` ON `asset_bindings` (`assetId`)",
+            "CREATE TABLE IF NOT EXISTS `script_catalog` (`scriptId` TEXT NOT NULL, `kind` TEXT NOT NULL, `relativePath` TEXT NOT NULL, `entryPoint` TEXT, `manifestJson` TEXT, `contentHash` TEXT NOT NULL, `version` TEXT, `enabled` INTEGER NOT NULL, `trusted` INTEGER NOT NULL, `configSummary` TEXT, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`scriptId`))",
+            "CREATE INDEX IF NOT EXISTS `index_script_catalog_kind` ON `script_catalog` (`kind`)",
+            "CREATE INDEX IF NOT EXISTS `index_script_catalog_relativePath` ON `script_catalog` (`relativePath`)",
+            "CREATE INDEX IF NOT EXISTS `index_script_catalog_enabled` ON `script_catalog` (`enabled`)",
+            "CREATE TABLE IF NOT EXISTS `extension_installs` (`extensionId` TEXT NOT NULL, `version` TEXT NOT NULL, `abi` TEXT NOT NULL, `manifestJson` TEXT, `contentHash` TEXT NOT NULL, `relativePath` TEXT NOT NULL, `selected` INTEGER NOT NULL, `mounted` INTEGER NOT NULL, `configJson` TEXT, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`extensionId`, `version`, `abi`))",
+            "CREATE INDEX IF NOT EXISTS `index_extension_installs_extensionId` ON `extension_installs` (`extensionId`)",
+            "CREATE INDEX IF NOT EXISTS `index_extension_installs_selected` ON `extension_installs` (`selected`)",
+            "CREATE TABLE IF NOT EXISTS `managed_data_entries` (`pluginId` TEXT NOT NULL, `relativePath` TEXT NOT NULL, `sizeBytes` INTEGER NOT NULL, `contentHash` TEXT NOT NULL, `modifiedAt` INTEGER NOT NULL, PRIMARY KEY(`pluginId`, `relativePath`))",
+            "CREATE INDEX IF NOT EXISTS `index_managed_data_entries_pluginId` ON `managed_data_entries` (`pluginId`)",
+            "CREATE INDEX IF NOT EXISTS `index_managed_data_entries_contentHash` ON `managed_data_entries` (`contentHash`)",
+        )
+
         private fun build(): WeAgentDatabase {
-            val external = KnownPaths.moduleData.resolve("agent/weagent.db").toFile()
-            val private = File(HostInfo.application.filesDir, "wekit-agent/weagent.db")
-            val relocator = WeAgentDatabaseRelocator(external, private) { source ->
+            val external = LegacyPaths.externalModuleRoot.resolve("agent/weagent.db").toFile()
+            val oldPrivate = LegacyPaths.privateWeAgentDatabase.toFile()
+            val source = when {
+                external.isFile -> external
+                oldPrivate.isFile -> oldPrivate
+                else -> external
+            }
+            val unified = KnownPaths.moduleRoot.resolve("wekit.db").toFile()
+            val relocator = WeAgentDatabaseRelocator(source, unified) { sourceFile ->
                 android.database.sqlite.SQLiteDatabase.openDatabase(
-                    source.absolutePath,
+                    sourceFile.absolutePath,
                     null,
                     android.database.sqlite.SQLiteDatabase.OPEN_READWRITE,
                 ).close()
@@ -206,9 +295,12 @@ abstract class WeAgentDatabase : RoomDatabase() {
             val prepared = relocator.prepare()
             if (prepared.externalFallback) {
                 val failure = prepared.failure
-                if (failure == null) WeLogger.w(TAG, "private storage migration failed; staying on external storage")
-                else WeLogger.w(TAG, "private storage migration failed; staying on external storage", failure)
-                return buildAt(prepared.file, JournalMode.TRUNCATE)
+                if (failure == null) {
+                    WeLogger.e(TAG, "private storage migration failed; external database was not used")
+                } else {
+                    WeLogger.e(TAG, "private storage migration failed; external database was not used", failure)
+                }
+                throw IllegalStateException("Unable to migrate the legacy WeAgent database into the unified database", failure)
             }
             if (!prepared.migratedNow) return buildAt(prepared.file, JournalMode.WRITE_AHEAD_LOGGING)
             val database = buildAt(prepared.file, JournalMode.WRITE_AHEAD_LOGGING)
@@ -217,10 +309,10 @@ abstract class WeAgentDatabase : RoomDatabase() {
                 relocator.commit(prepared)
                 database
             } catch (t: Throwable) {
-                WeLogger.e(TAG, "migrated database failed to open; rolling back to external storage", t)
+                WeLogger.e(TAG, "migrated database failed to open; rolling back", t)
                 runCatching { database.close() }
                 relocator.rollback(prepared)
-                buildAt(external, JournalMode.TRUNCATE)
+                throw IllegalStateException("Unable to open the unified WeKit database", t)
             }
         }
 
@@ -232,11 +324,8 @@ abstract class WeAgentDatabase : RoomDatabase() {
             WeAgentDatabase::class.java,
             dbFile.toString()
         )
-            // TRUNCATE is only used for the external-fallback path: WAL uses mmap'd
-            // -shm/-wal sidecars that misbehave on FUSE-emulated external storage
-            // (moduleData lives on /sdcard). Private storage always uses WAL.
             .setJournalMode(journalMode)
-            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
             // Destructive fallback is scoped to the pre-release schemas (1–8) only, which no
             // migration path was ever written for. From 9 onwards every step must have a
             // migration: a missing one then fails loudly at open time instead of silently

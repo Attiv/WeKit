@@ -14,11 +14,8 @@ data class PreparedDatabaseLocation(
 )
 
 /**
- * Moves the WeAgent database from FUSE-emulated external storage to private storage in two
- * phases: [prepare] copies and atomically publishes the new file, [commit] deletes the old
- * external copy only after Room opened the new one successfully, and [rollback] undoes the
- * copy if it did not. Any failure leaves the external source untouched and reports it as an
- * [PreparedDatabaseLocation.externalFallback] instead.
+ * Copies a legacy WeAgent database to the unified private database in two phases. The source is
+ * deliberately retained: migration cleanup is a separate user-confirmed operation.
  */
 class WeAgentDatabaseRelocator(
     private val source: File,
@@ -57,8 +54,7 @@ class WeAgentDatabaseRelocator(
     }
 
     fun commit(prepared: PreparedDatabaseLocation) {
-        source.delete()
-        source.deleteSidecars()
+        // Keep the legacy source and sidecars until the user explicitly clears migrated copies.
     }
 
     fun rollback(prepared: PreparedDatabaseLocation) {

@@ -894,9 +894,11 @@ object WeAgentRepository {
             environment.environmentVariablesJson,
         )
         require(environment.type != LinuxEnvironmentType.NATIVE) { "native environment is built in" }
-        require(
-            (environment.sshCredentialCiphertext == null) == (environment.sshCredentialIv == null)
-        ) { "encrypted SSH credentials require both ciphertext and IV" }
+        val hasPlainCredentials = environment.sshPassword != null || environment.sshPrivateKey != null
+        val hasEncryptedCredentials = environment.sshCredentialCiphertext != null || environment.sshCredentialIv != null
+        require(hasPlainCredentials || (!hasEncryptedCredentials || environment.sshCredentialCiphertext != null && environment.sshCredentialIv != null)) {
+            "SSH credentials are incomplete"
+        }
         when (environment.type) {
             LinuxEnvironmentType.PROOT -> {
                 require(!environment.rootfsPath.isNullOrBlank()) { "local environments require a rootfs path" }

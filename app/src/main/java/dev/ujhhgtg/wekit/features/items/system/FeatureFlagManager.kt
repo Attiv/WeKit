@@ -59,6 +59,7 @@ import dev.ujhhgtg.wekit.ui.content.m3.DropDownMenuWidget
 import dev.ujhhgtg.wekit.ui.content.m3.DropdownOption
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.agent.data.UnifiedDocumentStore
 import dev.ujhhgtg.wekit.utils.android.copyToClipboard
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
@@ -208,9 +209,9 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
      */
     private fun loadOverrides(): Map<String, FeatureFlagOverride> {
         val file = overridesFile
-        if (!file.exists()) return emptyMap()
+        val raw = UnifiedDocumentStore.read("feature_flags", "overrides", file.toFile()) ?: return emptyMap()
         return runCatching {
-            val list = DefaultJson.decodeFromString<List<FeatureFlagOverride>>(file.readText())
+            val list = DefaultJson.decodeFromString<List<FeatureFlagOverride>>(raw)
             list.associateBy { it.runtimeKey }
         }.getOrElse { e ->
             WeLogger.e(TAG, "failed to load $overridesFile", e)
@@ -228,7 +229,7 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
 
     private fun saveOverridesRaw(overrides: List<FeatureFlagOverride>) {
         runCatching {
-            overridesFile.writeText(DefaultJson.encodeToString(overrides))
+            UnifiedDocumentStore.write("feature_flags", "overrides", DefaultJson.encodeToString(overrides))
         }.onFailure { e ->
             WeLogger.e(TAG, "failed to save $overridesFile", e)
         }

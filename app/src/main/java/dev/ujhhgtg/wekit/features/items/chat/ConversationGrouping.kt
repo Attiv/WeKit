@@ -136,6 +136,7 @@ import dev.ujhhgtg.wekit.ui.utils.setLifecycleOwner
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.ui.utils.theme.InjectedUiTheme
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.agent.data.UnifiedDocumentStore
 import dev.ujhhgtg.wekit.utils.invokeOriginalMethod
 import dev.ujhhgtg.wekit.utils.android.baseActivity
 import dev.ujhhgtg.wekit.utils.android.showToast
@@ -2440,13 +2441,13 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         val file = groupsFile
         // First run (no config yet): seed the groups that used to be the built-in tabs so the tab
         // bar isn't empty out of the box, then persist them so they're editable / deletable.
-        if (!file.exists()) {
+        if (UnifiedDocumentStore.read("chat", "groups", file.toFile()) == null) {
             val defaults = defaultGroups()
             saveGroups(defaults)
             return defaults
         }
         val groups = runCatching {
-            val raw = file.readText()
+            val raw = UnifiedDocumentStore.read("chat", "groups", file.toFile()) ?: return@runCatching emptyList()
             DefaultJson.decodeFromString<List<ChatGroup>>(raw)
                 .map { group ->
                     group.copy(members = group.members.filter { it.isNotBlank() })
@@ -2516,7 +2517,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         groupMembersCache.clear()
         runCatching {
             val raw = DefaultJson.encodeToString(groups)
-            groupsFile.writeText(raw)
+            UnifiedDocumentStore.write("chat", "groups", raw)
         }.onFailure {
             WeLogger.w(TAG, "failed to save groups to $groupsFile", it)
         }

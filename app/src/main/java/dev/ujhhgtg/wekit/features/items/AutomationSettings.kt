@@ -1,6 +1,7 @@
 package dev.ujhhgtg.wekit.features.items
 
 import dev.ujhhgtg.wekit.utils.fs.moveReplacing
+import dev.ujhhgtg.wekit.agent.data.UnifiedDocumentStore
 import kotlin.io.path.createDirectories
 import kotlin.io.path.moveTo
 import androidx.compose.material3.Text
@@ -129,24 +130,20 @@ class AtomicJsonConfigStore<T>(
     }
 
     private fun read(): T {
-        if (!file.exists()) {
-            return initialValue().also(::write)
-        }
+        val raw = UnifiedDocumentStore.read("json", tag, file.toFile())
+        if (raw == null) return initialValue().also(::write)
         return runCatching {
-            DefaultJson.decodeFromString(serializer, file.readText())
+            DefaultJson.decodeFromString(serializer, raw)
         }.onFailure {
-            WeLogger.e(tag, "failed to read $file", it)
+            WeLogger.e(tag, "failed to read document $tag", it)
         }.getOrElse { initialValue() }
     }
 
     private fun write(value: T) {
         runCatching {
-            file.parent.createDirectories()
-            val temporary = file.resolveSibling("${file.fileName}.tmp")
-            temporary.writeText(DefaultJson.encodeToString(serializer, value))
-            temporary.moveReplacing(file)
+            UnifiedDocumentStore.write("json", tag, DefaultJson.encodeToString(serializer, value))
         }.onFailure {
-            WeLogger.e(tag, "failed to save $file", it)
+            WeLogger.e(tag, "failed to save document $tag", it)
         }
     }
 }

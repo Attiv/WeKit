@@ -7,6 +7,7 @@ import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
 import dev.ujhhgtg.wekit.agent.data.WeAgentSettings
 import dev.ujhhgtg.wekit.agent.data.entity.LinuxEnvironmentEntity
 import dev.ujhhgtg.wekit.agent.ssh.EncryptedSshCredentials
+import dev.ujhhgtg.wekit.agent.ssh.SshCredentials
 import dev.ujhhgtg.wekit.agent.ssh.SshCredentialStore
 import dev.ujhhgtg.wekit.agent.ssh.SshEndpoint
 import dev.ujhhgtg.wekit.agent.ssh.SshHostKey
@@ -372,10 +373,19 @@ class LinuxEnvironmentManager(
             LinuxEnvironmentType.PROOT -> ProotBackend(snapshot)
             LinuxEnvironmentType.SSH -> {
                 val stored = requireNotNull(entity)
-                val encrypted = EncryptedSshCredentials(
-                    requireNotNull(stored.sshCredentialCiphertext) { "SSH credentials are missing" },
-                    requireNotNull(stored.sshCredentialIv) { "SSH credential IV is missing" },
-                )
+                val credentials = when {
+                    stored.sshPassword != null -> SshCredentials.Password(stored.sshPassword)
+                    stored.sshPrivateKey != null -> SshCredentials.PrivateKey(
+                        stored.sshPrivateKey,
+                        stored.sshPrivateKeyPassphrase,
+                    )
+                    else -> SshCredentialStore.decrypt(
+                        EncryptedSshCredentials(
+                            requireNotNull(stored.sshCredentialCiphertext) { "SSH credentials are missing" },
+                            requireNotNull(stored.sshCredentialIv) { "SSH credential IV is missing" },
+                        ),
+                    )
+                }
                 val confirmed = stored.sshHostKeyFingerprint?.let { fingerprint ->
                     SshHostKey(requireNotNull(stored.sshHostKeyAlgorithm), fingerprint)
                 }
@@ -388,7 +398,7 @@ class LinuxEnvironmentManager(
                             requireNotNull(stored.sshUsername),
                             confirmed,
                         ),
-                        SshCredentialStore.decrypt(encrypted),
+                        credentials,
                     ),
                 )
             }

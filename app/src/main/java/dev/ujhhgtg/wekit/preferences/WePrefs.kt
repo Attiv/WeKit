@@ -55,7 +55,7 @@ abstract class WePrefs protected constructor() : SharedPreferences, SharedPrefer
     companion object {
         const val PREFS_NAME = "wekit_prefs"
 
-        val default by lazy { MmkvPrefsImpl(PREFS_NAME) }
+        val default by lazy { RoomPrefsImpl(PREFS_NAME) }
 
         fun getBoolOrFalse(key: String): Boolean {
             return default.getBoolOrFalse(key)
