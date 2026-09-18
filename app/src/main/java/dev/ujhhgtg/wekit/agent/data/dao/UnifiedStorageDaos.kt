@@ -83,6 +83,9 @@ interface AssetDao {
     @Query("SELECT bytes FROM asset_chunks WHERE assetId = :assetId ORDER BY ordinal")
     suspend fun getChunks(assetId: String): List<ByteArray>
 
+    @Query("SELECT COUNT(*) FROM asset_chunks WHERE assetId = :assetId")
+    suspend fun countChunks(assetId: String): Int
+
     @Query("DELETE FROM asset_chunks WHERE assetId = :assetId")
     suspend fun deleteChunks(assetId: String)
 

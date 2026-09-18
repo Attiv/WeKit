@@ -11,8 +11,10 @@ import dev.ujhhgtg.wekit.loader.entry.zygisk.ArtHookBridge
 import dev.ujhhgtg.wekit.loader.entry.zygisk.ZygiskLoaderService
 import dev.ujhhgtg.wekit.loader.utils.HybridClassLoader
 import dev.ujhhgtg.wekit.loader.utils.NativeLoader
+import dev.ujhhgtg.wekit.agent.data.LegacyDocumentMigration
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.utils.fs.LegacyStorageMigration
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.File
 import java.lang.reflect.Field
@@ -58,6 +60,8 @@ object StartupAgent {
 
         HostInfo.init(application)
         NativeLoader.init(application)
+        LegacyStorageMigration.run(application)
+        LegacyDocumentMigration.run(application)
         if (hookBridge is ArtHookBridge) {
             hideModuleLibraries(hookBridge)
         }
