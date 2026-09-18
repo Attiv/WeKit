@@ -60,6 +60,7 @@ object BackupCoordinator {
         val formatVersion: Int,
         val packageName: String,
         val moduleVersion: String,
+        val schemaVersion: Int,
         val abis: List<String>,
         val extensions: List<ExtensionRequirement>,
         val files: List<ManifestFile>,
@@ -78,8 +79,9 @@ object BackupCoordinator {
         try {
             snapshotDatabase(database, scratch)
             files += ManifestFile(DATABASE, scratch.length(), sha256(scratch))
+            val schemaVersion = databaseSchemaVersion(scratch)
             ZipOutputStream(BufferedOutputStream(FileOutputStream(output))).use { zip ->
-                writeFile(zip, MANIFEST, manifestJson(context, files, extensions).toByteArray(Charsets.UTF_8))
+                writeFile(zip, MANIFEST, manifestJson(context, files, extensions, schemaVersion).toByteArray(Charsets.UTF_8))
                 writeFile(zip, DATABASE, scratch)
                 for (directory in managedDirectories) {
                     val source = File(root, directory)
@@ -95,7 +97,7 @@ object BackupCoordinator {
                 }
             }
             // The manifest must describe all entries, including the files added after the DB.
-            rewriteManifest(output, context, files, extensions)
+            rewriteManifest(output, context, files, extensions, schemaVersion)
             return Result(output, files.size)
         } finally {
             scratch.delete()
@@ -182,11 +184,13 @@ object BackupCoordinator {
         context: Context,
         files: List<ManifestFile>,
         extensions: List<ExtensionRequirement>,
+        schemaVersion: Int,
     ): String =
         DefaultJson.encodeToString(buildJsonObject {
             put("formatVersion", FORMAT_VERSION)
             put("packageName", context.packageName)
             put("moduleVersion", BuildConfig.VERSION_NAME)
+            put("schemaVersion", schemaVersion)
             put("abis", buildJsonArray { Build.SUPPORTED_ABIS.forEach { add(JsonPrimitive(it)) } })
             put("extensions", buildJsonArray {
                 extensions.forEach { extension ->
@@ -213,6 +217,7 @@ object BackupCoordinator {
         context: Context,
         files: List<ManifestFile>,
         extensions: List<ExtensionRequirement>,
+        schemaVersion: Int,
     ) {
         val temp = File(output.parentFile, ".${output.name}.rewrite")
         ZipInputStream(BufferedInputStream(FileInputStream(output))).use { input ->
@@ -226,7 +231,7 @@ object BackupCoordinator {
                     }
                     entry = input.nextEntry
                 }
-                writeFile(zip, MANIFEST, manifestJson(context, files, extensions).toByteArray(Charsets.UTF_8))
+                writeFile(zip, MANIFEST, manifestJson(context, files, extensions, schemaVersion).toByteArray(Charsets.UTF_8))
             }
         }
         check(temp.renameTo(output)) { "无法写入备份清单" }
@@ -289,6 +294,7 @@ object BackupCoordinator {
             json["formatVersion"]!!.jsonPrimitive.content.toInt(),
             json["packageName"]!!.jsonPrimitive.content,
             json["moduleVersion"]!!.jsonPrimitive.content,
+            json["schemaVersion"]!!.jsonPrimitive.content.toInt(),
             json["abis"]!!.jsonArray.map { it.jsonPrimitive.content },
             json["extensions"]!!.jsonArray.map { item ->
                 val obj = item.jsonObject
@@ -343,6 +349,20 @@ object BackupCoordinator {
         sqlite.use { db ->
             db.rawQuery("PRAGMA integrity_check", null).use { cursor ->
                 check(cursor.moveToFirst() && cursor.getString(0) == "ok") { "数据库完整性校验失败" }
+            }
+        }
+    }
+
+    private fun databaseSchemaVersion(database: File): Int {
+        val sqlite = android.database.sqlite.SQLiteDatabase.openDatabase(
+            database.absolutePath,
+            null,
+            android.database.sqlite.SQLiteDatabase.OPEN_READONLY,
+        )
+        return sqlite.use { db ->
+            db.rawQuery("PRAGMA user_version", null).use { cursor ->
+                check(cursor.moveToFirst()) { "无法读取数据库 schema 版本" }
+                cursor.getInt(0)
             }
         }
     }
