@@ -161,8 +161,13 @@ object BackupCoordinator {
         File(HostInfo.application.filesDir, "wekit-python").deleteRecursively()
         File(HostInfo.application.filesDir, "wekit_skip_rewarded_js").deleteRecursively()
         File(HostInfo.application.filesDir, ".wekit-native").deleteRecursively()
+        File(HostInfo.application.codeCacheDir, "generated_proxy_classes").deleteRecursively()
         val mmkv = File(HostInfo.application.filesDir, "mmkv")
         listOf("wekit_prefs", "wekit_prefs.crc").forEach { File(mmkv, it).delete() }
+        mmkv.listFiles()
+            .orEmpty()
+            .filter { it.name.startsWith(".wekit-bootstrap-") }
+            .forEach(File::delete)
     }
 
     fun storageRoot(context: Context): File = File(context.filesDir, "wekit")
