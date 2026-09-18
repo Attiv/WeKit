@@ -33,7 +33,7 @@ class WeAgentDatabaseRelocatorTest {
     }
 
     @Test
-    fun `commit keeps private copy and deletes external sidecars`() {
+    fun `commit keeps legacy source and sidecars for explicit cleanup`() {
         val source = sourceDatabase("payload")
         File(source.path + "-journal").writeText("")
         val destination = root.resolve("private/weagent.db").toFile()
@@ -42,8 +42,8 @@ class WeAgentDatabaseRelocatorTest {
         assertTrue(prepared.migratedNow)
         assertEquals("payload", destination.readText())
         relocator.commit(prepared)
-        assertFalse(source.exists())
-        assertFalse(File(source.path + "-journal").exists())
+        assertTrue(source.exists())
+        assertTrue(File(source.path + "-journal").exists())
     }
 
     @Test
