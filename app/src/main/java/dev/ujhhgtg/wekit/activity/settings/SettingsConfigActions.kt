@@ -5,7 +5,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.activity.TransparentActivity
-import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.showToastSuspend
@@ -87,9 +86,6 @@ object SettingsConfigActions {
 
     fun clear() {
         BackupCoordinator.clearAll(HostInfo.application)
-        // Keep this call for one release so an upgrade cannot resurrect MMKV values that were
-        // written by an older build while the unified Room migration is being finalized.
-        WePrefs.default.clear()
     }
 
     fun clearAndRestart() {
