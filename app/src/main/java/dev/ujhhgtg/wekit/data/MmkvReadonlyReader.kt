@@ -1,4 +1,4 @@
-package dev.ujhhgtg.wekit.preferences
+package dev.ujhhgtg.wekit.data
 
 import java.io.File
 import java.nio.ByteBuffer

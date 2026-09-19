@@ -32,7 +32,7 @@ import dev.ujhhgtg.wekit.features.items.AutomationTimeRangeRule
 import dev.ujhhgtg.wekit.features.items.AutomationToggleRule
 import dev.ujhhgtg.wekit.features.items.automationKeywordSummary
 import dev.ujhhgtg.wekit.features.items.formatAutomationMinute
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.TextButton

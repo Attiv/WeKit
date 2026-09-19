@@ -9,7 +9,7 @@ import androidx.compose.runtime.setValue
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
 import dev.ujhhgtg.wekit.constants.Preferences
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.ui.content.nuke.NukePopupAnimationMode
 import dev.ujhhgtg.wekit.ui.utils.theme.ThemeSettings.applyToWechat
 import dev.ujhhgtg.wekit.ui.utils.theme.ThemeSettings.colorSpec

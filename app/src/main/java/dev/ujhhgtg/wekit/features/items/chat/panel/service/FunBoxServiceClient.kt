@@ -2,7 +2,7 @@ package dev.ujhhgtg.wekit.features.items.chat.panel.service
 
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.features.items.chat.localizedChatString
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.coroutines.CancellationException

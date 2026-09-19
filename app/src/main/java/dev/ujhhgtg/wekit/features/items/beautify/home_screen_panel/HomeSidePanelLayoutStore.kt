@@ -1,6 +1,6 @@
 package dev.ujhhgtg.wekit.features.items.beautify.home_screen_panel
 
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 

@@ -16,8 +16,8 @@ import dev.ujhhgtg.reflekt.utils.Modifiers
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
-import dev.ujhhgtg.wekit.preferences.KvStore
-import dev.ujhhgtg.wekit.preferences.KvStore.getBoolOrFalse
+import dev.ujhhgtg.wekit.data.KvStore
+import dev.ujhhgtg.wekit.data.KvStore.getBoolOrFalse
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn

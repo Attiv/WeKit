@@ -9,7 +9,7 @@ import dev.ujhhgtg.wekit.features.items.scripting_python.runtime.PythonRuntimeLi
 import dev.ujhhgtg.wekit.features.items.scripting_python.runtime.PythonRuntimeLoader
 import dev.ujhhgtg.wekit.features.items.scripting_python.runtime.PythonRuntimeMissingException
 import dev.ujhhgtg.wekit.features.items.scripting_python.services.PythonPluginHostImpl
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.python.api.PythonPluginRequest
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths

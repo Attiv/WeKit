@@ -55,7 +55,7 @@
 //import dev.ujhhgtg.wekit.features.api.core.WeConversationApi
 //import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
 //import dev.ujhhgtg.wekit.features.core.ClickableFeature
-//import dev.ujhhgtg.wekit.preferences.KvStore
+//import dev.ujhhgtg.wekit.data.KvStore
 //import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 //import dev.ujhhgtg.wekit.ui.content.Button
 //import dev.ujhhgtg.wekit.ui.content.DefaultColumn

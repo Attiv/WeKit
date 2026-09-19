@@ -1,5 +1,6 @@
 package dev.ujhhgtg.wekit.preferences
 
+import dev.ujhhgtg.wekit.data.MmkvReadonlyReader
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.CRC32

@@ -16,7 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import dev.ujhhgtg.wekit.constants.Preferences
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import java.util.Locale
 
 object WeKitLocaleController : ComponentCallbacks {

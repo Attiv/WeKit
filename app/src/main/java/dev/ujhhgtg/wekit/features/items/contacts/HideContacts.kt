@@ -48,8 +48,8 @@ import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.installVoipHooks
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.rewriteMomentsFeedSql
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.showSchedulesDialog
 import dev.ujhhgtg.wekit.features.items.contacts.hidecontacts.uninstallSchedules
-import dev.ujhhgtg.wekit.preferences.KvStore
-import dev.ujhhgtg.wekit.preferences.KvStore.prefOption
+import dev.ujhhgtg.wekit.data.KvStore
+import dev.ujhhgtg.wekit.data.KvStore.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.ContactsSelector
 import dev.ujhhgtg.wekit.ui.content.TextButton
@@ -68,7 +68,6 @@ import java.lang.ref.WeakReference
 import kotlin.math.sqrt
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
-import java.lang.reflect.Modifier as JavaModifier
 
 
 object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputBarListener,

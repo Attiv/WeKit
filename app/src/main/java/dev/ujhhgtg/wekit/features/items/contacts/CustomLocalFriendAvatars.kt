@@ -33,7 +33,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.platform.LocalContext
 import dev.ujhhgtg.wekit.R
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.toDrawable
@@ -41,7 +40,6 @@ import androidx.core.net.toUri
 import dev.ujhhgtg.reflekt.fields
 import dev.ujhhgtg.reflekt.firstField
 import dev.ujhhgtg.reflekt.firstMethod
-import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.Modifiers
 import dev.ujhhgtg.reflekt.utils.isSubclassOf
 import dev.ujhhgtg.reflekt.utils.makeAccessible
@@ -61,7 +59,7 @@ import dev.ujhhgtg.wekit.features.api.ui.WeContactPrefsScreenApi.PreferenceItem
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
 import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
-import dev.ujhhgtg.wekit.preferences.KvStore.prefOption
+import dev.ujhhgtg.wekit.data.KvStore.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.BaseContactSelector
 import dev.ujhhgtg.wekit.ui.content.Button
@@ -96,7 +94,6 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.readText
-import kotlin.io.path.writeText
 import kotlin.math.min
 
 object CustomLocalFriendAvatars : ClickableFeature(), IContactInfoProvider, IResolveDex {

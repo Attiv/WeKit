@@ -64,7 +64,7 @@ import dev.ujhhgtg.wekit.features.core.featureCategoryComparator
 import dev.ujhhgtg.wekit.features.items.system.SafeMode
 import dev.ujhhgtg.wekit.i18n.WeKitLocaleController
 import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.ui.content.nuke.NukeCategoryIcon
 import dev.ujhhgtg.wekit.ui.content.nuke.NukeCountAndChevron
 import dev.ujhhgtg.wekit.ui.content.nuke.NukeDivider

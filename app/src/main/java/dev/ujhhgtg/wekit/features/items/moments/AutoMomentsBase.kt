@@ -11,7 +11,7 @@ import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.isSubclassOf
 import dev.ujhhgtg.wekit.features.api.ui.WeMomentsApi
 import dev.ujhhgtg.wekit.features.api.core.WeApi
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.features.api.ui.WeMomentsApi.classImproveInteractionLayout
 import dev.ujhhgtg.wekit.features.api.ui.WeMomentsApi.classImproveSnsInfo
 import dev.ujhhgtg.wekit.features.api.ui.WeMomentsApi.fieldInteractionSnsInfo

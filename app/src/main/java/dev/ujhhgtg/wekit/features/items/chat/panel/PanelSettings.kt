@@ -1,6 +1,6 @@
 package dev.ujhhgtg.wekit.features.items.chat.panel
 
-import dev.ujhhgtg.wekit.preferences.KvStore.prefOption
+import dev.ujhhgtg.wekit.data.KvStore.prefOption
 
 object PanelSettings {
     const val DEFAULT_FUNBOX_API_CLIENT_WXID = "wxid_1234567890abcd"

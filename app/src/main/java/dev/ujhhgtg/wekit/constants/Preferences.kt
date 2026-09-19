@@ -1,6 +1,6 @@
 package dev.ujhhgtg.wekit.constants
 
-import dev.ujhhgtg.wekit.preferences.KvStore.prefOption
+import dev.ujhhgtg.wekit.data.KvStore.prefOption
 
 object Preferences {
 

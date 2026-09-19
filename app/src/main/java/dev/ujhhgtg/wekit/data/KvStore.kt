@@ -1,6 +1,6 @@
-package dev.ujhhgtg.wekit.preferences
+package dev.ujhhgtg.wekit.data
 
-import dev.ujhhgtg.wekit.data.WeKitDatabase
+import android.database.Cursor
 import dev.ujhhgtg.wekit.data.entity.PreferenceEntryEntity
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -402,7 +402,7 @@ object KvStore {
 }
 
 private fun Long.toIntOrNull(type: String?): Int? = if (type == "int") toInt() else null
-private fun android.database.Cursor.getStringOrNull(index: Int): String? = if (isNull(index)) null else getString(index)
-private fun android.database.Cursor.getLongOrNull(index: Int): Long? = if (isNull(index)) null else getLong(index)
-private fun android.database.Cursor.getDoubleOrNull(index: Int): Double? = if (isNull(index)) null else getDouble(index)
-private fun android.database.Cursor.getBlobOrNull(index: Int): ByteArray? = if (isNull(index)) null else getBlob(index)
+private fun Cursor.getStringOrNull(index: Int): String? = if (isNull(index)) null else getString(index)
+private fun Cursor.getLongOrNull(index: Int): Long? = if (isNull(index)) null else getLong(index)
+private fun Cursor.getDoubleOrNull(index: Int): Double? = if (isNull(index)) null else getDouble(index)
+private fun Cursor.getBlobOrNull(index: Int): ByteArray? = if (isNull(index)) null else getBlob(index)

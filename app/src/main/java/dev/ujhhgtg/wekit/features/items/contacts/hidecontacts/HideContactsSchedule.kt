@@ -10,7 +10,7 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import dev.ujhhgtg.wekit.features.items.contacts.HideContacts
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.TargetProcesses
 import dev.ujhhgtg.wekit.utils.WeLogger

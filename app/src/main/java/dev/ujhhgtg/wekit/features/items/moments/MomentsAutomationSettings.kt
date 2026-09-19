@@ -45,7 +45,7 @@ import dev.ujhhgtg.wekit.features.items.payment.PaymentTextEditDialog
 import dev.ujhhgtg.wekit.features.items.payment.PaymentTextEditMode
 import dev.ujhhgtg.wekit.features.items.payment.keywordItems
 import dev.ujhhgtg.wekit.features.items.payment.timeRangeItems
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.TextButton

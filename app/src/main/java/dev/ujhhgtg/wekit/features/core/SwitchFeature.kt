@@ -1,7 +1,7 @@
 package dev.ujhhgtg.wekit.features.core
 
 import android.content.Context
-import dev.ujhhgtg.wekit.preferences.KvStore
+import dev.ujhhgtg.wekit.data.KvStore
 import dev.ujhhgtg.wekit.utils.WeLogger
 
 abstract class SwitchFeature : BaseFeature() {
