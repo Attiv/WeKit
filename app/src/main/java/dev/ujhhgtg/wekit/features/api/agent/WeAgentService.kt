@@ -3,7 +3,7 @@ package dev.ujhhgtg.wekit.features.api.agent
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
-import dev.ujhhgtg.wekit.agent.data.WeAgentDatabase
+import dev.ujhhgtg.wekit.data.WeKitDatabase
 import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
 import dev.ujhhgtg.wekit.agent.data.WeAgentSettings
 import dev.ujhhgtg.wekit.agent.data.entity.ApprovalStatus
@@ -256,7 +256,7 @@ object WeAgentService : TriggerManager.TriggerHost {
 
     private suspend fun initialize() {
         // Warm the DB, load settings.
-        WeAgentDatabase.instance
+        WeKitDatabase.instance
         linuxEnvironmentManager.initialize()
         WeAgentSettings.load()
         toolBridgeServer.start()

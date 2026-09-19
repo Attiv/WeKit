@@ -1,6 +1,6 @@
-package dev.ujhhgtg.wekit.agent.data
+package dev.ujhhgtg.wekit.data
 
-import dev.ujhhgtg.wekit.agent.data.entity.DocumentEntity
+import dev.ujhhgtg.wekit.data.entity.DocumentEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -12,7 +12,7 @@ import java.io.File
  * that API shape here while doing every Room call on the IO dispatcher; callers must still avoid
  * invoking this facade from latency-sensitive hook callbacks.
  */
-object UnifiedDocumentStore {
+object DocumentStore {
     fun read(namespace: String, key: String, legacyFile: File? = null): String? {
         get(namespace, key)?.let { return it.content }
         val legacy = legacyFile?.takeIf(File::isFile)?.readText() ?: return null

@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import dev.ujhhgtg.wekit.R
+import dev.ujhhgtg.wekit.data.DocumentStore
 import dev.ujhhgtg.wekit.features.api.net.WePacketHelper
 import dev.ujhhgtg.wekit.features.api.net.models.protobuf.BeforeTransferRespProto
 import dev.ujhhgtg.wekit.features.api.net.models.protobuf.BeforeTransferReqProto
@@ -23,7 +24,7 @@ import dev.ujhhgtg.wekit.features.api.ui.WeContactPrefsScreenApi.PreferenceItem
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
-import dev.ujhhgtg.wekit.preferences.WePrefs
+import dev.ujhhgtg.wekit.preferences.KvStore
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.DefaultColumn
@@ -34,16 +35,13 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.currentWxId
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
+import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.div
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.writeText
 
 object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoProvider {
 
@@ -60,7 +58,7 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
      * Foreground color for the real-name annotation. Exposed so
      * [DisplayGroupMemberRealName] (the sole TextView annotator) can read the same preference.
      */
-    var annotationFg by WePrefs.prefOption("real_name_last_char_fg", DEFAULT_FG)
+    var annotationFg by KvStore.prefOption("real_name_last_char_fg", DEFAULT_FG)
 
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {
@@ -91,7 +89,8 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
 
     /**
      * wxId → masked real name (last char). Only confirmed hits are stored here.
-     * Persisted to [cacheFile] across sessions.
+     * Persisted in the unified document store; [cacheFile] is the pre-unified location,
+     * imported on the first read and left in place for rollback.
      * Exposed so [DisplayGroupMemberRealName] can read it for combined display.
      */
     val realNames = ConcurrentHashMap<String, String>()
@@ -118,18 +117,17 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
 
     private fun loadCache() {
         runCatching {
-            val file = cacheFile
-            if (!file.exists()) return
-            val map = Json.decodeFromString<Map<String, String>>(file.readText())
+            val raw = DocumentStore.read("chat", "real_names_last_char", cacheFile.toFile()) ?: return
+            val map = DefaultJson.decodeFromString<Map<String, String>>(raw)
             realNames.putAll(map)
             WeLogger.d(TAG, "loaded ${map.size} cached real names")
-        }.onFailure { WeLogger.w(TAG, "failed to load $cacheFile", it) }
+        }.onFailure { WeLogger.w(TAG, "failed to load real-name cache", it) }
     }
 
     private fun saveCache() {
         runCatching {
-            cacheFile.writeText(Json.encodeToString(realNames.toMap()))
-        }.onFailure { WeLogger.w(TAG, "failed to save $cacheFile", it) }
+            DocumentStore.write("chat", "real_names_last_char", DefaultJson.encodeToString(realNames.toMap()))
+        }.onFailure { WeLogger.w(TAG, "failed to save real-name cache", it) }
     }
 
     // ── Network fetch ─────────────────────────────────────────────────────────

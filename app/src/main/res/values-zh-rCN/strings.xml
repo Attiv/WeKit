@@ -286,6 +286,8 @@
     <string name="settings_import_config_summary">校验备份后替换全部模块数据并重启微信</string>
     <string name="settings_clear_config_title">清除数据</string>
     <string name="settings_clear_config_summary">删除模块数据库、脚本、扩展包、缓存和临时文件</string>
+    <string name="settings_cleanup_legacy_title">清理旧数据</string>
+    <string name="settings_cleanup_legacy_summary">删除迁移后旧存储位置中保留的文件</string>
     <string name="settings_section_update">更新</string>
     <string name="settings_check_update_title">检查更新</string>
     <string name="settings_check_update_summary">立即检查模块是否有新版本并自动下载</string>
@@ -360,6 +362,9 @@
     <string name="clear_config_dialog_message">确定删除 Room 数据库、脚本、扩展包、日志、崩溃记录、缓存和临时文件吗？此操作不可逆。</string>
     <string name="config_clearing">正在清除…</string>
     <string name="config_clear_success">清除成功!</string>
+    <string name="cleanup_legacy_dialog_title">清理旧数据</string>
+    <string name="cleanup_legacy_dialog_message">确定删除迁移后保留在旧位置的 WeKit 文件吗？当前模块数据不会受到影响。</string>
+    <string name="cleanup_legacy_success">旧数据清理成功!</string>
     <string name="update_available_title">检测到新版本</string>
     <string name="update_available_message">当前版本: %1$s\n新版本: %2$s\n是否下载并安装?</string>
     <string name="update_download_failed">下载更新失败: %1$s</string>

@@ -120,7 +120,7 @@ import dev.ujhhgtg.wekit.features.items.beautify.home_screen_panel.HomeSidePanel
 import dev.ujhhgtg.wekit.features.items.contacts.HideContacts
 import dev.ujhhgtg.wekit.i18n.LocalWeKitLocalizedContext
 import dev.ujhhgtg.wekit.i18n.HostLocalizedStrings
-import dev.ujhhgtg.wekit.preferences.WePrefs
+import dev.ujhhgtg.wekit.preferences.KvStore
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.ContactsSelector
@@ -136,7 +136,7 @@ import dev.ujhhgtg.wekit.ui.utils.setLifecycleOwner
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.ui.utils.theme.InjectedUiTheme
 import dev.ujhhgtg.wekit.utils.WeLogger
-import dev.ujhhgtg.wekit.agent.data.UnifiedDocumentStore
+import dev.ujhhgtg.wekit.data.DocumentStore
 import dev.ujhhgtg.wekit.utils.invokeOriginalMethod
 import dev.ujhhgtg.wekit.utils.android.baseActivity
 import dev.ujhhgtg.wekit.utils.android.showToast
@@ -189,16 +189,16 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private const val TAB_STYLE_FULL_WIDTH = 0
     private const val TAB_STYLE_FLOATING = 1
 
-    private var tabStyle by WePrefs.prefOption(TAB_STYLE_KEY, TAB_STYLE_FULL_WIDTH)
+    private var tabStyle by KvStore.prefOption(TAB_STYLE_KEY, TAB_STYLE_FULL_WIDTH)
     private val tabStyleState by lazy { mutableStateOf(tabStyle) }
-    private var pinTabs by WePrefs.prefOption("conversation_grouping_pin_tabs", true)
-    private var takeOverHorizontalScroll by WePrefs.prefOption("conversation_grouping_take_over_horizontal_scroll", true)
-    private var rememberScrollState by WePrefs.prefOption("conversation_grouping_remember_scroll_state", false)
+    private var pinTabs by KvStore.prefOption("conversation_grouping_pin_tabs", true)
+    private var takeOverHorizontalScroll by KvStore.prefOption("conversation_grouping_take_over_horizontal_scroll", true)
+    private var rememberScrollState by KvStore.prefOption("conversation_grouping_remember_scroll_state", false)
     private var swipeHooksInstalled = false
     private val swipeSessions = WeakHashMap<ViewGroup, WeakReference<ConversationGroupSwipeSession>>()
-    private var showUnread by WePrefs.prefOption("conversation_grouping_show_unread", true)
+    private var showUnread by KvStore.prefOption("conversation_grouping_show_unread", true)
     private val showUnreadState by lazy { mutableStateOf(showUnread) }
-    private var includeOfficialUnread by WePrefs.prefOption("conversation_grouping_include_official_unread", false)
+    private var includeOfficialUnread by KvStore.prefOption("conversation_grouping_include_official_unread", false)
     private val tabHosts = Collections.newSetFromMap(WeakHashMap<ConversationGroupTabsHost, Boolean>())
 
     private val groupTabHorizontalPadding = 16.dp
@@ -209,13 +209,13 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     /** Called once at startup, before any feature UI can change the old beauty preference. */
     fun migrateTabStyle(legacyFloatingTabs: Boolean) {
-        if (WePrefs.containsKey(TAB_STYLE_KEY)) return
+        if (KvStore.containsKey(TAB_STYLE_KEY)) return
         // Persist the full-width result too: future beauty toggles must never repeat migration.
         updateTabStyle(if (legacyFloatingTabs) TAB_STYLE_FLOATING else TAB_STYLE_FULL_WIDTH)
     }
 
     private fun updateTabStyle(style: Int) {
-        if (WePrefs.containsKey(TAB_STYLE_KEY) && tabStyle == style) return
+        if (KvStore.containsKey(TAB_STYLE_KEY) && tabStyle == style) return
         swipeSessions.values.mapNotNull { it.get() }.forEach { it.cancelImmediately() }
         tabStyle = style
         tabStyleState.value = style
@@ -2441,13 +2441,13 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         val file = groupsFile
         // First run (no config yet): seed the groups that used to be the built-in tabs so the tab
         // bar isn't empty out of the box, then persist them so they're editable / deletable.
-        if (UnifiedDocumentStore.read("chat", "groups", file.toFile()) == null) {
+        if (DocumentStore.read("chat", "groups", file.toFile()) == null) {
             val defaults = defaultGroups()
             saveGroups(defaults)
             return defaults
         }
         val groups = runCatching {
-            val raw = UnifiedDocumentStore.read("chat", "groups", file.toFile()) ?: return@runCatching emptyList()
+            val raw = DocumentStore.read("chat", "groups", file.toFile()) ?: return@runCatching emptyList()
             DefaultJson.decodeFromString<List<ChatGroup>>(raw)
                 .map { group ->
                     group.copy(members = group.members.filter { it.isNotBlank() })
@@ -2517,7 +2517,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         groupMembersCache.clear()
         runCatching {
             val raw = DefaultJson.encodeToString(groups)
-            UnifiedDocumentStore.write("chat", "groups", raw)
+            DocumentStore.write("chat", "groups", raw)
         }.onFailure {
             WeLogger.w(TAG, "failed to save groups to $groupsFile", it)
         }

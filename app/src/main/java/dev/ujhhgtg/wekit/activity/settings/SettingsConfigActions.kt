@@ -88,6 +88,10 @@ object SettingsConfigActions {
         BackupCoordinator.clearAll(HostInfo.application)
     }
 
+    fun clearLegacyData() {
+        BackupCoordinator.clearLegacyData(HostInfo.application)
+    }
+
     fun clearAndRestart() {
         clear()
         restartHost()

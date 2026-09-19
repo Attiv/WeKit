@@ -1,4 +1,4 @@
-package dev.ujhhgtg.wekit.agent.data.entity
+package dev.ujhhgtg.wekit.data.entity
 
 import androidx.room.Entity
 import androidx.room.Index

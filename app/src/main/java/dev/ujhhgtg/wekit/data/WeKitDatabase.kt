@@ -1,4 +1,4 @@
-package dev.ujhhgtg.wekit.agent.data
+package dev.ujhhgtg.wekit.data
 
 import androidx.room.AutoMigration
 import androidx.room.Database
@@ -7,58 +7,60 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
-import java.io.File
+import dev.ujhhgtg.wekit.data.dao.AssetDao
+import dev.ujhhgtg.wekit.agent.data.dao.BridgeToolAuditDao
 import dev.ujhhgtg.wekit.agent.data.dao.ConditionalPromptDao
+import dev.ujhhgtg.wekit.data.dao.DocumentDao
+import dev.ujhhgtg.wekit.data.dao.ExtensionInstallDao
 import dev.ujhhgtg.wekit.agent.data.dao.ExternalServiceDao
-import dev.ujhhgtg.wekit.agent.data.dao.MessageDao
 import dev.ujhhgtg.wekit.agent.data.dao.LinuxEnvironmentDao
+import dev.ujhhgtg.wekit.data.dao.ManagedDataDao
+import dev.ujhhgtg.wekit.agent.data.dao.MessageDao
 import dev.ujhhgtg.wekit.agent.data.dao.ModelDao
 import dev.ujhhgtg.wekit.agent.data.dao.ModelProviderDao
 import dev.ujhhgtg.wekit.agent.data.dao.PerTurnPromptDao
+import dev.ujhhgtg.wekit.data.dao.PreferenceDao
 import dev.ujhhgtg.wekit.agent.data.dao.PresetPromptDao
 import dev.ujhhgtg.wekit.agent.data.dao.ProviderDao
+import dev.ujhhgtg.wekit.data.dao.ScriptCatalogDao
 import dev.ujhhgtg.wekit.agent.data.dao.SessionDao
 import dev.ujhhgtg.wekit.agent.data.dao.SettingDao
 import dev.ujhhgtg.wekit.agent.data.dao.SystemPromptDao
 import dev.ujhhgtg.wekit.agent.data.dao.ToolCallDao
 import dev.ujhhgtg.wekit.agent.data.dao.TriggerDao
-import dev.ujhhgtg.wekit.agent.data.dao.BridgeToolAuditDao
-import dev.ujhhgtg.wekit.agent.data.dao.AssetDao
-import dev.ujhhgtg.wekit.agent.data.dao.DocumentDao
-import dev.ujhhgtg.wekit.agent.data.dao.ExtensionInstallDao
-import dev.ujhhgtg.wekit.agent.data.dao.ManagedDataDao
-import dev.ujhhgtg.wekit.agent.data.dao.PreferenceDao
-import dev.ujhhgtg.wekit.agent.data.dao.ScriptCatalogDao
+import dev.ujhhgtg.wekit.data.entity.AssetBindingEntity
+import dev.ujhhgtg.wekit.data.entity.AssetChunkEntity
+import dev.ujhhgtg.wekit.data.entity.AssetEntity
+import dev.ujhhgtg.wekit.agent.data.entity.BridgeToolAuditEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ConditionalPromptEntity
+import dev.ujhhgtg.wekit.data.entity.DexCacheDescriptorEntity
+import dev.ujhhgtg.wekit.data.entity.DexCacheEntryEntity
+import dev.ujhhgtg.wekit.data.entity.DocumentEntity
+import dev.ujhhgtg.wekit.data.entity.ExtensionInstallEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ExternalServiceEntity
-import dev.ujhhgtg.wekit.agent.data.entity.MessageEntity
 import dev.ujhhgtg.wekit.agent.data.entity.LinuxEnvironmentEntity
+import dev.ujhhgtg.wekit.data.entity.ManagedDataEntryEntity
+import dev.ujhhgtg.wekit.agent.data.entity.MessageEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ModelEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ModelProviderEntity
 import dev.ujhhgtg.wekit.agent.data.entity.PerTurnPromptEntity
+import dev.ujhhgtg.wekit.data.entity.PreferenceEntryEntity
+import dev.ujhhgtg.wekit.data.entity.PreferenceSetMemberEntity
 import dev.ujhhgtg.wekit.agent.data.entity.PresetPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ProviderEntity
+import dev.ujhhgtg.wekit.data.entity.ScriptCatalogEntity
 import dev.ujhhgtg.wekit.agent.data.entity.SessionEntity
 import dev.ujhhgtg.wekit.agent.data.entity.SettingEntity
 import dev.ujhhgtg.wekit.agent.data.entity.SystemPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ToolCallEntity
 import dev.ujhhgtg.wekit.agent.data.entity.TriggerEntity
-import dev.ujhhgtg.wekit.agent.data.entity.BridgeToolAuditEntity
-import dev.ujhhgtg.wekit.agent.data.entity.AssetBindingEntity
-import dev.ujhhgtg.wekit.agent.data.entity.AssetChunkEntity
-import dev.ujhhgtg.wekit.agent.data.entity.AssetEntity
-import dev.ujhhgtg.wekit.agent.data.entity.DocumentEntity
-import dev.ujhhgtg.wekit.agent.data.entity.ExtensionInstallEntity
-import dev.ujhhgtg.wekit.agent.data.entity.ManagedDataEntryEntity
-import dev.ujhhgtg.wekit.agent.data.entity.DexCacheEntryEntity
-import dev.ujhhgtg.wekit.agent.data.entity.DexCacheDescriptorEntity
-import dev.ujhhgtg.wekit.agent.data.entity.PreferenceEntryEntity
-import dev.ujhhgtg.wekit.agent.data.entity.PreferenceSetMemberEntity
-import dev.ujhhgtg.wekit.agent.data.entity.ScriptCatalogEntity
+import dev.ujhhgtg.wekit.agent.data.WeAgentConverters
+import dev.ujhhgtg.wekit.activity.settings.BackupCoordinator
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
-import dev.ujhhgtg.wekit.utils.fs.LegacyPaths
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
+import dev.ujhhgtg.wekit.utils.fs.LegacyPaths
+import java.io.File
 
 @Database(
     entities = [
@@ -97,7 +99,7 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
     ],
 )
 @TypeConverters(WeAgentConverters::class)
-abstract class WeAgentDatabase : RoomDatabase() {
+abstract class WeKitDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun messageDao(): MessageDao
     abstract fun toolCallDao(): ToolCallDao
@@ -121,12 +123,23 @@ abstract class WeAgentDatabase : RoomDatabase() {
     abstract fun managedDataDao(): ManagedDataDao
 
     companion object {
-        private const val TAG = "WeAgentDatabase"
+        private const val TAG = "WeKitDatabase"
+
+        const val FILE_NAME = "wekit.db"
+
+        /** Location of the unified database after the path migration has completed. */
+        val file: File
+            get() = KnownPaths.moduleRoot.resolve(FILE_NAME).toFile()
+
+        init {
+            BackupCoordinator.beforeBackup = { close() }
+            BackupCoordinator.beforeDatabaseReplace = { close() }
+        }
 
         @Volatile
-        private var INSTANCE: WeAgentDatabase? = null
+        private var INSTANCE: WeKitDatabase? = null
 
-        val instance: WeAgentDatabase
+        val instance: WeKitDatabase
             get() = INSTANCE ?: synchronized(this) {
                 INSTANCE ?: build().also { INSTANCE = it }
             }
@@ -289,56 +302,91 @@ abstract class WeAgentDatabase : RoomDatabase() {
             "CREATE INDEX IF NOT EXISTS `index_managed_data_entries_contentHash` ON `managed_data_entries` (`contentHash`)",
         )
 
-        private fun build(): WeAgentDatabase {
+        private fun build(): WeKitDatabase {
             val external = LegacyPaths.externalModuleRoot.resolve("agent/weagent.db").toFile()
             val oldUnified = KnownPaths.moduleRoot.resolve("wekit.db").toFile()
             val oldPrivate = LegacyPaths.privateWeAgentDatabase.toFile()
+            val movedPrivate = KnownPaths.moduleRoot.resolve("agent/weagent.db").toFile()
             val source = when {
                 oldUnified.isFile -> oldUnified
-                external.isFile -> external
-                oldPrivate.isFile -> oldPrivate
-                else -> null
+                else -> listOf(external, oldPrivate, movedPrivate)
+                    .filter(File::isFile)
+                    .maxByOrNull(File::lastModified)
             }
             val destination = KnownPaths.moduleRoot.resolve("wekit.db").toFile()
             val sourceFile = source ?: external
-            val relocator = WeAgentDatabaseRelocator(sourceFile, destination) { sourceFile ->
-                android.database.sqlite.SQLiteDatabase.openDatabase(
+            val relocator = LegacyDatabaseRelocator(sourceFile, destination) { sourceFile ->
+                val sourceDb = android.database.sqlite.SQLiteDatabase.openDatabase(
                     sourceFile.absolutePath,
                     null,
                     android.database.sqlite.SQLiteDatabase.OPEN_READWRITE,
-                ).close()
-            }
-            val prepared = relocator.prepare()
-            if (prepared.externalFallback) {
-                val failure = prepared.failure
-                if (failure == null) {
-                    WeLogger.e(TAG, "private storage migration failed; external database was not used")
-                } else {
-                    WeLogger.e(TAG, "private storage migration failed; external database was not used", failure)
+                )
+                sourceDb.use { sourceDb ->
+                    // A legacy database may still have committed pages in its WAL. Checkpoint it
+                    // before copying the main file so the destination is a complete snapshot. A
+                    // busy result means a reader still owns the WAL; abort relocation and keep
+                    // using the untouched source instead of silently losing those pages.
+                    sourceDb.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { cursor ->
+                        check(cursor.moveToFirst()) { "wal_checkpoint returned no result" }
+                        val busy = cursor.getInt(0)
+                        val frames = cursor.getInt(1)
+                        val checkpointed = cursor.getInt(2)
+                        check(busy == 0 && frames == checkpointed) {
+                            "legacy database WAL checkpoint was incomplete (busy=$busy, frames=$frames, checkpointed=$checkpointed)"
+                        }
+                    }
                 }
-                throw IllegalStateException("Unable to migrate the legacy WeAgent database into the unified database", failure)
             }
-            if (!prepared.migratedNow) return buildAt(prepared.file, JournalMode.WRITE_AHEAD_LOGGING)
-            val database = buildAt(prepared.file, JournalMode.WRITE_AHEAD_LOGGING)
-            return try {
-                database.openHelper.writableDatabase
-                relocator.commit(prepared)
-                database
-            } catch (t: Throwable) {
-                WeLogger.e(TAG, "migrated database failed to open; rolling back", t)
-                runCatching { database.close() }
-                relocator.rollback(prepared)
-                throw IllegalStateException("Unable to open the unified WeKit database", t)
+            // Keep the lock through Room's first open/migration. Without this, a second WeChat
+            // process can observe the freshly moved file while the first process is still opening
+            // it; if Room then fails and rolls back, the second process would hold a now-unlinked
+            // database handle and the next startup could lose the only migrated copy.
+            return relocator.withExclusiveLock {
+                val prepared = relocator.prepareLocked()
+                if (prepared.externalFallback) {
+                    val failure = prepared.failure
+                    if (failure == null) {
+                        WeLogger.e(TAG, "private storage migration failed; external database was not used")
+                    } else {
+                        WeLogger.e(TAG, "private storage migration failed; external database was not used", failure)
+                    }
+                    throw IllegalStateException("Unable to migrate the legacy WeAgent database into the unified database", failure)
+                }
+                val database = buildAt(prepared.file, JournalMode.WRITE_AHEAD_LOGGING)
+                return@withExclusiveLock try {
+                    database.openHelper.writableDatabase
+                    rewriteMovedEnvironmentPaths(database)
+                    relocator.commit(prepared)
+                    database
+                } catch (t: Throwable) {
+                    WeLogger.e(TAG, "migrated database failed to open; rolling back", t)
+                    runCatching { database.close() }
+                    relocator.rollbackLocked(prepared)
+                    throw IllegalStateException("Unable to open the unified WeKit database", t)
+                }
             }
         }
 
+        private fun rewriteMovedEnvironmentPaths(database: WeKitDatabase) {
+            val oldPrefix = LegacyPaths.privateAgentRoot.toFile().absolutePath + "/"
+            val newPrefix = KnownPaths.moduleRoot.resolve("agent").toFile().absolutePath + "/"
+            val db = database.openHelper.writableDatabase
+            db.execSQL(
+                "UPDATE linux_environments SET rootfsPath = REPLACE(rootfsPath, ?, ?) WHERE rootfsPath LIKE ?",
+                arrayOf(oldPrefix, newPrefix, "$oldPrefix%"),
+            )
+            db.execSQL(
+                "UPDATE linux_environments SET bridgePath = REPLACE(bridgePath, ?, ?) WHERE bridgePath LIKE ?",
+                arrayOf(oldPrefix, newPrefix, "$oldPrefix%"),
+            )
+        }
 
         private fun buildAt(
             dbFile: File,
             journalMode: JournalMode,
-        ): WeAgentDatabase = Room.databaseBuilder(
+        ): WeKitDatabase = Room.databaseBuilder(
             HostInfo.application,
-            WeAgentDatabase::class.java,
+            WeKitDatabase::class.java,
             dbFile.toString()
         )
             .setJournalMode(journalMode)

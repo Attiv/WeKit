@@ -1,4 +1,4 @@
-package dev.ujhhgtg.wekit.agent.data.dao
+package dev.ujhhgtg.wekit.data.dao
 
 import android.database.Cursor
 import androidx.room.Dao
@@ -6,15 +6,15 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Upsert
-import dev.ujhhgtg.wekit.agent.data.entity.AssetBindingEntity
-import dev.ujhhgtg.wekit.agent.data.entity.AssetChunkEntity
-import dev.ujhhgtg.wekit.agent.data.entity.AssetEntity
-import dev.ujhhgtg.wekit.agent.data.entity.DocumentEntity
-import dev.ujhhgtg.wekit.agent.data.entity.ExtensionInstallEntity
-import dev.ujhhgtg.wekit.agent.data.entity.ManagedDataEntryEntity
-import dev.ujhhgtg.wekit.agent.data.entity.PreferenceEntryEntity
-import dev.ujhhgtg.wekit.agent.data.entity.PreferenceSetMemberEntity
-import dev.ujhhgtg.wekit.agent.data.entity.ScriptCatalogEntity
+import dev.ujhhgtg.wekit.data.entity.AssetBindingEntity
+import dev.ujhhgtg.wekit.data.entity.AssetChunkEntity
+import dev.ujhhgtg.wekit.data.entity.AssetEntity
+import dev.ujhhgtg.wekit.data.entity.DocumentEntity
+import dev.ujhhgtg.wekit.data.entity.ExtensionInstallEntity
+import dev.ujhhgtg.wekit.data.entity.ManagedDataEntryEntity
+import dev.ujhhgtg.wekit.data.entity.PreferenceEntryEntity
+import dev.ujhhgtg.wekit.data.entity.PreferenceSetMemberEntity
+import dev.ujhhgtg.wekit.data.entity.ScriptCatalogEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -89,14 +89,26 @@ interface AssetDao {
     @Query("DELETE FROM asset_chunks WHERE assetId = :assetId")
     suspend fun deleteChunks(assetId: String)
 
+    @Query("DELETE FROM asset_chunks WHERE assetId IN (:assetIds)")
+    suspend fun deleteChunksForAssets(assetIds: List<String>)
+
     @Query("DELETE FROM assets WHERE assetId = :assetId")
     suspend fun delete(assetId: String)
+
+    @Query("DELETE FROM assets WHERE assetId IN (:assetIds)")
+    suspend fun deleteAssets(assetIds: List<String>)
 
     @Upsert
     suspend fun bind(binding: AssetBindingEntity)
 
     @Query("SELECT * FROM asset_bindings WHERE owner = :owner ORDER BY slot")
     suspend fun getBindings(owner: String): List<AssetBindingEntity>
+
+    @Query("SELECT * FROM asset_bindings WHERE owner = :owner AND slot = :slot")
+    suspend fun getBinding(owner: String, slot: String): AssetBindingEntity?
+
+    @Query("SELECT COUNT(*) FROM asset_bindings WHERE assetId = :assetId")
+    suspend fun countBindings(assetId: String): Int
 
     @Query("DELETE FROM asset_bindings WHERE owner = :owner AND slot = :slot")
     suspend fun unbind(owner: String, slot: String)

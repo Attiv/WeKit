@@ -69,7 +69,7 @@ import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
-import dev.ujhhgtg.wekit.agent.data.UnifiedDocumentStore
+import dev.ujhhgtg.wekit.data.DocumentStore
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.captureOriginalMethod
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
@@ -241,7 +241,7 @@ object ConversationAggregation : ClickableFeature(),
         hookConversationStorageUpdateUnread()
 
         CustomLocalFriendAvatars.fallbackUsernameProvider = { folderId ->
-            if (isFolderId(folderId) && !CustomLocalFriendAvatars.avatarMap.containsKey(folderId)) {
+            if (isFolderId(folderId) && !CustomLocalFriendAvatars.hasCustomAvatar(folderId)) {
                 getFallbackAvatarMember(folderId)
             } else {
                 null
@@ -1626,7 +1626,7 @@ object ConversationAggregation : ClickableFeature(),
         }
 
         var hasAvatar by remember(folderId) {
-            mutableStateOf(CustomLocalFriendAvatars.avatarMap.containsKey(folderId))
+            mutableStateOf(CustomLocalFriendAvatars.hasCustomAvatar(folderId))
         }
 
         AlertDialogContent(
@@ -2027,7 +2027,7 @@ object ConversationAggregation : ClickableFeature(),
         foldersCache?.let { return it }
         val folders = runCatching {
             val file = foldersFile
-            val raw = UnifiedDocumentStore.read("chat", "folders", file.toFile()) ?: return emptyList()
+            val raw = DocumentStore.read("chat", "folders", file.toFile()) ?: return emptyList()
             DefaultJson.decodeFromString<List<ChatFolder>>(raw)
                 .map { folder ->
                     folder.copy(members = folder.members.filter { it.isNotBlank() })
@@ -2045,7 +2045,7 @@ object ConversationAggregation : ClickableFeature(),
         folderMembersCache.clear()
         runCatching {
             val raw = DefaultJson.encodeToString(folders)
-            UnifiedDocumentStore.write("chat", "folders", raw)
+            DocumentStore.write("chat", "folders", raw)
         }.onFailure {
             WeLogger.w(TAG, "failed to save folders to $foldersFile", it)
         }

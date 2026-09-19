@@ -1,4 +1,4 @@
-package dev.ujhhgtg.wekit.agent.data
+package dev.ujhhgtg.wekit.data
 
 import java.sql.DriverManager
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-class WeAgentDatabaseMigrationTest {
+class WeKitDatabaseMigrationTest {
     @Test
     fun `migration 12 to 13 preserves conversation rows and removes workspace state`() {
         DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
@@ -23,7 +23,7 @@ class WeAgentDatabaseMigrationTest {
                 statement.execute("INSERT INTO workspaces VALUES ('workspace', 'old-files-stay-on-disk')")
                 statement.execute("INSERT INTO settings VALUES ('memory_enabled', 'true'), ('default_workspace_id', 'workspace'), ('default_model_id', 'model')")
                 statement.execute("INSERT INTO tool_permissions VALUES ('builtin-fs', 'read_file', 'ENABLED'), ('builtin-fs', 'load_skill', 'ENABLED'), ('mcp', 'read_file', 'MANUAL_APPROVAL')")
-                WeAgentDatabase.migration12To13Sql.forEach(statement::execute)
+                WeKitDatabase.migration12To13Sql.forEach(statement::execute)
             }
 
             connection.createStatement().use { statement ->
@@ -50,7 +50,7 @@ class WeAgentDatabaseMigrationTest {
     fun `migration 13 to 14 adds independent bridge audit storage`() {
         DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
             connection.createStatement().use { statement ->
-                WeAgentDatabase.migration13To14Sql.forEach(statement::execute)
+                WeKitDatabase.migration13To14Sql.forEach(statement::execute)
                 statement.execute("INSERT INTO bridge_tool_audits VALUES ('audit', 'session', 'native', 'call', 'builtin', 'read_only', '{}', 'AUTO_ALLOWED', 'SUCCEEDED', 'result', 1)")
                 statement.execute("INSERT INTO bridge_tool_audits VALUES ('cancelled', 'session', 'native', NULL, 'builtin', 'read_only', '{}', NULL, 'CANCELLED', 'revoked', 2)")
                 assertEquals(2, statement.count("bridge_tool_audits"))
@@ -68,7 +68,7 @@ class WeAgentDatabaseMigrationTest {
                 statement.execute("CREATE TABLE tool_permissions (providerId TEXT NOT NULL, toolName TEXT NOT NULL, mode TEXT NOT NULL, PRIMARY KEY(providerId, toolName))")
                 statement.execute("INSERT INTO sessions VALUES ('session', 'Title', 'model', 1, 2)")
                 statement.execute("INSERT INTO tool_permissions VALUES ('builtin-fs', 'read_file', 'ENABLED')")
-                WeAgentDatabase.migration14To15Sql.forEach(statement::execute)
+                WeKitDatabase.migration14To15Sql.forEach(statement::execute)
             }
 
             connection.createStatement().use { statement ->
@@ -101,7 +101,7 @@ class WeAgentDatabaseMigrationTest {
                     val smallModel = if (keepRemoteDefaults) "remote-model" else "imported-model"
                     statement.execute("INSERT INTO settings VALUES ('default_model_id', '$defaultModel'), ('small_model_id', '$smallModel'), ('local_compute_backend', 'vulkan'), ('unrelated', 'local-model')")
 
-                    WeAgentDatabase.migration15To16Sql.forEach(statement::execute)
+                    WeKitDatabase.migration15To16Sql.forEach(statement::execute)
 
                     assertEquals(1, statement.count("model_providers"))
                     assertEquals(1, statement.count("models", "id = 'remote-model' AND modelIdRemote = 'remote-id'"))
@@ -138,7 +138,7 @@ class WeAgentDatabaseMigrationTest {
                     statement.execute("INSERT INTO tool_calls VALUES ('call', 'message', 'preserved result')")
                     statement.execute("INSERT INTO bridge_tool_audits VALUES ('audit', 'old-session', 'retired', 'preserved audit')")
 
-                    WeAgentDatabase.migration16To17Sql.forEach(statement::execute)
+                    WeKitDatabase.migration16To17Sql.forEach(statement::execute)
 
                     assertEquals(2, statement.count("linux_environments"))
                     assertEquals(1, statement.count("linux_environments", "id = 'proot' AND type = 'PROOT' AND rootfsPath = '/proot/rootfs'"))

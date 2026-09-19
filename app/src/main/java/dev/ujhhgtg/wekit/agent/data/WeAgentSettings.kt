@@ -2,6 +2,7 @@ package dev.ujhhgtg.wekit.agent.data
 
 import dev.ujhhgtg.wekit.agent.data.WeAgentSettings.load
 import dev.ujhhgtg.wekit.agent.data.entity.SettingEntity
+import dev.ujhhgtg.wekit.data.WeKitDatabase
 import dev.ujhhgtg.wekit.agent.tool.PermissionLevel
 import dev.ujhhgtg.wekit.agent.tool.ToolLoadingMode
 import java.util.concurrent.ConcurrentHashMap
@@ -13,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object WeAgentSettings {
 
-    private val db get() = WeAgentDatabase.instance
+    private val db get() = WeKitDatabase.instance
     private val cache = ConcurrentHashMap<String, String>()
 
     // Keys

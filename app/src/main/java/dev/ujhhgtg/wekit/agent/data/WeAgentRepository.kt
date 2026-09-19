@@ -14,6 +14,7 @@ import dev.ujhhgtg.wekit.agent.data.entity.ProviderEntity
 import dev.ujhhgtg.wekit.agent.data.entity.SessionEntity
 import dev.ujhhgtg.wekit.agent.data.entity.SystemPromptEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ToolCallEntity
+import dev.ujhhgtg.wekit.data.WeKitDatabase
 import dev.ujhhgtg.wekit.agent.model.LlmMessage
 import dev.ujhhgtg.wekit.agent.model.LlmRole
 import dev.ujhhgtg.wekit.agent.model.LlmToolCall
@@ -47,7 +48,7 @@ object WeAgentRepository {
      */
     private const val TOOL_PAYLOAD_SEP = '\u0000'
 
-    private val db get() = WeAgentDatabase.instance
+    private val db get() = WeKitDatabase.instance
 
     suspend fun appendBridgeToolAudit(entry: dev.ujhhgtg.wekit.agent.bridge.ToolBridgeSession.AuditEntry) {
         db.bridgeToolAuditDao().insert(

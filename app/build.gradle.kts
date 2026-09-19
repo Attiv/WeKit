@@ -337,7 +337,6 @@ dependencies {
     implementation(libs.google.protobuf.javalite)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.serialization.protobuf)
-    implementation(libs.mmkv)
 
     implementation(project(":libs:common:bsh"))
     add(arsclibSource.name, libs.arsclib)

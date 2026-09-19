@@ -31,7 +31,7 @@ import dev.ujhhgtg.wekit.features.items.AutomationTimeRangeRule
 import dev.ujhhgtg.wekit.features.items.AutomationToggleRule
 import dev.ujhhgtg.wekit.features.items.automationKeywordSummary
 import dev.ujhhgtg.wekit.features.items.formatAutomationMinute
-import dev.ujhhgtg.wekit.preferences.WePrefs
+import dev.ujhhgtg.wekit.preferences.KvStore
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.TextButton
@@ -878,19 +878,19 @@ object RedPacketSettings {
     }
 
     private fun migrateLegacyConfig(): StoredConfig {
-        val hasLegacyPrefs = LEGACY_PREF_KEYS.any(WePrefs::containsKey)
+        val hasLegacyPrefs = LEGACY_PREF_KEYS.any(KvStore::containsKey)
         val legacyUseWhitelist = hasLegacyPrefs &&
-                WePrefs.getBoolOrDef("red_packet_use_whitelist", false)
+                KvStore.getBoolOrDef("red_packet_use_whitelist", false)
         val legacySelectedContacts = if (!hasLegacyPrefs) {
             emptySet()
         } else if (legacyUseWhitelist) {
-            WePrefs.getStringSetOrDef("red_packet_whitelist", emptySet())
+            KvStore.getStringSetOrDef("red_packet_whitelist", emptySet())
         } else {
-            WePrefs.getStringSetOrDef("red_packet_blacklist", emptySet())
+            KvStore.getStringSetOrDef("red_packet_blacklist", emptySet())
         }
-        val legacyDelayRange = WePrefs.getStringOrDef("red_packet_delay_random_range", "300")
-        val legacyDelayBase = if (WePrefs.containsKey("red_packet_delay_custom")) {
-            WePrefs.getStringOrDef("red_packet_delay_custom", "0")
+        val legacyDelayRange = KvStore.getStringOrDef("red_packet_delay_random_range", "300")
+        val legacyDelayBase = if (KvStore.containsKey("red_packet_delay_custom")) {
+            KvStore.getStringOrDef("red_packet_delay_custom", "0")
         } else {
             "500"
         }
@@ -905,14 +905,14 @@ object RedPacketSettings {
         val global = if (hasLegacyPrefs) {
             RuleSet(
                 grab = AutomationToggleRule(enabled = !legacyUseWhitelist),
-                grabSelf = AutomationToggleRule(WePrefs.getBoolOrDef("red_packet_self", false)),
+                grabSelf = AutomationToggleRule(KvStore.getBoolOrDef("red_packet_self", false)),
                 delay = DelayRule(
                     enabled = true,
                     baseMs = migratedDelayBase,
                     randomRangeMs = legacyDelayRange
                 ),
-                notification = AutomationToggleRule(WePrefs.getBoolOrDef("red_packet_notification", false)),
-                autoReply = WePrefs.getStringOrDef("red_packet_auto_reply", "").let {
+                notification = AutomationToggleRule(KvStore.getBoolOrDef("red_packet_notification", false)),
+                autoReply = KvStore.getStringOrDef("red_packet_auto_reply", "").let {
                     ReplyRule(enabled = it.isNotBlank(), text = it)
                 }
             )

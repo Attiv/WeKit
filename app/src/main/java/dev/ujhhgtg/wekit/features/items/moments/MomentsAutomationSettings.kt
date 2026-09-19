@@ -45,7 +45,7 @@ import dev.ujhhgtg.wekit.features.items.payment.PaymentTextEditDialog
 import dev.ujhhgtg.wekit.features.items.payment.PaymentTextEditMode
 import dev.ujhhgtg.wekit.features.items.payment.keywordItems
 import dev.ujhhgtg.wekit.features.items.payment.timeRangeItems
-import dev.ujhhgtg.wekit.preferences.WePrefs
+import dev.ujhhgtg.wekit.preferences.KvStore
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.TextButton
@@ -779,24 +779,24 @@ class MomentsAutomationSettings private constructor(
     }
 
     private fun migrateLegacyConfig(): StoredMomentAutomationConfig {
-        val hasLegacyPrefs = legacyKeys.any(WePrefs::containsKey)
+        val hasLegacyPrefs = legacyKeys.any(KvStore::containsKey)
         if (!hasLegacyPrefs) return StoredMomentAutomationConfig()
 
-        val useWhitelist = WePrefs.getBoolOrDef(legacyUseWhitelistKey, true)
+        val useWhitelist = KvStore.getBoolOrDef(legacyUseWhitelistKey, true)
         val selected = if (useWhitelist) {
-            WePrefs.getStringSetOrDef(legacyWhitelistKey, emptySet())
+            KvStore.getStringSetOrDef(legacyWhitelistKey, emptySet())
         } else {
-            WePrefs.getStringSetOrDef(legacyBlacklistKey, emptySet())
+            KvStore.getStringSetOrDef(legacyBlacklistKey, emptySet())
         }
-        val mode = if (WePrefs.getIntOrDef(legacyModeKey, LEGACY_MODE_WHEN_SEEN) == LEGACY_MODE_ALL_LOADED) {
+        val mode = if (KvStore.getIntOrDef(legacyModeKey, LEGACY_MODE_WHEN_SEEN) == LEGACY_MODE_ALL_LOADED) {
             MomentAutomationMode.ALL_LOADED
         } else {
             MomentAutomationMode.WHEN_SEEN
         }
-        val delay = WePrefs.getLongOrDef(legacyDelayKey, 0L).coerceIn(0L, MAX_ACTION_DELAY_MS)
+        val delay = KvStore.getLongOrDef(legacyDelayKey, 0L).coerceIn(0L, MAX_ACTION_DELAY_MS)
         val action = if (
             includeAction && legacyActionKey != null &&
-            WePrefs.getIntOrDef(legacyActionKey, LEGACY_ACTION_LIKE) == LEGACY_ACTION_UNLIKE
+            KvStore.getIntOrDef(legacyActionKey, LEGACY_ACTION_LIKE) == LEGACY_ACTION_UNLIKE
         ) {
             MomentAutomationAction.UNLIKE
         } else {

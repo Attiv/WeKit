@@ -18,7 +18,15 @@ object KnownPaths {
         (HostInfo.application.filesDir.asPath / "wekit").createDirsSafe()
     }
 
-    fun hostVersionKey(): String = sanitizeVersionKey("${HostInfo.versionName}-${HostInfo.versionCode}")
+    /**
+     * A Dex cache is tied to both the WeChat build and its distribution channel.  Domestic and
+     * Google Play builds can share a version name/code while exposing different DEX layouts, so
+     * they must never address the same cache partition.
+     */
+    fun hostVersionKey(): String {
+        val channel = if (HostInfo.isHostGooglePlay) "play" else "domestic"
+        return sanitizeVersionKey("${HostInfo.versionName}-${HostInfo.versionCode}-$channel")
+    }
 
     private fun sanitizeVersionKey(value: String): String =
         value.replace(Regex("[^A-Za-z0-9._-]"), "_")

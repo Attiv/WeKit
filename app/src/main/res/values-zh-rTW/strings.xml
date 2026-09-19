@@ -286,6 +286,8 @@
     <string name="settings_import_config_summary">驗證備份後替換全部模組資料並重新啟動微信</string>
     <string name="settings_clear_config_title">清除資料</string>
     <string name="settings_clear_config_summary">刪除模組資料庫、腳本、擴充套件、快取和暫存檔</string>
+    <string name="settings_cleanup_legacy_title">清理舊資料</string>
+    <string name="settings_cleanup_legacy_summary">刪除遷移後保留在舊儲存位置的檔案</string>
     <string name="settings_section_update">更新</string>
     <string name="settings_check_update_title">檢查更新</string>
     <string name="settings_check_update_summary">立即檢查模塊是否有新版本並自動下載</string>
@@ -360,6 +362,9 @@
     <string name="clear_config_dialog_message">確定刪除 Room 資料庫、腳本、擴充套件、日誌、崩潰記錄、快取和暫存檔嗎？此操作不可逆。</string>
     <string name="config_clearing">正在清除…</string>
     <string name="config_clear_success">清除成功!</string>
+    <string name="cleanup_legacy_dialog_title">清理舊資料</string>
+    <string name="cleanup_legacy_dialog_message">確定刪除遷移後保留在舊位置的 WeKit 檔案嗎？目前模組資料不會受到影響。</string>
+    <string name="cleanup_legacy_success">舊資料清理成功!</string>
     <string name="update_available_title">檢測到新版本</string>
     <string name="update_available_message">當前版本: %1$s\n新版本: %2$s\n是否下載並安裝?</string>
     <string name="update_download_failed">下載更新失敗: %1$s</string>

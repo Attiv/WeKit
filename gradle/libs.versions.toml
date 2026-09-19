@@ -12,7 +12,6 @@ activity = "1.13.0"
 navigationevent = "1.1.2"
 kotlin = "2.4.20"
 androidx-core-ktx = "1.19.0"
-mmkv = "2.4.2"
 osmdroid = "6.1.20"
 profileinstaller = "1.4.1"
 serialization = "1.11.0"
@@ -108,7 +107,6 @@ osmdroid-android = { module = "org.osmdroid:osmdroid-android", version.ref = "os
 
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 kotlinx-serialization-protobuf = { module = "org.jetbrains.kotlinx:kotlinx-serialization-protobuf", version.ref = "serialization" }
-mmkv = { module = "com.tencent:mmkv", version.ref = "mmkv" }
 lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
 google-protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "google-protobuf" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }

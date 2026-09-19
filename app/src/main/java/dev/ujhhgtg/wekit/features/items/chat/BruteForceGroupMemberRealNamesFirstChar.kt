@@ -21,6 +21,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.text.input.KeyboardType
 import dev.ujhhgtg.wekit.R
+import dev.ujhhgtg.wekit.data.DocumentStore
 import dev.ujhhgtg.wekit.features.api.core.WeDatabaseApi
 import dev.ujhhgtg.wekit.features.api.net.WeTransferApi
 import dev.ujhhgtg.wekit.features.api.net.WeTransferApi.fetchBeforeTransfer
@@ -37,18 +38,15 @@ import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.currentWxId
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
+import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.div
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.writeText
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -67,6 +65,7 @@ object BruteForceGroupMemberRealNamesFirstChar : SwitchFeature(),
 
     // ── Result cache ──────────────────────────────────────────────────────────
 
+    /** Pre-unified storage location; imported on the first document read and left in place. */
     private val cacheFile by lazy { KnownPaths.moduleRoot / "real_names_first_char.json" }
 
     /**
@@ -77,25 +76,25 @@ object BruteForceGroupMemberRealNamesFirstChar : SwitchFeature(),
 
     private fun loadCache() {
         runCatching {
-            val file = cacheFile
-            if (!file.exists()) return
-            val map = Json.decodeFromString<Map<String, String>>(file.readText())
+            val raw = DocumentStore.read("chat", "real_names_first_char", cacheFile.toFile()) ?: return
+            val map = DefaultJson.decodeFromString<Map<String, String>>(raw)
             realNames.putAll(map)
             WeLogger.d(TAG, "loaded ${map.size} cached first chars")
-        }.onFailure { WeLogger.w(TAG, "failed to load $cacheFile", it) }
+        }.onFailure { WeLogger.w(TAG, "failed to load first-char cache", it) }
     }
 
     private fun saveCache() {
         runCatching {
-            cacheFile.writeText(Json.encodeToString(realNames.toMap()))
-        }.onFailure { WeLogger.w(TAG, "failed to save $cacheFile", it) }
+            DocumentStore.write("chat", "real_names_first_char", DefaultJson.encodeToString(realNames.toMap()))
+        }.onFailure { WeLogger.w(TAG, "failed to save first-char cache", it) }
     }
 
     // ── Progress persistence (pause / resume) ─────────────────────────────────
 
     /**
      * Persists the index into [COMMON_SURNAMES] at which the next attempt should resume after
-     * a rate-limit pause. Format: `Map<wxId, resumeIndex>`.
+     * a rate-limit pause. Format: `Map<wxId, resumeIndex>`. Stored in the unified document
+     * store; [progressFile] is the pre-unified location, imported on the first read.
      *
      * Entries are written when a rate-limit retcode is encountered, and cleared on a confirmed
      * hit, manual cancellation, or loop exhaustion so stale progress never blocks a fresh run.
@@ -105,24 +104,24 @@ object BruteForceGroupMemberRealNamesFirstChar : SwitchFeature(),
 
     private fun loadProgress() {
         runCatching {
-            if (!progressFile.exists()) return
-            val map = Json.decodeFromString<Map<String, Int>>(progressFile.readText())
+            val raw = DocumentStore.read("chat", "real_names_first_char_progress", progressFile.toFile()) ?: return
+            val map = DefaultJson.decodeFromString<Map<String, Int>>(raw)
             savedProgress.putAll(map)
             WeLogger.d(TAG, "loaded progress for ${map.size} members")
-        }.onFailure { WeLogger.w(TAG, "failed to load $progressFile", it) }
+        }.onFailure { WeLogger.w(TAG, "failed to load brute-force progress", it) }
     }
 
     private fun saveProgress(memberId: String, resumeIndex: Int) {
         runCatching {
             savedProgress[memberId] = resumeIndex
-            progressFile.writeText(Json.encodeToString(savedProgress.toMap()))
+            DocumentStore.write("chat", "real_names_first_char_progress", DefaultJson.encodeToString(savedProgress.toMap()))
         }.onFailure { WeLogger.w(TAG, "failed to save progress for $memberId", it) }
     }
 
     private fun clearProgress(memberId: String) {
         if (savedProgress.remove(memberId) != null) {
             runCatching {
-                progressFile.writeText(Json.encodeToString(savedProgress.toMap()))
+                DocumentStore.write("chat", "real_names_first_char_progress", DefaultJson.encodeToString(savedProgress.toMap()))
             }.onFailure { WeLogger.w(TAG, "failed to clear progress for $memberId", it) }
         }
     }

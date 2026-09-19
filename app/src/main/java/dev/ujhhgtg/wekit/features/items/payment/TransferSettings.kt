@@ -32,7 +32,7 @@ import dev.ujhhgtg.wekit.features.items.AutomationTimeRangeRule
 import dev.ujhhgtg.wekit.features.items.AutomationToggleRule
 import dev.ujhhgtg.wekit.features.items.automationKeywordSummary
 import dev.ujhhgtg.wekit.features.items.formatAutomationMinute
-import dev.ujhhgtg.wekit.preferences.WePrefs
+import dev.ujhhgtg.wekit.preferences.KvStore
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.TextButton
@@ -866,22 +866,22 @@ object TransferSettings {
     }
 
     private fun migrateLegacyConfig(): StoredConfig {
-        val hasLegacyPrefs = LEGACY_PREF_KEYS.any(WePrefs::containsKey)
+        val hasLegacyPrefs = LEGACY_PREF_KEYS.any(KvStore::containsKey)
         if (!hasLegacyPrefs) return StoredConfig()
 
-        val useWhitelist = WePrefs.getBoolOrDef("transfer_use_whitelist", false)
+        val useWhitelist = KvStore.getBoolOrDef("transfer_use_whitelist", false)
         val selected = if (useWhitelist) {
-            WePrefs.getStringSetOrDef("transfer_whitelist", emptySet())
+            KvStore.getStringSetOrDef("transfer_whitelist", emptySet())
         } else {
-            WePrefs.getStringSetOrDef("transfer_blacklist", emptySet())
+            KvStore.getStringSetOrDef("transfer_blacklist", emptySet())
         }
-        val delayBase = WePrefs.getStringOrDef("transfer_delay_custom", "500")
-        val delayRange = WePrefs.getStringOrDef("transfer_delay_random_range", "300")
+        val delayBase = KvStore.getStringOrDef("transfer_delay_custom", "500")
+        val delayRange = KvStore.getStringOrDef("transfer_delay_random_range", "300")
         val global = RuleSet(
             accept = AutomationToggleRule(enabled = !useWhitelist),
             delay = DelayRule(enabled = true, baseMs = delayBase, randomRangeMs = delayRange),
-            notification = AutomationToggleRule(WePrefs.getBoolOrDef("transfer_notification", false)),
-            autoReply = WePrefs.getStringOrDef("transfer_auto_reply", "").let {
+            notification = AutomationToggleRule(KvStore.getBoolOrDef("transfer_notification", false)),
+            autoReply = KvStore.getStringOrDef("transfer_auto_reply", "").let {
                 ReplyRule(enabled = it.isNotBlank(), text = it)
             }
         )

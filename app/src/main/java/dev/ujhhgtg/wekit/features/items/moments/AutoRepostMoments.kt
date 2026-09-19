@@ -8,7 +8,7 @@ import dev.ujhhgtg.wekit.features.api.core.WeApi
 import dev.ujhhgtg.wekit.features.api.core.WeDatabaseListenerApi
 import dev.ujhhgtg.wekit.features.api.ui.WeMomentsApi
 import dev.ujhhgtg.wekit.features.core.FeatureCategoryIds
-import dev.ujhhgtg.wekit.preferences.WePrefs
+import dev.ujhhgtg.wekit.preferences.KvStore
 import dev.ujhhgtg.wekit.utils.WeLogger
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.ConcurrentHashMap
@@ -37,7 +37,7 @@ object AutoRepostMoments : AutoMomentsBase(),
     @Volatile
     private var lastActionSentAt = 0L
 
-    private var forwardedSnsIds by WePrefs.prefOption(
+    private var forwardedSnsIds by KvStore.prefOption(
         "moments_auto_forward_forwarded_ids",
         emptySet()
     )
