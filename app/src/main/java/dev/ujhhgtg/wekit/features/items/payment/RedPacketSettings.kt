@@ -31,7 +31,9 @@ import dev.ujhhgtg.wekit.features.items.AutomationTimeRangeRule
 import dev.ujhhgtg.wekit.features.items.AutomationToggleRule
 import dev.ujhhgtg.wekit.features.items.automationKeywordSummary
 import dev.ujhhgtg.wekit.features.items.formatAutomationMinute
+import dev.ujhhgtg.wekit.data.DocumentStore
 import dev.ujhhgtg.wekit.data.KvStore
+import dev.ujhhgtg.wekit.data.LegacyDocumentMigration
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.TextButton
@@ -40,14 +42,10 @@ import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
 import kotlinx.serialization.Serializable
 import java.util.Calendar
-import kotlin.io.path.div
-import kotlin.io.path.exists
-import kotlin.io.path.readText
 import kotlin.random.Random
 
 /** Hierarchical settings used by [AutoOpenRedPackets]. */
@@ -57,8 +55,6 @@ object RedPacketSettings {
     private val RED_PACKET_KEYWORD_MODES =
         listOf(AutomationKeywordMode.STRING_LIST, AutomationKeywordMode.REGEX)
 
-    private val configFile by lazy { KnownPaths.moduleRoot / "red_packet_settings.json" }
-    private val legacyGroupMemberFile by lazy { KnownPaths.moduleRoot / "red_packet_group_members.json" }
 
     @Serializable
     enum class ReceiveMode { NETWORK, CLICK }
@@ -159,7 +155,6 @@ object RedPacketSettings {
 
     private val store by lazy {
         AtomicJsonConfigStore(
-            file = configFile,
             serializer = StoredConfig.serializer(),
             tag = TAG,
             initialValue = ::migrateLegacyConfig
@@ -929,11 +924,12 @@ object RedPacketSettings {
 
         val groupMembers = mutableMapOf<String, MutableMap<String, RuleOverrides>>()
         val legacyGroupRules = runCatching {
-            if (!legacyGroupMemberFile.exists()) emptyList() else {
-                DefaultJson.decodeFromString<List<LegacyGroupMemberRule>>(legacyGroupMemberFile.readText())
+            val raw = DocumentStore.read("json", LegacyDocumentMigration.RED_PACKET_GROUP_MEMBERS_KEY)
+            if (raw == null) emptyList() else {
+                DefaultJson.decodeFromString<List<LegacyGroupMemberRule>>(raw)
             }
         }.onFailure {
-            WeLogger.w(TAG, "failed to migrate $legacyGroupMemberFile", it)
+            WeLogger.w(TAG, "failed to migrate legacy red packet group member rules", it)
         }.getOrDefault(emptyList())
 
         legacyGroupRules.forEach { rule ->

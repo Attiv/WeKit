@@ -34,7 +34,6 @@ import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.currentWxId
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
 import kotlinx.coroutines.CoroutineScope
@@ -84,13 +83,12 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
         }
     }
 
-    private val cacheFile by lazy { KnownPaths.moduleRoot / "real_names.json" }
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     /**
      * wxId → masked real name (last char). Only confirmed hits are stored here.
-     * Persisted in the unified document store; [cacheFile] is the pre-unified location,
-     * imported on the first read and left in place for rollback.
+     * Persisted in the unified document store, eagerly imported from the pre-unified file
+     * during startup migration.
      * Exposed so [DisplayGroupMemberRealName] can read it for combined display.
      */
     val realNames = ConcurrentHashMap<String, String>()
@@ -117,7 +115,7 @@ object DisplayGroupMemberRealNamesLastChar : ClickableFeature(), IContactInfoPro
 
     private fun loadCache() {
         runCatching {
-            val raw = DocumentStore.read("chat", "real_names_last_char", cacheFile.toFile()) ?: return
+            val raw = DocumentStore.read("chat", "real_names_last_char") ?: return
             val map = DefaultJson.decodeFromString<Map<String, String>>(raw)
             realNames.putAll(map)
             WeLogger.d(TAG, "loaded ${map.size} cached real names")

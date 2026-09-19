@@ -29,34 +29,66 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Imports the first set of legacy JSON documents and user-owned media into the unified Room
- * catalog.  Files remain in place until each runtime repository is converted to read the new
- * tables, so this migration is safe to retry and does not create a second runtime tree.
+ * Imports legacy JSON documents into their runtime document keys and user-owned media into the
+ * unified Room catalog.  The import only fills document keys that do not exist yet, so a
+ * feature that already migrated and rewrote its document is never overwritten by the stale
+ * file.  Files remain on disk until the user runs the post-migration cleanup, so this
+ * migration is safe to retry and does not create a second runtime tree.
  */
 object LegacyDocumentMigration {
     private const val TAG = "LegacyDocumentMigration"
     private const val MIGRATION_NAMESPACE = "migration"
     /**
      * The suffix version bumps whenever the migration logic changes, so an installation that
-     * already ran an older version re-runs the new one exactly once. v3 keeps file-backed media
-     * in the file tree and only imports the catalogued user asset directory and custom avatars.
+     * already ran an older version re-runs the new one exactly once. v4 imports the legacy JSON
+     * files directly into their runtime document keys; v3 kept file-backed media in the file
+     * tree and only imported the catalogued user asset directory and custom avatars.
      */
-    private const val MIGRATION_KEY = "legacy-document-v3"
-    private const val DOCUMENT_NAMESPACE = "legacy-json"
+    private const val MIGRATION_KEY = "legacy-document-v4"
     private const val CHUNK_SIZE = 256 * 1024
 
-    private val documentFiles = listOf(
-        "conversation_groups.json",
-        "chat_folders.json",
-        "moments_custom_bottom_details.json",
-        "feature_flag_overrides.json",
-        "red_packet_settings.json",
-        "red_packet_group_members.json",
-        "auto_accept_transfer_settings.json",
-        "auto_like_moments_settings.json",
-        "auto_repost_moments_settings.json",
-        "custom_avatars_map.json",
+    /** Document key of the legacy red-packet group-member rules consumed by RedPacketSettings. */
+    const val RED_PACKET_GROUP_MEMBERS_KEY = "red_packet_group_members"
+
+    /**
+     * The legacy JSON files and the runtime (namespace, key) each one migrates into. The
+     * namespace/key pairs must stay in sync with the owning features; `custom_avatars_map.json`
+     * is deliberately absent — it feeds [CustomLocalFriendAvatars]' avatar reconciliation and
+     * is not a document store.
+     */
+    private data class LegacyDocument(val file: String, val namespace: String, val key: String)
+
+    private val legacyDocuments = listOf(
+        LegacyDocument("conversation_groups.json", "chat", "groups"),
+        LegacyDocument("chat_folders.json", "chat", "folders"),
+        LegacyDocument("moments_custom_bottom_details.json", "moments", "custom_bottom_details"),
+        LegacyDocument("feature_flag_overrides.json", "feature_flags", "overrides"),
+        LegacyDocument("red_packet_settings.json", "json", "RedPacketSettings"),
+        LegacyDocument("red_packet_group_members.json", "json", RED_PACKET_GROUP_MEMBERS_KEY),
+        LegacyDocument("auto_accept_transfer_settings.json", "json", "TransferSettings"),
+        LegacyDocument("auto_like_moments_settings.json", "json", "AutoLikeMomentsSettings"),
+        LegacyDocument("auto_repost_moments_settings.json", "json", "AutoRepostMomentsSettings"),
+        LegacyDocument("real_names.json", "chat", "real_names_last_char"),
+        LegacyDocument("real_names_first_char.json", "chat", "real_names_first_char"),
+        LegacyDocument("real_names_first_char_progress.json", "chat", "real_names_first_char_progress"),
     )
+
+    /**
+     * Every legacy JSON file this migration consumes or leaves behind, including the custom
+     * avatar map (avatar reconciliation input, not a document store). After the migration has
+     * completed these are pure rollback copies and the cleanup action may delete them.
+     */
+    private val legacyFiles: List<String> =
+        legacyDocuments.map { it.file } + "custom_avatars_map.json"
+
+    /** Hands every existing legacy JSON file to [delete] under the caller's lock. */
+    fun cleanupFiles(delete: (File) -> Unit) {
+        val root = KnownPaths.moduleRoot.toFile()
+        legacyFiles.forEach { name ->
+            val file = File(root, name)
+            if (file.isFile) delete(file)
+        }
+    }
 
     private data class AssetSource(
         val owner: String,
@@ -69,21 +101,26 @@ object LegacyDocumentMigration {
 
     private data class AssetDigest(val sha256: String, val sizeBytes: Long)
 
+    fun isCompleted(): Boolean =
+        DocumentStore.get(MIGRATION_NAMESPACE, MIGRATION_KEY)?.content?.contains("\"status\":\"completed\"") == true
+
     fun run(context: Context) {
-        val state = DocumentStore.get(MIGRATION_NAMESPACE, MIGRATION_KEY)
-        if (state?.content?.contains("\"status\":\"completed\"") == true) return
+        if (isCompleted()) return
 
         val startedAt = System.currentTimeMillis()
         putState("running", startedAt, null)
         try {
             val root = KnownPaths.moduleRoot.toFile()
             var documentCount = 0
-            documentFiles.forEach { relative ->
-                val file = File(root, relative)
+            legacyDocuments.forEach { document ->
+                val file = File(root, document.file)
                 if (!file.isFile) return@forEach
+                // Never overwrite: the feature owning this key may have already migrated and
+                // rewritten it, which makes the file the stale copy.
+                if (DocumentStore.get(document.namespace, document.key) != null) return@forEach
                 DocumentStore.put(
-                    DOCUMENT_NAMESPACE,
-                    relative,
+                    document.namespace,
+                    document.key,
                     file.readText(Charsets.UTF_8),
                     updatedAt = file.lastModified().takeIf { it > 0 } ?: startedAt,
                 )

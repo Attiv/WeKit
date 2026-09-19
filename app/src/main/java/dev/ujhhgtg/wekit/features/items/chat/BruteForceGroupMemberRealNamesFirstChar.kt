@@ -37,7 +37,6 @@ import dev.ujhhgtg.wekit.ui.utils.ShowComposeDialogScope
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.currentWxId
-import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
 import kotlinx.coroutines.CoroutineScope
@@ -65,9 +64,6 @@ object BruteForceGroupMemberRealNamesFirstChar : SwitchFeature(),
 
     // ── Result cache ──────────────────────────────────────────────────────────
 
-    /** Pre-unified storage location; imported on the first document read and left in place. */
-    private val cacheFile by lazy { KnownPaths.moduleRoot / "real_names_first_char.json" }
-
     /**
      * wxId → confirmed real-name first char. Only hits are stored.
      * Exposed so [DisplayGroupMemberRealName] can read it for combined display.
@@ -76,7 +72,7 @@ object BruteForceGroupMemberRealNamesFirstChar : SwitchFeature(),
 
     private fun loadCache() {
         runCatching {
-            val raw = DocumentStore.read("chat", "real_names_first_char", cacheFile.toFile()) ?: return
+            val raw = DocumentStore.read("chat", "real_names_first_char") ?: return
             val map = DefaultJson.decodeFromString<Map<String, String>>(raw)
             realNames.putAll(map)
             WeLogger.d(TAG, "loaded ${map.size} cached first chars")
@@ -99,12 +95,11 @@ object BruteForceGroupMemberRealNamesFirstChar : SwitchFeature(),
      * Entries are written when a rate-limit retcode is encountered, and cleared on a confirmed
      * hit, manual cancellation, or loop exhaustion so stale progress never blocks a fresh run.
      */
-    private val progressFile by lazy { KnownPaths.moduleRoot / "real_names_first_char_progress.json" }
     private val savedProgress = ConcurrentHashMap<String, Int>()
 
     private fun loadProgress() {
         runCatching {
-            val raw = DocumentStore.read("chat", "real_names_first_char_progress", progressFile.toFile()) ?: return
+            val raw = DocumentStore.read("chat", "real_names_first_char_progress") ?: return
             val map = DefaultJson.decodeFromString<Map<String, Int>>(raw)
             savedProgress.putAll(map)
             WeLogger.d(TAG, "loaded progress for ${map.size} members")

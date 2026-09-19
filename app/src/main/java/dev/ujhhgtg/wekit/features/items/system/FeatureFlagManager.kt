@@ -62,7 +62,6 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.data.DocumentStore
 import dev.ujhhgtg.wekit.utils.android.copyToClipboard
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.reflection.withDexKit
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.coroutines.Dispatchers
@@ -98,7 +97,6 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
     override val categoryIds = listOf(FeatureCategoryIds.SYSTEM_PRIVACY)
     override val descriptionRes = R.string.feature_feature_flag_manager_description
 
-    private val overridesFile by lazy { KnownPaths.moduleRoot / "feature_flag_overrides.json" }
 
     /**
      * Base class for all feature flags: [ly4.e] (verified from WeChat 8.0.69).
@@ -208,13 +206,12 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
      * Load overrides from JSON file.
      */
     private fun loadOverrides(): Map<String, FeatureFlagOverride> {
-        val file = overridesFile
-        val raw = DocumentStore.read("feature_flags", "overrides", file.toFile()) ?: return emptyMap()
+        val raw = DocumentStore.read("feature_flags", "overrides") ?: return emptyMap()
         return runCatching {
             val list = DefaultJson.decodeFromString<List<FeatureFlagOverride>>(raw)
             list.associateBy { it.runtimeKey }
         }.getOrElse { e ->
-            WeLogger.e(TAG, "failed to load $overridesFile", e)
+            WeLogger.e(TAG, "failed to load feature flag overrides", e)
             emptyMap()
         }
     }
@@ -231,7 +228,7 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
         runCatching {
             DocumentStore.write("feature_flags", "overrides", DefaultJson.encodeToString(overrides))
         }.onFailure { e ->
-            WeLogger.e(TAG, "failed to save $overridesFile", e)
+            WeLogger.e(TAG, "failed to save feature flag overrides", e)
         }
     }
 

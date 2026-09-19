@@ -40,12 +40,10 @@ import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
 import kotlinx.serialization.Serializable
 import java.math.BigDecimal
 import java.math.RoundingMode
-import kotlin.io.path.div
 import kotlin.random.Random
 
 object TransferSettings {
@@ -153,7 +151,6 @@ object TransferSettings {
 
     private val store by lazy {
         AtomicJsonConfigStore(
-            file = KnownPaths.moduleRoot / "auto_accept_transfer_settings.json",
             serializer = StoredConfig.serializer(),
             tag = TAG,
             initialValue = ::migrateLegacyConfig

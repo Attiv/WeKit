@@ -56,7 +56,6 @@ import dev.ujhhgtg.wekit.ui.content.m3.SegmentedColumn
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import kotlinx.serialization.Serializable
 import kotlin.io.path.div
 
@@ -180,7 +179,6 @@ private data class StoredMomentAutomationConfig(
 
 class MomentsAutomationSettings private constructor(
     @StringRes private val featureNameRes: Int,
-    private val fileName: String,
     private val logTag: String,
     private val includeAction: Boolean,
     private val legacyKeys: List<String>,
@@ -204,7 +202,6 @@ class MomentsAutomationSettings private constructor(
 
     private val store by lazy {
         AtomicJsonConfigStore(
-            file = KnownPaths.moduleRoot / fileName,
             serializer = StoredMomentAutomationConfig.serializer(),
             tag = logTag,
             initialValue = ::migrateLegacyConfig
@@ -818,7 +815,6 @@ class MomentsAutomationSettings private constructor(
     companion object {
         val Like = MomentsAutomationSettings(
             featureNameRes = R.string.feature_auto_like_moments_name,
-            fileName = "auto_like_moments_settings.json",
             logTag = "AutoLikeMomentsSettings",
             includeAction = true,
             legacyKeys = listOf(
@@ -839,7 +835,6 @@ class MomentsAutomationSettings private constructor(
 
         val Repost = MomentsAutomationSettings(
             featureNameRes = R.string.feature_auto_repost_moments_name,
-            fileName = "auto_repost_moments_settings.json",
             logTag = "AutoRepostMomentsSettings",
             includeAction = false,
             legacyKeys = listOf(

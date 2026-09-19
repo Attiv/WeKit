@@ -140,7 +140,6 @@ import dev.ujhhgtg.wekit.data.DocumentStore
 import dev.ujhhgtg.wekit.utils.invokeOriginalMethod
 import dev.ujhhgtg.wekit.utils.android.baseActivity
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -339,7 +338,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         adapterPositionSnapshot(adapter, rawPosition)
     }
 
-    private val groupsFile by lazy { KnownPaths.moduleRoot / "conversation_groups.json" }
 
     @Volatile
     private var groupsCache: List<ChatGroup>? = null
@@ -2435,16 +2433,15 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     private fun loadGroups(): List<ChatGroup> {
         groupsCache?.let { return it }
-        val file = groupsFile
         // First run (no config yet): seed the groups that used to be the built-in tabs so the tab
         // bar isn't empty out of the box, then persist them so they're editable / deletable.
-        if (DocumentStore.read("chat", "groups", file.toFile()) == null) {
+        if (DocumentStore.read("chat", "groups") == null) {
             val defaults = defaultGroups()
             saveGroups(defaults)
             return defaults
         }
         val groups = runCatching {
-            val raw = DocumentStore.read("chat", "groups", file.toFile()) ?: return@runCatching emptyList()
+            val raw = DocumentStore.read("chat", "groups") ?: return@runCatching emptyList()
             DefaultJson.decodeFromString<List<ChatGroup>>(raw)
                 .map { group ->
                     group.copy(members = group.members.filter { it.isNotBlank() })
@@ -2456,7 +2453,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             builtInLabelFor(it.type) != null || it.builtInLabel != null)
                 }
         }.onFailure {
-            WeLogger.w(TAG, "failed to decode groups config from $groupsFile", it)
+            WeLogger.w(TAG, "failed to decode groups config", it)
         }.getOrDefault(emptyList())
         // Guarantee the fixed "全部" tab is present. Configs written before this tab was orderable
         // won't contain it, so inject it at the front; once the user reorders, its slot persists.
@@ -2516,7 +2513,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             val raw = DefaultJson.encodeToString(groups)
             DocumentStore.write("chat", "groups", raw)
         }.onFailure {
-            WeLogger.w(TAG, "failed to save groups to $groupsFile", it)
+            WeLogger.w(TAG, "failed to save groups", it)
         }
     }
 

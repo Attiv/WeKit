@@ -72,7 +72,6 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.data.DocumentStore
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.captureOriginalMethod
-import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.reflection.BString
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.serialization.Serializable
@@ -117,7 +116,6 @@ object ConversationAggregation : ClickableFeature(),
     // alongside unReadMuteCount > 0 when unReadCount == 0).
     private const val ATTR_FLAG_MUTE_BIT = 2097152
 
-    private val foldersFile by lazy { KnownPaths.moduleRoot / "chat_folders.json" }
 
     private const val CONTAINER_UI_NAME = "com.tencent.mm.ui.conversation.ConvBoxServiceConversationUI"
     private val methodConversationStorageQueryByParent by dexMethod(allowFailure = true) {
@@ -2026,15 +2024,14 @@ object ConversationAggregation : ClickableFeature(),
     private fun loadFolders(): List<ChatFolder> {
         foldersCache?.let { return it }
         val folders = runCatching {
-            val file = foldersFile
-            val raw = DocumentStore.read("chat", "folders", file.toFile()) ?: return emptyList()
+            val raw = DocumentStore.read("chat", "folders") ?: return emptyList()
             DefaultJson.decodeFromString<List<ChatFolder>>(raw)
                 .map { folder ->
                     folder.copy(members = folder.members.filter { it.isNotBlank() })
                 }
                 .filter { isFolderId(it.id) && it.name.isNotBlank() }
         }.onFailure {
-            WeLogger.w(TAG, "failed to decode folders config from $foldersFile", it)
+            WeLogger.w(TAG, "failed to decode folders config", it)
         }.getOrDefault(emptyList())
         foldersCache = folders
         return folders
@@ -2047,7 +2044,7 @@ object ConversationAggregation : ClickableFeature(),
             val raw = DefaultJson.encodeToString(folders)
             DocumentStore.write("chat", "folders", raw)
         }.onFailure {
-            WeLogger.w(TAG, "failed to save folders to $foldersFile", it)
+            WeLogger.w(TAG, "failed to save folders", it)
         }
     }
 

@@ -1,6 +1,7 @@
 package dev.ujhhgtg.wekit.utils.fs
 
 import android.content.Context
+import dev.ujhhgtg.wekit.data.LegacyDocumentMigration
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.fs.LegacyStorageMigration.run
 import java.io.File
@@ -102,6 +103,13 @@ object LegacyStorageMigration {
                 blockedReason = "unified database is not available",
             )
         }
+        if (!LegacyDocumentMigration.isCompleted()) {
+            return LegacyCleanupResult(
+                removedPaths = emptyList(),
+                retainedPaths = emptyList(),
+                blockedReason = "legacy document migration has not completed",
+            )
+        }
 
         val removed = ArrayList<String>()
         val retained = ArrayList<String>()
@@ -124,6 +132,12 @@ object LegacyStorageMigration {
                 val legacyPrefs = File(mmkv, name)
                 if (legacyPrefs.exists() && legacyPrefs.delete()) removed += legacyPrefs.absolutePath
                 else if (legacyPrefs.exists()) retained += legacyPrefs.absolutePath
+            }
+            // The document migration has completed, so every runtime store reads the unified
+            // database; the legacy JSON files are kept only as rollback copies. They were
+            // never in the managed-files allow-list before, so a missing file is normal.
+            LegacyDocumentMigration.cleanupFiles { file ->
+                if (file.delete()) removed += file.absolutePath else retained += file.absolutePath
             }
         }
         return LegacyCleanupResult(removed, retained)
