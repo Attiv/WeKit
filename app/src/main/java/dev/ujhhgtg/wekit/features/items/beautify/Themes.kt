@@ -1433,7 +1433,10 @@ object Themes : ClickableFeature(), IResolveDex {
 
     private val classSmileyTabAdapter by dexClass {
         matcher {
-            usingStrings("MicroMsg.emoji.SmileyPanel.SmileyTabAdapter", "setSelection: %s")
+            usingStrings(
+                "MicroMsg.emoji.SmileyPanel.SmileyTabAdapter",
+                "emoji group info is null. position:%d",
+            )
         }
     }
 
@@ -1635,7 +1638,7 @@ object Themes : ClickableFeature(), IResolveDex {
                     "com.tencent.mm.ui.LauncherUI" -> {
                         val chattingUiLayout = contentView.findViewWhich {
                             it.javaClass.name == "com.tencent.mm.pluginsdk.ui.chat.ChattingUILayout"
-                        } as ViewGroup? ?: return@hookAfter
+                        } as? ViewGroup? ?: return@hookAfter
                         themedDrawable("chat/actionbar/background.png")?.let { d ->
                             val parent = chattingUiLayout.parent as? ViewGroup ?: return@let
                             parent.addView(

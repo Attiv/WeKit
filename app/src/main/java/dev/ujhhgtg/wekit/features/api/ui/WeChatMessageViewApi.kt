@@ -89,7 +89,9 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
 
     private val methodChatItemSetNickname by dexMethod {
         matcher {
-            declaredClass = "com.tencent.mm.ui.chatting.viewitems.a0"
+            declaredClass {
+                usingStrings("MicroMsg.ChattingItem")
+            }
             paramTypes(null, CharSequence::class.java)
             returnType(Void.TYPE)
         }
