@@ -2,10 +2,12 @@ package dev.ujhhgtg.wekit.data
 
 import android.database.Cursor
 import dev.ujhhgtg.wekit.data.entity.PreferenceEntryEntity
+import dev.ujhhgtg.wekit.utils.fs.LegacyPaths
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
+import java.nio.file.Files
 
 /**
  * Global key-value store backed by the unified Room database.
@@ -21,11 +23,13 @@ object KvStore {
     /** Room namespace, named after the legacy MMKV instance it migrated. */
     private const val NAMESPACE = "wekit_prefs"
 
-    private val database by lazy { WeKitDatabase.instance }
+    private val database get() = WeKitDatabase.instance
     private val sql get() = database.openHelper.writableDatabase
 
     @Volatile
     private var migrationDone = false
+
+    private var migrationFailure: Exception? = null
 
     /**
      * Defers database opening and the legacy MMKV migration to the first preference access.
@@ -38,12 +42,31 @@ object KvStore {
             if (migrationDone) return
             // Marked before running so migration's own writes cannot re-enter this block.
             migrationDone = true
-            transaction {
-                // A partially completed StringSet write must never leave rows that are no longer
-                // owned by an entry.
-                cleanupOrphanStringSetMembers()
+            try {
+                transaction {
+                    // A partially completed StringSet write must never leave orphan members.
+                    cleanupOrphanStringSetMembers()
+                }
+                migrateLegacyIfNeeded()
+                migrationFailure = null
+            } catch (error: Exception) {
+                migrationFailure = error
+                WeLogger.e(TAG, "failed to migrate legacy preferences; sources retained", error)
             }
-            migrateLegacyIfNeeded()
+        }
+    }
+
+    /** Strict prerequisite for converting old settings into a new authoritative domain. */
+    fun requireMigrationKeys(keys: Collection<String>) {
+        if (migrationFailure != null) migrationDone = false
+        ensureMigrated()
+        check(migrationFailure == null || keys.all { read(it) != null }) { "Legacy preference migration has not completed" }
+        keys.forEach { key ->
+            val entry = read(key) ?: return@forEach
+            check(entry.exportable) { "Unsupported non-exportable legacy preference: $key" }
+            check(getObject(key) != null && !(entry.valueType == TYPE_STRING_SET && entry.valueBlob != null)) {
+                "Unreadable legacy preference value for $key"
+            }
         }
     }
 
@@ -359,37 +382,37 @@ object KvStore {
      * exists. Unknown or undecodable entries are preserved as raw blobs for later inspection.
      */
     private fun migrateLegacyIfNeeded() {
+        // A full restore must not import this installation's pre-restore MMKV over the backup.
+        if (!LegacyPaths.localSourcesAllowed) return
         val root = HostInfo.application.filesDir.resolve("mmkv")
         val file = root.resolve(NAMESPACE)
         val crcFile = root.resolve("$NAMESPACE.crc")
-        if (!file.isFile || !crcFile.isFile) return
-
-        val entries = runCatching { MmkvReadonlyReader.read(file, crcFile) }.getOrElse {
-            WeLogger.e(TAG, "failed to read legacy MMKV prefs", it)
-            return
+        if (Files.notExists(file.toPath()) && Files.notExists(crcFile.toPath())) return
+        check(file.isFile && crcFile.isFile) {
+            "Legacy MMKV data/CRC pair is incomplete"
         }
-        runCatching {
-            transaction {
-                entries.forEach { entry ->
-                    val alreadyMigrated = sql.query(
-                        "SELECT 1 FROM preference_entries WHERE namespace = ? AND `key` = ? LIMIT 1",
-                        arrayOf(NAMESPACE, entry.key),
-                    ).use { it.moveToFirst() }
-                    if (alreadyMigrated) return@forEach
 
-                    val value = runCatching { MmkvReadonlyReader.decode(entry) }.getOrElse { error ->
-                        WeLogger.w(TAG, "failed to decode legacy MMKV entry ${entry.key}", error)
-                        null
-                    }
-                    if (value != null) {
-                        putObject(entry.key, value)
-                    } else {
-                        writeLegacy(entry.key, MmkvReadonlyReader.typeName(entry.marker) ?: "legacy:unknown", entry.bytes)
-                    }
+        val entries = MmkvReadonlyReader.read(file, crcFile)
+        transaction {
+            entries.forEach { entry ->
+                val alreadyMigrated = sql.query(
+                    "SELECT 1 FROM preference_entries WHERE namespace = ? AND `key` = ? LIMIT 1",
+                    arrayOf(NAMESPACE, entry.key),
+                ).use { it.moveToFirst() }
+                if (alreadyMigrated) return@forEach
+
+                val value = runCatching { MmkvReadonlyReader.decode(entry) }.getOrElse { error ->
+                    WeLogger.w(TAG, "failed to decode legacy MMKV entry ${entry.key}", error)
+                    null
                 }
-                cleanupOrphanStringSetMembers()
+                if (value != null) {
+                    putObject(entry.key, value)
+                } else {
+                    writeLegacy(entry.key, MmkvReadonlyReader.typeName(entry.marker) ?: "legacy:unknown", entry.bytes)
+                }
             }
-        }.onFailure { WeLogger.e(TAG, "failed to migrate legacy MMKV prefs", it) }
+            cleanupOrphanStringSetMembers()
+        }
     }
 
     private const val TYPE_BOOL = "bool"

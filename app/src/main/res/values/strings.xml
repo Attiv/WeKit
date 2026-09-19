@@ -3726,4 +3726,8 @@
     <string name="contacts_custom_avatar_scope_notifications">Notifications</string>
     <string name="contacts_custom_avatar_scope_shortcuts">Home screen shortcuts</string>
     <string name="contacts_custom_avatar_shortcut_hint">Applies when creating shortcuts. Recreate existing shortcuts to update their icons.</string>
+
+    <string name="structured_storage_saving">Saving…</string>
+    <string name="structured_storage_save_failed">Could not save. Your previous settings are unchanged. Check the logs and try again.</string>
+    <string name="structured_storage_unavailable">This feature’s data could not be loaded. Check the migration logs and restart WeChat to retry.</string>
 </resources>

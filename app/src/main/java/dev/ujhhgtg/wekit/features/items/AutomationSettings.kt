@@ -1,6 +1,5 @@
 package dev.ujhhgtg.wekit.features.items
 
-import dev.ujhhgtg.wekit.data.DocumentStore
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,8 +20,7 @@ import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.content.formatMinuteOfDay
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
-import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
-import kotlinx.serialization.KSerializer
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import java.text.Collator
 import java.util.Calendar
@@ -98,43 +96,51 @@ data class AutomationKeywordRule(
     }
 }
 
-class AtomicJsonConfigStore<T>(
-    private val serializer: KSerializer<T>,
-    private val tag: String,
-    private val initialValue: () -> T
-) {
-    @Volatile
-    private var cached: T? = null
+/** One dialog commit: keep the draft open on failure and publish success after SQL commits. */
+class AutomationSaveState(private val scope: kotlinx.coroutines.CoroutineScope) {
+    var saving by mutableStateOf(false)
+        private set
+    var failed by mutableStateOf(false)
+        private set
 
-    fun get(): T {
-        cached?.let { return it }
-        return synchronized(this) {
-            cached ?: read().also { cached = it }
+    fun submit(save: suspend () -> Unit, onSuccess: () -> Unit) {
+        if (saving) return
+        saving = true
+        failed = false
+        scope.launch {
+            try {
+                save()
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                failed = true
+                WeLogger.e("AutomationSettings", "Failed to commit automation settings", error)
+                return@launch
+            } finally {
+                saving = false
+            }
+            onSuccess()
         }
     }
+}
 
-    fun update(transform: (T) -> T): T = synchronized(this) {
-        val updated = transform(get())
-        write(updated)
-        cached = updated
-        updated
-    }
+@Composable
+fun rememberAutomationSaveState(): AutomationSaveState {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    return remember(scope) { AutomationSaveState(scope) }
+}
 
-    private fun read(): T {
-        val raw = DocumentStore.read("json", tag)
-        if (raw == null) return initialValue().also(::write)
-        return runCatching {
-            DefaultJson.decodeFromString(serializer, raw)
-        }.onFailure {
-            WeLogger.e(tag, "failed to read document $tag", it)
-        }.getOrElse { initialValue() }
-    }
-
-    private fun write(value: T) {
-        runCatching {
-            DocumentStore.write("json", tag, DefaultJson.encodeToString(serializer, value))
-        }.onFailure {
-            WeLogger.e(tag, "failed to save document $tag", it)
+@Composable
+fun AutomationSaveContent(state: AutomationSaveState, content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.Column {
+        if (state.saving) {
+            androidx.compose.material3.LinearProgressIndicator()
+            Text(stringResource(R.string.structured_storage_saving))
+        } else {
+            if (state.failed) {
+                Text(stringResource(R.string.structured_storage_save_failed), color = androidx.compose.material3.MaterialTheme.colorScheme.error)
+            }
+            content()
         }
     }
 }

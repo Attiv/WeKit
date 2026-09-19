@@ -67,6 +67,9 @@ object BackupCoordinator {
         "auto_accept_transfer_settings.json",
         "auto_like_moments_settings.json",
         "auto_repost_moments_settings.json",
+        "real_names.json",
+        "real_names_first_char.json",
+        "real_names_first_char_progress.json",
         "custom_avatars_map.json",
     )
 
@@ -97,7 +100,6 @@ object BackupCoordinator {
         val scratch = File(context.cacheDir, ".wekit-backup-${UUID.randomUUID()}.sqlite")
         val files = ArrayList<ManifestFile>()
         val extensions = installedExtensions()
-        beforeBackup?.invoke()
         try {
             snapshotDatabase(database, scratch)
             files += ManifestFile(DATABASE, scratch.length(), sha256(scratch))
@@ -129,7 +131,6 @@ object BackupCoordinator {
             return@withStorageLock Result(output, files.size)
         } finally {
             scratch.delete()
-            afterBackup?.invoke()
         }
     }
 
@@ -156,6 +157,9 @@ object BackupCoordinator {
             checkExtensions(manifest.extensions)
             val database = File(staging, DATABASE)
             check(database.isFile) { "备份缺少统一数据库" }
+            val schemaVersion = databaseSchemaVersion(database)
+            check(schemaVersion == manifest.schemaVersion) { "备份清单与数据库版本不一致" }
+            check(schemaVersion in 9..WeKitDatabase.SCHEMA_VERSION) { "备份数据库版本不受支持" }
             validateDatabase(database)
             checkHashes(staging, manifest.files)
 
@@ -164,7 +168,9 @@ object BackupCoordinator {
                 // its Room instance before the file swap without making import know its implementation.
                 beforeDatabaseReplace?.invoke()
                 val oldRoot = File(root.parentFile, ".wekit-before-import-${UUID.randomUUID()}")
-                replaceManagedData(root, staging, oldRoot, WeKitDatabase.file)
+                BackupManagedDataReplacement.replace(
+                    root, staging, oldRoot, WeKitDatabase.file, managedDirectories, managedFiles, DATABASE,
+                )
                 oldRoot.deleteRecursively()
                 ImportResult(manifest.files.size)
             }
@@ -175,10 +181,6 @@ object BackupCoordinator {
 
     /** Set by the unified Room owner once it exposes its process-wide close hook. */
     var beforeDatabaseReplace: (() -> Unit)? = null
-
-    /** Hooks for draining database/file writers around a consistent export snapshot. */
-    var beforeBackup: (() -> Unit)? = null
-    var afterBackup: (() -> Unit)? = null
 
     fun restartAfterImport() = restartHost()
 
@@ -496,82 +498,6 @@ object BackupCoordinator {
             arrayOf(table),
         ).use { it.moveToFirst() }
 
-    private fun replaceManagedData(root: File, staging: File, oldRoot: File, liveDatabase: File) {
-        oldRoot.mkdirs()
-        root.mkdirs()
-        val databaseNames = listOf(
-            liveDatabase.name,
-            "${liveDatabase.name}-wal",
-            "${liveDatabase.name}-shm",
-            "${liveDatabase.name}-journal",
-        )
-        try {
-            for (name in databaseNames) {
-                val current = File(liveDatabase.parentFile, name)
-                val old = File(oldRoot, name)
-                moveIfPresent(current, old)
-            }
-            moveIfPresent(File(staging, DATABASE), liveDatabase)
-            for (directory in managedDirectories) {
-                replaceOwnedPath(root, staging, oldRoot, directory, createDirectory = true)
-            }
-            for (file in managedFiles) {
-                replaceOwnedPath(root, staging, oldRoot, file, createDirectory = false)
-            }
-        } catch (t: Throwable) {
-            // Restore each moved item before surfacing the error. Import is replacement semantics:
-            // a failed swap must leave the current installation usable.
-            for (name in databaseNames) {
-                val old = File(oldRoot, name)
-                val current = File(liveDatabase.parentFile, name)
-                if (old.exists()) {
-                    current.delete()
-                    moveIfPresent(old, current)
-                } else current.delete()
-            }
-            for (directory in managedDirectories) {
-                val old = File(oldRoot, directory)
-                if (old.exists()) {
-                    File(root, directory).deleteRecursively()
-                    moveIfPresent(old, File(root, directory))
-                } else File(root, directory).deleteRecursively()
-            }
-            for (file in managedFiles) {
-                val old = File(oldRoot, file)
-                if (old.exists()) {
-                    File(root, file).delete()
-                    moveIfPresent(old, File(root, file))
-                } else File(root, file).delete()
-            }
-            throw t
-        }
-    }
-
-    private fun replaceOwnedPath(
-        root: File,
-        staging: File,
-        oldRoot: File,
-        relative: String,
-        createDirectory: Boolean,
-    ) {
-        val current = File(root, relative)
-        val replacement = File(staging, relative)
-        val old = File(oldRoot, relative)
-        if (current.exists()) moveIfPresent(current, old)
-        if (replacement.exists()) {
-            replacement.parentFile?.mkdirs()
-            moveIfPresent(replacement, current)
-        } else if (createDirectory) {
-            current.mkdirs()
-        }
-    }
-
-    private fun moveIfPresent(source: File, destination: File) {
-        if (!source.exists()) return
-        destination.parentFile?.mkdirs()
-        check(source.renameTo(destination)) { "无法替换数据库" }
-    }
-
     private fun safeArchivePath(path: String): String {
         val normalized = path.replace('\\', '/')
         require(normalized.isNotEmpty() && !normalized.startsWith('/') && !normalized.contains("../")) {
@@ -595,13 +521,10 @@ object BackupCoordinator {
     }
 
     private fun <T> withStorageLock(context: Context, block: () -> T): T {
-        val lockFile = File(context.filesDir, ".wekit-storage-operation.lock")
-        lockFile.parentFile?.mkdirs()
-        return FileChannel.open(
-            lockFile.toPath(),
-            StandardOpenOption.CREATE,
-            StandardOpenOption.WRITE,
-        ).use { channel -> channel.lock().use { block() } }
+        val file = File(context.filesDir, ".wekit-storage-operation.lock")
+        return FileChannel.open(file.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
+            channel.lock().use { block() }
+        }
     }
 
     private fun File.isSymbolicLink(): Boolean =

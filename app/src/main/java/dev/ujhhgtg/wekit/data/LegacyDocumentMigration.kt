@@ -29,11 +29,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Imports legacy JSON documents into their runtime document keys and user-owned media into the
- * unified Room catalog.  The import only fills document keys that do not exist yet, so a
- * feature that already migrated and rewrote its document is never overwritten by the stale
- * file.  Files remain on disk until the user runs the post-migration cleanup, so this
- * migration is safe to retry and does not create a second runtime tree.
+ * Imports user-owned media and file indexes into the unified Room catalog. Feature JSON now
+ * goes directly through [JsonDataMigration]; the existing completion key is retained for assets.
+ * Source files remain until explicit old-data cleanup.
  */
 object LegacyDocumentMigration {
     private const val TAG = "LegacyDocumentMigration"
@@ -47,39 +45,13 @@ object LegacyDocumentMigration {
     private const val MIGRATION_KEY = "legacy-document-v4"
     private const val CHUNK_SIZE = 256 * 1024
 
-    /** Document key of the legacy red-packet group-member rules consumed by RedPacketSettings. */
-    const val RED_PACKET_GROUP_MEMBERS_KEY = "red_packet_group_members"
-
-    /**
-     * The legacy JSON files and the runtime (namespace, key) each one migrates into. The
-     * namespace/key pairs must stay in sync with the owning features; `custom_avatars_map.json`
-     * is deliberately absent — it feeds [CustomLocalFriendAvatars]' avatar reconciliation and
-     * is not a document store.
-     */
-    private data class LegacyDocument(val file: String, val namespace: String, val key: String)
-
-    private val legacyDocuments = listOf(
-        LegacyDocument("conversation_groups.json", "chat", "groups"),
-        LegacyDocument("chat_folders.json", "chat", "folders"),
-        LegacyDocument("moments_custom_bottom_details.json", "moments", "custom_bottom_details"),
-        LegacyDocument("feature_flag_overrides.json", "feature_flags", "overrides"),
-        LegacyDocument("red_packet_settings.json", "json", "RedPacketSettings"),
-        LegacyDocument("red_packet_group_members.json", "json", RED_PACKET_GROUP_MEMBERS_KEY),
-        LegacyDocument("auto_accept_transfer_settings.json", "json", "TransferSettings"),
-        LegacyDocument("auto_like_moments_settings.json", "json", "AutoLikeMomentsSettings"),
-        LegacyDocument("auto_repost_moments_settings.json", "json", "AutoRepostMomentsSettings"),
-        LegacyDocument("real_names.json", "chat", "real_names_last_char"),
-        LegacyDocument("real_names_first_char.json", "chat", "real_names_first_char"),
-        LegacyDocument("real_names_first_char_progress.json", "chat", "real_names_first_char_progress"),
-    )
-
     /**
      * Every legacy JSON file this migration consumes or leaves behind, including the custom
      * avatar map (avatar reconciliation input, not a document store). After the migration has
      * completed these are pure rollback copies and the cleanup action may delete them.
      */
     private val legacyFiles: List<String> =
-        legacyDocuments.map { it.file } + "custom_avatars_map.json"
+        JsonDataMigration.legacyFiles + "custom_avatars_map.json"
 
     /** Hands every existing legacy JSON file to [delete] under the caller's lock. */
     fun cleanupFiles(delete: (File) -> Unit) {
@@ -111,22 +83,6 @@ object LegacyDocumentMigration {
         putState("running", startedAt, null)
         try {
             val root = KnownPaths.moduleRoot.toFile()
-            var documentCount = 0
-            legacyDocuments.forEach { document ->
-                val file = File(root, document.file)
-                if (!file.isFile) return@forEach
-                // Never overwrite: the feature owning this key may have already migrated and
-                // rewritten it, which makes the file the stale copy.
-                if (DocumentStore.get(document.namespace, document.key) != null) return@forEach
-                DocumentStore.put(
-                    document.namespace,
-                    document.key,
-                    file.readText(Charsets.UTF_8),
-                    updatedAt = file.lastModified().takeIf { it > 0 } ?: startedAt,
-                )
-                documentCount++
-            }
-
             val assetCount = AtomicInteger()
             // Themes, sticker packs, voice packs and other media are file-backed runtime data.
             // Keep their original directory layout intact: importing them into Room would both
@@ -143,7 +99,6 @@ object LegacyDocumentMigration {
                 "completed",
                 startedAt,
                 mapOf(
-                    "documents" to documentCount,
                     "assets" to assetCount.get(),
                     "indexedFiles" to indexedFiles,
                 ),

@@ -2,6 +2,9 @@ package dev.ujhhgtg.wekit.utils.fs
 
 import android.content.Context
 import dev.ujhhgtg.wekit.data.LegacyDocumentMigration
+import dev.ujhhgtg.wekit.data.JsonDataMigration
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.fs.LegacyStorageMigration.run
 import java.io.File
@@ -51,6 +54,8 @@ object LegacyStorageMigration {
     }
 
     fun run(context: Context) {
+        // Imported data has its own sources; never mix in an older local external tree.
+        if (!LegacyPaths.localSourcesAllowed) return
         val root = KnownPaths.moduleRoot
         root.toFile().mkdirs()
         val marker = root.resolve(MARKER).toFile()
@@ -89,7 +94,7 @@ object LegacyStorageMigration {
         // roots through HostInfo, which is initialized before settings can be shown.
         val root = File(context.filesDir, "wekit")
         val marker = File(root, MARKER)
-        if (!marker.isFile) {
+        if (!marker.isFile && LegacyPaths.localSourcesAllowed) {
             return LegacyCleanupResult(
                 removedPaths = emptyList(),
                 retainedPaths = emptyList(),
@@ -111,11 +116,21 @@ object LegacyStorageMigration {
             )
         }
 
+        val incomplete = runBlocking(Dispatchers.IO) { JsonDataMigration.incomplete() }
+        if (incomplete.isNotEmpty()) {
+            return LegacyCleanupResult(
+                removedPaths = emptyList(), retainedPaths = emptyList(),
+                blockedReason = "JSON migration is incomplete: ${incomplete.joinToString()}",
+            )
+        }
+
         val removed = ArrayList<String>()
         val retained = ArrayList<String>()
         withLegacyLock(root.toPath()) {
             // The marker can only be trusted while holding the same lock used by run().
-            if (!marker.isFile) return@withLegacyLock
+            // A completed full restore deliberately supersedes the local legacy tree, even if
+            // that tree never finished its original path migration. Both sources remain explicit.
+            if (!marker.isFile && LegacyPaths.localSourcesAllowed) return@withLegacyLock
             listOf(
                 LegacyPaths.externalModuleRoot.toFile(),
                 LegacyPaths.privateExtensionRoot.toFile(),
@@ -139,6 +154,7 @@ object LegacyStorageMigration {
             LegacyDocumentMigration.cleanupFiles { file ->
                 if (file.delete()) removed += file.absolutePath else retained += file.absolutePath
             }
+            runBlocking(Dispatchers.IO) { JsonDataMigration.deleteArchivedDocuments() }
         }
         return LegacyCleanupResult(removed, retained)
     }

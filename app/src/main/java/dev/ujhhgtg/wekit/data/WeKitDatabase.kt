@@ -8,6 +8,27 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import dev.ujhhgtg.wekit.data.dao.AssetDao
+import dev.ujhhgtg.wekit.data.dao.AutomationDao
+import dev.ujhhgtg.wekit.data.dao.ConversationCollectionDao
+import dev.ujhhgtg.wekit.data.dao.SimpleStructuredDao
+import dev.ujhhgtg.wekit.data.entity.ConversationGroupEntity
+import dev.ujhhgtg.wekit.data.entity.ConversationGroupMemberEntity
+import dev.ujhhgtg.wekit.data.entity.ConversationFolderEntity
+import dev.ujhhgtg.wekit.data.entity.ConversationFolderMemberEntity
+import dev.ujhhgtg.wekit.data.entity.MomentCustomDetailEntity
+import dev.ujhhgtg.wekit.data.entity.FeatureFlagOverrideEntity
+import dev.ujhhgtg.wekit.data.entity.ContactRealNamePartEntity
+import dev.ujhhgtg.wekit.data.entity.RealNameScanProgressEntity
+import dev.ujhhgtg.wekit.data.entity.RedPacketRuleEntity
+import dev.ujhhgtg.wekit.data.entity.RedPacketKeywordEntity
+import dev.ujhhgtg.wekit.data.entity.TransferRuleEntity
+import dev.ujhhgtg.wekit.data.entity.TransferKeywordEntity
+import dev.ujhhgtg.wekit.data.entity.MomentAutomationRuleEntity
+import dev.ujhhgtg.wekit.data.entity.MomentAutomationKeywordEntity
+import dev.ujhhgtg.wekit.data.entity.MomentAutomationContentTypeEntity
+import dev.ujhhgtg.wekit.data.entity.collectionSchemaSql
+import dev.ujhhgtg.wekit.data.entity.simpleStructuredSchemaSql
+import dev.ujhhgtg.wekit.data.structured.automationSchemaSql
 import dev.ujhhgtg.wekit.agent.data.dao.BridgeToolAuditDao
 import dev.ujhhgtg.wekit.agent.data.dao.ConditionalPromptDao
 import dev.ujhhgtg.wekit.data.dao.DocumentDao
@@ -90,8 +111,23 @@ import java.io.File
         ManagedDataEntryEntity::class,
         DexCacheEntryEntity::class,
         DexCacheDescriptorEntity::class,
+        ConversationGroupEntity::class,
+        ConversationGroupMemberEntity::class,
+        ConversationFolderEntity::class,
+        ConversationFolderMemberEntity::class,
+        MomentCustomDetailEntity::class,
+        FeatureFlagOverrideEntity::class,
+        ContactRealNamePartEntity::class,
+        RealNameScanProgressEntity::class,
+        RedPacketRuleEntity::class,
+        RedPacketKeywordEntity::class,
+        TransferRuleEntity::class,
+        TransferKeywordEntity::class,
+        MomentAutomationRuleEntity::class,
+        MomentAutomationKeywordEntity::class,
+        MomentAutomationContentTypeEntity::class,
     ],
-    version = 20,
+    version = 22,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 9, to = 10), // adds external_services table
@@ -121,18 +157,21 @@ abstract class WeKitDatabase : RoomDatabase() {
     abstract fun scriptCatalogDao(): ScriptCatalogDao
     abstract fun extensionInstallDao(): ExtensionInstallDao
     abstract fun managedDataDao(): ManagedDataDao
+    abstract fun conversationCollectionDao(): ConversationCollectionDao
+    abstract fun simpleStructuredDao(): SimpleStructuredDao
+    abstract fun automationDao(): AutomationDao
 
     companion object {
         private const val TAG = "WeKitDatabase"
 
         const val FILE_NAME = "wekit.db"
+        const val SCHEMA_VERSION = 22
 
         /** Location of the unified database after the path migration has completed. */
         val file: File
             get() = KnownPaths.moduleRoot.resolve(FILE_NAME).toFile()
 
         init {
-            BackupCoordinator.beforeBackup = { close() }
             BackupCoordinator.beforeDatabaseReplace = { close() }
         }
 
@@ -274,6 +313,42 @@ abstract class WeKitDatabase : RoomDatabase() {
             }
         }
 
+        // Content is imported after legacy files arrive, and also on fresh schema creation.
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                migration20To21Sql.forEach(db::execSQL)
+            }
+        }
+
+        val migration20To21Sql = collectionSchemaSql +
+                simpleStructuredSchemaSql + automationSchemaSql
+
+        // Two schema-21 builds existed: with and without the retired state table. Promote
+        // completed imports before removing it, so current rows (including empty collections)
+        // remain authoritative instead of being overwritten by their old JSON on startup.
+        val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                migration21To22Sql.forEach(db::execSQL)
+            }
+        }
+
+        val migration21To22Sql = listOf(
+            "CREATE TABLE IF NOT EXISTS `structured_store_state` (`domainKey` TEXT NOT NULL, `dataVersion` INTEGER NOT NULL, `status` TEXT NOT NULL, `sourceKind` TEXT NOT NULL, `sourceHash` TEXT, `exportable` INTEGER NOT NULL, `completedAt` INTEGER, `errorCode` TEXT, `errorSummary` TEXT, PRIMARY KEY(`domainKey`))",
+            "INSERT OR IGNORE INTO documents (namespace, `key`, content, formatVersion, updatedAt, exportable) " +
+                "SELECT 'migration', '${JsonDataMigration.MARKER_PREFIX}' || domainKey, 'completed', 1, COALESCE(completedAt, 0), 1 " +
+                "FROM structured_store_state WHERE dataVersion = 1 AND status = 'READY'",
+            // Old filtered backups used RESET for omitted data. Supply ordinary default JSON
+            // for the existing importer; do not fall back to stale preferences or add runtime states.
+            "INSERT OR REPLACE INTO documents (namespace, `key`, content, formatVersion, updatedAt, exportable) " +
+                "SELECT substr(domainKey, 1, instr(domainKey, '/') - 1), substr(domainKey, instr(domainKey, '/') + 1), " +
+                "CASE domainKey " +
+                "WHEN 'chat/groups' THEN '[{\"id\":\"wekit_group_all\"},{\"id\":\"wekit_group_default_unread\",\"type\":\"PRESET_UNREAD\",\"builtInLabel\":\"UNREAD\"},{\"id\":\"wekit_group_default_groups\",\"type\":\"PRESET_GROUPS\",\"builtInLabel\":\"GROUPS\"},{\"id\":\"wekit_group_default_friends\",\"type\":\"PRESET_FRIENDS\",\"builtInLabel\":\"FRIENDS\"},{\"id\":\"wekit_group_default_officials\",\"type\":\"PRESET_OFFICIALS\",\"builtInLabel\":\"OFFICIALS\"}]' " +
+                "WHEN 'chat/folders' THEN '[]' WHEN 'feature_flags/overrides' THEN '[]' ELSE '{}' END, 1, 0, 1 " +
+                "FROM structured_store_state WHERE dataVersion = 1 AND status = 'RESET' " +
+                "AND NOT EXISTS (SELECT 1 FROM documents WHERE namespace = 'migration' AND `key` = '${JsonDataMigration.MARKER_PREFIX}' || domainKey)",
+            "DROP TABLE structured_store_state",
+        )
+
         val migration17To18Sql = listOf(
             "CREATE TABLE IF NOT EXISTS `preference_entries` (`namespace` TEXT NOT NULL, `key` TEXT NOT NULL, `valueType` TEXT NOT NULL, `valueText` TEXT, `valueLong` INTEGER, `valueDouble` REAL, `valueBlob` BLOB, `encodingVersion` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `exportable` INTEGER NOT NULL, PRIMARY KEY(`namespace`, `key`))",
             "CREATE INDEX IF NOT EXISTS `index_preference_entries_namespace` ON `preference_entries` (`namespace`)",
@@ -390,7 +465,7 @@ abstract class WeKitDatabase : RoomDatabase() {
             dbFile.toString()
         )
             .setJournalMode(journalMode)
-            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
+            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
             // Destructive fallback is scoped to the pre-release schemas (1–8) only, which no
             // migration path was ever written for. From 9 onwards every step must have a
             // migration: a missing one then fails loudly at open time instead of silently

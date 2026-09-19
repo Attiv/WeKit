@@ -12,6 +12,7 @@ import dev.ujhhgtg.wekit.loader.entry.zygisk.ZygiskLoaderService
 import dev.ujhhgtg.wekit.loader.utils.HybridClassLoader
 import dev.ujhhgtg.wekit.loader.utils.NativeLoader
 import dev.ujhhgtg.wekit.data.LegacyDocumentMigration
+import dev.ujhhgtg.wekit.data.JsonDataMigration
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.TargetProcess
 import dev.ujhhgtg.wekit.utils.TargetProcesses
@@ -68,6 +69,7 @@ object StartupAgent {
         if (TargetProcesses.isInMain) {
             LegacyStorageMigration.run(application)
             LegacyDocumentMigration.run(application)
+            JsonDataMigration.run()
         }
         if (hookBridge is ArtHookBridge) {
             hideModuleLibraries(hookBridge)

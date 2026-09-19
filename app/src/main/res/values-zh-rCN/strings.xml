@@ -3758,4 +3758,8 @@
     <string name="contacts_custom_avatar_scope_notifications">通知</string>
     <string name="contacts_custom_avatar_scope_shortcuts">桌面快捷方式</string>
     <string name="contacts_custom_avatar_shortcut_hint">创建快捷方式时生效；已有快捷方式需重新创建以更新图标。</string>
+
+    <string name="structured_storage_saving">正在保存…</string>
+    <string name="structured_storage_save_failed">保存失败，之前的设置未更改。请检查日志后重试。</string>
+    <string name="structured_storage_unavailable">此功能的数据未能加载。请检查迁移日志并重启微信重试。</string>
 </resources>

@@ -3740,4 +3740,8 @@
     <string name="contacts_custom_avatar_scope_notifications">通知</string>
     <string name="contacts_custom_avatar_scope_shortcuts">桌面捷徑</string>
     <string name="contacts_custom_avatar_shortcut_hint">建立捷徑時生效；已有捷徑需重新建立以更新圖示。</string>
+
+    <string name="structured_storage_saving">正在儲存…</string>
+    <string name="structured_storage_save_failed">儲存失敗，先前的設定未變更。請檢查記錄後重試。</string>
+    <string name="structured_storage_unavailable">此功能的資料無法載入。請檢查遷移記錄並重新啟動微信重試。</string>
 </resources>

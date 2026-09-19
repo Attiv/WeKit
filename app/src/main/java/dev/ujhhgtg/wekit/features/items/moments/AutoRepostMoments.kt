@@ -43,6 +43,7 @@ object AutoRepostMoments : AutoMomentsBase(),
     )
 
     override fun onEnable() {
+        MomentsAutomationSettings.Repost.requireReady()
         startAutomation()
         handledSnsIds.clear()
         lastAttemptAt.clear()

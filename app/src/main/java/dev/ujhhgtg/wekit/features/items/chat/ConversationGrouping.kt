@@ -55,6 +55,7 @@ import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.TabIndicatorScope
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -136,18 +137,21 @@ import dev.ujhhgtg.wekit.ui.utils.setLifecycleOwner
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.ui.utils.theme.InjectedUiTheme
 import dev.ujhhgtg.wekit.utils.WeLogger
-import dev.ujhhgtg.wekit.data.DocumentStore
+import dev.ujhhgtg.wekit.data.structured.ConversationGroup as ChatGroup
+import dev.ujhhgtg.wekit.data.structured.ConversationGroupType as GroupType
+import dev.ujhhgtg.wekit.data.structured.BuiltInGroupLabel
+import dev.ujhhgtg.wekit.data.JsonDataMigration
+import dev.ujhhgtg.wekit.data.WeKitDatabase
+import kotlinx.coroutines.runBlocking
 import dev.ujhhgtg.wekit.utils.invokeOriginalMethod
 import dev.ujhhgtg.wekit.utils.android.baseActivity
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
 import org.luckypray.dexkit.DexKitBridge
 import top.yukonga.miuix.kmp.blur.blur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
@@ -339,9 +343,6 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     }
 
 
-    @Volatile
-    private var groupsCache: List<ChatGroup>? = null
-
     private val groupMembersCache = ConcurrentHashMap<String, List<String>>()
     private val unreadRefreshVersion = MutableStateFlow(0L)
     private val contactUnreadListener = WeDatabaseListenerApi.IUpdateListener { table, values, _, _, _ ->
@@ -354,6 +355,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private val noUnread = ConversationUnreadState()
 
     override fun onEnable() {
+        loadGroups()
         WeDatabaseListenerApi.addListener(contactUnreadListener)
         WeConversationApi.methodNotifyConversationChanged.hookAfter {
             // This method belongs to the shared storage base; ignore other storage instances.
@@ -432,7 +434,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             },
                             onDeleteGroup = { group ->
                                 showConfirmDeleteGroupDialog(context, group) {
-                                    saveGroups(loadGroups().filterNot { it.id == group.id })
+                                    deleteGroup(group.id)
                                     groups = loadGroups()
                                     if (selectedGroupId == group.id) {
                                         selectedGroupId = ALL_TAB_ID
@@ -447,12 +449,11 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 }
                             },
                             onReorder = { orderedIds ->
-                                val current = loadGroups()
-                                val byId = current.associateBy { it.id }
-                                val reordered = orderedIds.mapNotNull { byId[it] }
-                                // Keep any groups that somehow weren't in the ordered list appended.
-                                val missing = current.filterNot { g -> orderedIds.contains(g.id) }
-                                saveGroups(reordered + missing)
+                                try {
+                                    WeKitDatabase.instance.conversationCollectionDao().reorderGroups(orderedIds)
+                                } finally {
+                                    invalidateGroups()
+                                }
                                 groups = loadGroups()
                             }
                         )
@@ -895,6 +896,10 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         }
 
     override fun onClick(context: ComponentActivity) {
+        if (!JsonDataMigration.isCompleted("chat", "groups")) {
+            showToast(context, context.localizedChatString(R.string.structured_storage_unavailable))
+            return
+        }
         showComposeDialog(context) {
             var pinTabsEnabled by remember { mutableStateOf(pinTabs) }
             var takeOverScroll by remember { mutableStateOf(takeOverHorizontalScroll) }
@@ -1306,11 +1311,13 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         onCreateGroup: () -> Unit,
         onEditGroup: (ChatGroup) -> Unit,
         onDeleteGroup: (ChatGroup) -> Unit,
-        onReorder: (List<String>) -> Unit,
+        onReorder: suspend (List<String>) -> Unit,
         modifier: Modifier = Modifier,
         containerColor: Color = if (isSystemInDarkTheme()) Color(0xFF111111) else Color(0xFFEDEDED),
     ) {
         val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
+        val commitScope = rememberCoroutineScope()
+        var savingOrder by remember { mutableStateOf(false) }
         val capsuleStyle = usesFloatingTabs
         val darkTheme = isSystemInDarkTheme()
         val shadowProgress by animateFloatAsState(
@@ -1428,12 +1435,13 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         ) {
             if (sortMode) {
                 SortableTabsRow(
+                    enabled = !savingOrder,
                     groups = orderedGroups,
                     unreadCounts = unreadCounts,
                     selectedGroupId = selectedGroupId,
                     capsuleStyle = capsuleStyle,
                     onMove = { from, to ->
-                        order = order.toMutableList().apply { add(to, removeAt(from)) }
+                        if (!savingOrder) order = order.toMutableList().apply { add(to, removeAt(from)) }
                     }
                 )
             } else {
@@ -1563,14 +1571,25 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 ) {
                     IconButton(
                         modifier = Modifier.size(if (capsuleStyle) 36.dp else 48.dp),
+                        enabled = !savingOrder,
                         onClick = {
-                            onReorder(order)
-                            sortMode = false
-                            showToast(localizedContext.getString(R.string.conversation_group_order_saved))
+                            savingOrder = true
+                            commitScope.launch {
+                                try {
+                                    onReorder(order)
+                                    sortMode = false
+                                    showToast(localizedContext.getString(R.string.conversation_group_order_saved))
+                                } catch (error: Exception) {
+                                    if (error is kotlinx.coroutines.CancellationException) throw error
+                                    WeLogger.e(TAG, "Failed to reorder groups", error)
+                                    showToast(localizedContext.getString(R.string.logs_save_failed))
+                                } finally { savingOrder = false }
+                            }
                         },
                         colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors()
                     ) {
-                        Icon(
+                        if (savingOrder) androidx.compose.material3.CircularProgressIndicator(Modifier.size(22.dp))
+                        else Icon(
                             imageVector = MaterialSymbols.Outlined.Check,
                             contentDescription = stringResource(R.string.conversation_group_save_order_description),
                             modifier = Modifier.size(22.dp)
@@ -1661,6 +1680,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     @OptIn(ExperimentalFoundationApi::class)
     @Composable
     private fun SortableTabsRow(
+        enabled: Boolean,
         groups: List<ChatGroup>,
         unreadCounts: Map<String, ConversationUnreadState>,
         selectedGroupId: String,
@@ -1703,10 +1723,11 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 // Keep normal horizontal scrolling while nothing is picked up, so an overflowing tab
                 // row can be swiped left/right. Once a tab is picked up the drag consumes the gesture,
                 // and the auto-scroll below handles scrolling near the edges.
-                userScrollEnabled = draggingIndex == -1,
+                userScrollEnabled = enabled && draggingIndex == -1,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pointerInput(Unit) {
+                    .pointerInput(enabled) {
+                        if (!enabled) return@pointerInput
                         detectDragGesturesAfterLongPress(
                             onDragStart = { offset ->
                                 // Hit-test the touch against the live layout to pick up the right tab.
@@ -2032,9 +2053,9 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 titleRes = R.string.conversation_group_create_title,
                 group = null,
                 onDismiss = onDismiss,
+                onSavingChanged = { dialog.setCancelable(!it) },
                 onSave = { group ->
-                    val current = loadGroups()
-                    saveGroups(current + group)
+                    upsertGroup(group)
                     onGroupCreated()
                     onDismiss()
                 }
@@ -2055,15 +2076,14 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 onDismiss = onDismiss,
                 onDelete = {
                     showConfirmDeleteGroupDialog(context, group) {
-                        val current = loadGroups()
-                        saveGroups(current.filterNot { it.id == group.id })
+                        deleteGroup(group.id)
                         onGroupDeleted()
                         onDismiss()
                     }
                 },
+                onSavingChanged = { dialog.setCancelable(!it) },
                 onSave = { updated ->
-                    val current = loadGroups()
-                    saveGroups(current.map { if (it.id == updated.id) updated else it })
+                    upsertGroup(updated)
                     onGroupUpdated()
                     onDismiss()
                 }
@@ -2074,18 +2094,37 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
     private fun showConfirmDeleteGroupDialog(
         context: Context,
         group: ChatGroup,
-        onConfirm: () -> Unit,
+        onConfirm: suspend () -> Unit,
     ) {
         showComposeDialog(context) {
+            val scope = rememberCoroutineScope()
+            var saving by remember { mutableStateOf(false) }
+            var failed by remember { mutableStateOf(false) }
+            androidx.compose.runtime.SideEffect { dialog.setCancelable(!saving) }
             val groupName = groupDisplayName(group)
             AlertDialogContent(
                 title = { Text(stringResource(R.string.conversation_group_delete_title)) },
-                text = { Text(stringResource(R.string.conversation_group_delete_message, groupName)) },
-                dismissButton = { TextButton(onDismiss) { Text(stringResource(R.string.dialog_cancel)) } },
+                text = {
+                    Column {
+                        Text(stringResource(R.string.conversation_group_delete_message, groupName))
+                        if (saving) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (failed) Text(stringResource(R.string.logs_save_failed), color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = { TextButton(onDismiss, enabled = !saving) { Text(stringResource(R.string.dialog_cancel)) } },
                 confirmButton = {
-                    Button(onClick = {
-                        onDismiss()
-                        onConfirm()
+                    Button(enabled = !saving, onClick = {
+                        saving = true
+                        scope.launch {
+                            try {
+                                onConfirm()
+                                onDismiss()
+                            } catch (error: Exception) {
+                                if (error is kotlinx.coroutines.CancellationException) throw error
+                                WeLogger.e(TAG, "Failed to delete group", error)
+                                failed = true
+                            } finally { saving = false }
+                        }
                     }) { Text(stringResource(R.string.conversation_group_action_delete)) }
                 }
             )
@@ -2098,17 +2137,46 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         group: ChatGroup?,
         onDismiss: () -> Unit,
         onDelete: (() -> Unit)? = null,
-        onSave: (ChatGroup) -> Unit
+        onSavingChanged: (Boolean) -> Unit,
+        onSave: suspend (ChatGroup) -> Unit
     ) {
         val localizedContext by rememberUpdatedState(LocalWeKitLocalizedContext.current)
+        val scope = rememberCoroutineScope()
+        var saving by remember { mutableStateOf(false) }
+        var failed by remember { mutableStateOf(false) }
+        fun submit(value: ChatGroup) {
+            saving = true
+            onSavingChanged(true)
+            failed = false
+            scope.launch {
+                try {
+                    onSave(value)
+                    showToast(localizedContext.getString(R.string.conversation_group_saved))
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    WeLogger.e(TAG, "Failed to save group", error)
+                    failed = true
+                } finally {
+                    saving = false
+                    onSavingChanged(false)
+                }
+            }
+        }
         val groupId = remember(group) { group?.id ?: newGroupId() }
         var name by remember(group) { mutableStateOf(group?.name ?: "") }
 
         if (group != null && isAllTab(group.id)) {
             AlertDialogContent(
-                title = { Text(stringResource(titleRes)) },
+                title = {
+                    Column {
+                        Text(stringResource(titleRes))
+                        if (saving) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (failed) Text(stringResource(R.string.logs_save_failed), color = MaterialTheme.colorScheme.error)
+                    }
+                },
                 text = {
                     OutlinedTextField(
+                        enabled = !saving,
                         value = name,
                         onValueChange = { name = it },
                         modifier = Modifier.fillMaxWidth(),
@@ -2118,12 +2186,11 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                     )
                 },
                 dismissButton = {
-                    TextButton(onDismiss) { Text(stringResource(R.string.dialog_cancel)) }
+                    TextButton(onDismiss, enabled = !saving) { Text(stringResource(R.string.dialog_cancel)) }
                 },
                 confirmButton = {
-                    Button(onClick = {
-                        onSave(group.copy(name = name.trim()))
-                        showToast(localizedContext.getString(R.string.conversation_group_saved))
+                    Button(enabled = !saving, onClick = {
+                        submit(group.copy(name = name.trim()))
                     }) { Text(stringResource(R.string.dialog_confirm)) }
                 }
             )
@@ -2156,10 +2223,17 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(),
-            title = { Text(stringResource(titleRes)) },
+            title = {
+                Column {
+                    Text(stringResource(titleRes))
+                    if (saving) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (failed) Text(stringResource(R.string.logs_save_failed), color = MaterialTheme.colorScheme.error)
+                }
+            },
             text = {
                 DefaultColumn {
                     OutlinedTextField(
+                        enabled = !saving,
                         value = name,
                         onValueChange = { name = it },
                         modifier = Modifier.fillMaxWidth(),
@@ -2176,7 +2250,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { typeExpanded = true }
+                                .clickable(enabled = !saving) { typeExpanded = true }
                                 .padding(vertical = 8.dp)
                         ) {
                             Text(
@@ -2196,6 +2270,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             onDismissRequest = { typeExpanded = false }
                         ) {
                             DropdownMenuItem(
+                                enabled = !saving,
                                 text = { Text(stringResource(R.string.conversation_group_mode_manual)) },
                                 onClick = {
                                     type = GroupType.MANUAL
@@ -2203,6 +2278,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 }
                             )
                             DropdownMenuItem(
+                                enabled = !saving,
                                 text = { Text(stringResource(R.string.conversation_group_mode_unread)) },
                                 onClick = {
                                     type = GroupType.PRESET_UNREAD
@@ -2210,6 +2286,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 }
                             )
                             DropdownMenuItem(
+                                enabled = !saving,
                                 text = { Text(stringResource(R.string.conversation_group_mode_groups)) },
                                 onClick = {
                                     type = GroupType.PRESET_GROUPS
@@ -2217,6 +2294,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 }
                             )
                             DropdownMenuItem(
+                                enabled = !saving,
                                 text = { Text(stringResource(R.string.conversation_group_mode_friends)) },
                                 onClick = {
                                     type = GroupType.PRESET_FRIENDS
@@ -2224,6 +2302,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 }
                             )
                             DropdownMenuItem(
+                                enabled = !saving,
                                 text = { Text(stringResource(R.string.conversation_group_mode_officials)) },
                                 onClick = {
                                     type = GroupType.PRESET_OFFICIALS
@@ -2231,6 +2310,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 }
                             )
                             DropdownMenuItem(
+                                enabled = !saving,
                                 text = { Text(stringResource(R.string.conversation_group_mode_sql)) },
                                 onClick = {
                                     type = GroupType.SQL
@@ -2245,6 +2325,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             Text(stringResource(R.string.conversation_group_selected_count, matchedCount))
                             val context = LocalContext.current
                             Button(
+                                enabled = !saving,
                                 modifier = Modifier.fillMaxWidth(),
                                 onClick = {
                                     showComposeDialog(context) {
@@ -2283,6 +2364,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
                         GroupType.SQL -> {
                             OutlinedTextField(
+                                enabled = !saving,
                                 value = selectFields,
                                 onValueChange = { selectFields = it },
                                 modifier = Modifier.fillMaxWidth(),
@@ -2290,6 +2372,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                                 singleLine = true
                             )
                             OutlinedTextField(
+                                enabled = !saving,
                                 value = whereClause,
                                 onValueChange = { whereClause = it },
                                 modifier = Modifier.fillMaxWidth(),
@@ -2312,13 +2395,13 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
             },
             dismissButton = {
                 if (onDelete != null) {
-                    TextButton(onDelete) { Text(stringResource(R.string.conversation_group_action_delete)) }
+                    TextButton(onDelete, enabled = !saving) { Text(stringResource(R.string.conversation_group_action_delete)) }
                 }
-                TextButton(onDismiss) { Text(stringResource(R.string.dialog_cancel)) }
+                TextButton(onDismiss, enabled = !saving) { Text(stringResource(R.string.dialog_cancel)) }
             },
             confirmButton = {
                 Button(
-                    enabled = name.isNotBlank() || builtInLabel != null,
+                    enabled = !saving && (name.isNotBlank() || builtInLabel != null),
                     onClick = {
                         val next = ChatGroup(
                             id = groupId,
@@ -2329,8 +2412,7 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                             whereClause = whereClause.trim(),
                             builtInLabel = builtInLabel,
                         )
-                        onSave(next)
-                        showToast(localizedContext.getString(R.string.conversation_group_saved))
+                        submit(next)
                     }
                 ) { Text(stringResource(R.string.dialog_confirm)) }
             }
@@ -2431,89 +2513,35 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         return resolved
     }
 
+    @Volatile
+    private var groupsCache: List<ChatGroup>? = null
+
     private fun loadGroups(): List<ChatGroup> {
         groupsCache?.let { return it }
-        // First run (no config yet): seed the groups that used to be the built-in tabs so the tab
-        // bar isn't empty out of the box, then persist them so they're editable / deletable.
-        if (DocumentStore.read("chat", "groups") == null) {
-            val defaults = defaultGroups()
-            saveGroups(defaults)
-            return defaults
-        }
-        val groups = runCatching {
-            val raw = DocumentStore.read("chat", "groups") ?: return@runCatching emptyList()
-            DefaultJson.decodeFromString<List<ChatGroup>>(raw)
-                .map { group ->
-                    group.copy(members = group.members.filter { it.isNotBlank() })
-                }
-                .map(::migrateLegacyBuiltInLabel)
-                .filter {
-                    (isGroupId(it.id) || isAllTab(it.id)) &&
-                        (isAllTab(it.id) || it.name.isNotBlank() ||
-                            builtInLabelFor(it.type) != null || it.builtInLabel != null)
-                }
-        }.onFailure {
-            WeLogger.w(TAG, "failed to decode groups config", it)
-        }.getOrDefault(emptyList())
-        // Guarantee the fixed "全部" tab is present. Configs written before this tab was orderable
-        // won't contain it, so inject it at the front; once the user reorders, its slot persists.
-        val withAll = if (groups.any { isAllTab(it.id) }) groups else listOf(allTab()) + groups
-        groupsCache = withAll
-        return withAll
+        return runBlocking(Dispatchers.IO) {
+            JsonDataMigration.requireCompleted("chat", "groups")
+            WeKitDatabase.instance.conversationCollectionDao().getGroups()
+        }.also { groupsCache = it }
     }
 
-    private fun migrateLegacyBuiltInLabel(group: ChatGroup): ChatGroup {
-        if (isAllTab(group.id)) return group
-        if (group.builtInLabel != null) return group
-        val label = when (group.type) {
-            GroupType.PRESET_UNREAD if group.name == "未读" -> BuiltInGroupLabel.UNREAD
-            GroupType.PRESET_GROUPS if group.name == "群聊" -> BuiltInGroupLabel.GROUPS
-            GroupType.PRESET_FRIENDS if group.name == "好友" -> BuiltInGroupLabel.FRIENDS
-            GroupType.PRESET_OFFICIALS if group.name == "公众号" -> BuiltInGroupLabel.OFFICIALS
-            else -> null
-        }
-        return if (label == null) group else group.copy(name = "", builtInLabel = label)
-    }
-
-    // The groups seeded on first run, matching the fixed categories while keeping every category
-    // editable and reorderable except the non-deletable 全部 tab.
-    private fun defaultGroups(): List<ChatGroup> {
-        // Distinct ids so each row is independently editable / deletable. The fixed "全部" tab leads
-        // by default but can be dragged elsewhere.
-        val base = System.currentTimeMillis()
-        return listOf(
-            allTab(),
-            ChatGroup(
-                id = "$GROUP_PREFIX${base}",
-                type = GroupType.PRESET_UNREAD,
-                builtInLabel = BuiltInGroupLabel.UNREAD,
-            ),
-            ChatGroup(
-                id = "$GROUP_PREFIX${base + 1}",
-                type = GroupType.PRESET_GROUPS,
-                builtInLabel = BuiltInGroupLabel.GROUPS,
-            ),
-            ChatGroup(
-                id = "$GROUP_PREFIX${base + 2}",
-                type = GroupType.PRESET_FRIENDS,
-                builtInLabel = BuiltInGroupLabel.FRIENDS,
-            ),
-            ChatGroup(
-                id = "$GROUP_PREFIX${base + 3}",
-                type = GroupType.PRESET_OFFICIALS,
-                builtInLabel = BuiltInGroupLabel.OFFICIALS,
-            ),
-        )
-    }
-
-    private fun saveGroups(groups: List<ChatGroup>) {
-        groupsCache = groups
+    private fun invalidateGroups() {
+        groupsCache = null
         groupMembersCache.clear()
-        runCatching {
-            val raw = DefaultJson.encodeToString(groups)
-            DocumentStore.write("chat", "groups", raw)
-        }.onFailure {
-            WeLogger.w(TAG, "failed to save groups", it)
+    }
+
+    private suspend fun upsertGroup(group: ChatGroup) {
+        try {
+            WeKitDatabase.instance.conversationCollectionDao().putGroup(group)
+        } finally {
+            invalidateGroups()
+        }
+    }
+
+    private suspend fun deleteGroup(id: String) {
+        try {
+            WeKitDatabase.instance.conversationCollectionDao().removeGroup(id)
+        } finally {
+            invalidateGroups()
         }
     }
 
@@ -2525,36 +2553,16 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
 
     private fun isGroupId(value: String): Boolean = value.startsWith(GROUP_PREFIX)
 
-    enum class GroupType {
-        MANUAL,
-        PRESET_UNREAD,
-        PRESET_GROUPS,
-        PRESET_FRIENDS,
-        PRESET_OFFICIALS,
-        SQL
-    }
-
     private enum class AdapterStorage {
         LEGACY_CURSOR,
         MVVM_LIST,
     }
 
-    @Serializable
-    private enum class BuiltInGroupLabel(@param:StringRes val nameRes: Int) {
-        UNREAD(R.string.conversation_group_default_unread),
-        GROUPS(R.string.conversation_group_default_groups),
-        FRIENDS(R.string.conversation_group_default_friends),
-        OFFICIALS(R.string.conversation_group_default_officials),
-    }
-
-    @Serializable
-    private data class ChatGroup(
-        val id: String = "",
-        val name: String = "",
-        val members: List<String> = emptyList(),
-        val type: GroupType = GroupType.MANUAL,
-        val selectFields: String = "",
-        val whereClause: String = "",
-        val builtInLabel: BuiltInGroupLabel? = null,
-    )
+    private val BuiltInGroupLabel.nameRes: Int
+        @StringRes get() = when (this) {
+            BuiltInGroupLabel.UNREAD -> R.string.conversation_group_default_unread
+            BuiltInGroupLabel.GROUPS -> R.string.conversation_group_default_groups
+            BuiltInGroupLabel.FRIENDS -> R.string.conversation_group_default_friends
+            BuiltInGroupLabel.OFFICIALS -> R.string.conversation_group_default_officials
+        }
 }

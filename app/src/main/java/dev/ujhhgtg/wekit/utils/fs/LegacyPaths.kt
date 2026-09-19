@@ -14,6 +14,10 @@ import kotlin.io.path.div
  * migration scanners, which can leave the source untouched when migration or validation fails.
  */
 object LegacyPaths {
+    /** A restored backup owns its inputs; do not supplement it with the previous installation. */
+    val localSourcesAllowed: Boolean
+        get() = !KnownPaths.moduleRoot.resolve(".restored-backup").toFile().exists()
+
     val externalModuleRoot: Path by lazy {
         (Environment.getExternalStorageDirectory().toPath() / "Android" / "data" /
                 runCatching { HostInfo.packageName }.getOrDefault(PackageNames.WECHAT) /
