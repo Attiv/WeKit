@@ -993,7 +993,7 @@ object WeAgentService : TriggerManager.TriggerHost {
         val systemPromptContent = WeAgentRepository.getSystemPromptContent(effectiveSystemPromptId)
         val perTurn = WeAgentRepository.getEnabledPerTurnPrompts().map { it.content }
         val conditionals = WeAgentRepository.getEnabledConditionalPrompts()
-        val req = ModelProviderManager.buildRequest(model, emptyList(), emptyList())
+        val req = ModelProviderManager.buildRequest(model, emptyList(), emptyList(), sessionId)
         // Conditional tool gating is snapshotted onto the TurnConfig, never written to a shared flag:
         // several sessions run concurrently (foreground chat + trigger-fired background turns) and the
         // tool list is rebuilt on every request, so a global would let whichever session resolved last
@@ -1042,7 +1042,7 @@ object WeAgentService : TriggerManager.TriggerHost {
         if (session.title != "新对话") return
         val small = resolveSmallModel(sessionId)
         val title = if (small != null) {
-            runCatching { TitleGenerator.generate(small, firstUserText) }.getOrNull()
+            runCatching { TitleGenerator.generate(small, sessionId, firstUserText) }.getOrNull()
         } else null
         WeAgentRepository.renameSession(sessionId, title ?: firstUserText.take(10))
     }
