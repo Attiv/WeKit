@@ -89,14 +89,8 @@ interface AssetDao {
     @Query("DELETE FROM asset_chunks WHERE assetId = :assetId")
     suspend fun deleteChunks(assetId: String)
 
-    @Query("DELETE FROM asset_chunks WHERE assetId IN (:assetIds)")
-    suspend fun deleteChunksForAssets(assetIds: List<String>)
-
     @Query("DELETE FROM assets WHERE assetId = :assetId")
     suspend fun delete(assetId: String)
-
-    @Query("DELETE FROM assets WHERE assetId IN (:assetIds)")
-    suspend fun deleteAssets(assetIds: List<String>)
 
     @Upsert
     suspend fun bind(binding: AssetBindingEntity)

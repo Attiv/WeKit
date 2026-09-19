@@ -37,11 +37,9 @@ object LegacyDocumentMigration {
     private const val TAG = "LegacyDocumentMigration"
     private const val MIGRATION_NAMESPACE = "migration"
     /**
-     * v3 deliberately keeps file-backed media in the file tree.  v2 accidentally imported the
-     * complete themes/sticker/voice trees (and the complete assets tree) into asset_chunks, which
-     * made the database grow with every media file and left the feature readers unable to import
-     * their original directories.  Bump the marker so an installation that already completed v2
-     * runs the cleanup below exactly once.
+     * The suffix version bumps whenever the migration logic changes, so an installation that
+     * already ran an older version re-runs the new one exactly once. v3 keeps file-backed media
+     * in the file tree and only imports the catalogued user asset directory and custom avatars.
      */
     private const val MIGRATION_KEY = "legacy-document-v3"
     private const val DOCUMENT_NAMESPACE = "legacy-json"
@@ -100,7 +98,6 @@ object LegacyDocumentMigration {
             // in the asset catalog.
             migrateDirectoryAssets(root, "assets/user", "legacy-assets-user", assetCount)
             migrateCustomAvatars(context, File(root, "custom_avatars_map.json"), assetCount)
-            cleanupV2FileBackedAssets()
             val indexedFiles = scanScriptCatalog(root, startedAt) +
                     scanManagedData(root, startedAt) +
                     scanExtensionCatalog(root)
@@ -259,60 +256,15 @@ object LegacyDocumentMigration {
         count
     }
 
-    /**
-     * Remove the media rows produced by the v2 migration.  The source files are deliberately
-     * untouched; they remain the canonical representation used by theme, sticker and voice
-     * importers.  Chunks are deleted only after their bindings are gone and only when no remaining
-     * binding (for example a custom avatar with the same digest) references the asset.
-     */
-    private fun cleanupV2FileBackedAssets() = runBlocking(Dispatchers.IO) {
-        val dao = WeKitDatabase.instance.assetDao()
-        val obsolete = buildList {
-            addAll(dao.getBindings("legacy-themes"))
-            addAll(dao.getBindings("legacy-sticker-panel"))
-            addAll(dao.getBindings("legacy-voice-panel"))
-            // v2 changed the owner from legacy-assets-user to legacy-assets and therefore also
-            // captured assets/virtual_voip_video.mp4. Retain the user/ subtree, but remove every
-            // other legacy-assets slot now that the file is canonical on disk.
-            addAll(dao.getBindings("legacy-assets").filterNot { it.slot.startsWith("user/") })
-        }
-        obsolete.forEach { binding -> dao.unbind(binding.owner, binding.slot) }
-        val orphanedAssets = mutableListOf<String>()
-        obsolete.asSequence().map { it.assetId }.distinct().forEach { assetId ->
-            if (dao.countBindings(assetId) == 0) orphanedAssets += assetId
-        }
-        if (orphanedAssets.isNotEmpty()) {
-            // One DELETE per asset would create a transaction for every imported media file and
-            // make the corrective migration as slow as the original import. Delete all orphaned
-            // rows in two statements instead.
-            orphanedAssets.chunked(500).forEach { assetIds ->
-                dao.deleteChunksForAssets(assetIds)
-                dao.deleteAssets(assetIds)
-            }
-        }
-    }
-
     private fun importAsset(source: AssetSource) = runBlocking(Dispatchers.IO) {
         val dao = WeKitDatabase.instance.assetDao()
-        val legacyBinding = if (source.owner == "legacy-assets-user") {
-            // v1 used legacy-assets-user/<slot>; v2 used legacy-assets/user/<slot>. Reuse either
-            // existing binding so retrying this migration does not duplicate its chunks.
-            dao.getBinding("legacy-assets-user", source.slot)
-                ?: dao.getBinding("legacy-assets", "user/${source.slot}")
-        } else {
-            null
-        }
-        val existingBinding = dao.getBinding(source.owner, source.slot) ?: legacyBinding
+        val existingBinding = dao.getBinding(source.owner, source.slot)
         val existingAsset = existingBinding?.let { dao.get(it.assetId) }
         val expectedExistingChunks = source.sizeHint?.let { (it + CHUNK_SIZE - 1) / CHUNK_SIZE }?.toInt()
         if (source.sizeHint != null && existingAsset != null &&
             existingAsset.sizeBytes == source.sizeHint && existingAsset.metadataJson == source.metadataJson &&
             expectedExistingChunks == dao.countChunks(existingAsset.assetId)
         ) {
-            if (existingBinding.owner != source.owner || existingBinding.slot != source.slot) {
-                dao.bind(AssetBindingEntity(source.owner, source.slot, existingBinding.assetId))
-                dao.unbind(existingBinding.owner, existingBinding.slot)
-            }
             return@runBlocking
         }
 
@@ -344,11 +296,6 @@ object LegacyDocumentMigration {
             }
         }
         dao.bind(AssetBindingEntity(source.owner, source.slot, assetId))
-        if (existingBinding != null &&
-            (existingBinding.owner != source.owner || existingBinding.slot != source.slot)
-        ) {
-            dao.unbind(existingBinding.owner, existingBinding.slot)
-        }
     }
 
     private fun digest(open: () -> InputStream): AssetDigest {
