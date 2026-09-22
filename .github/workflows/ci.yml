@@ -31,12 +31,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' && github.repository == 'Ujhhgtg/WeKit-Dev') ||
+      (github.event_name == 'workflow_dispatch' && (github.repository == 'Ujhhgtg/WeKit-Dev' || github.repository == 'Attiv/WeKit')) ||
       (
         !startsWith(github.event.head_commit.message, '[skip ci]') && 
         (
           github.event_name == 'pull_request' ||
-          (github.repository == 'Ujhhgtg/WeKit-Dev' && github.ref == 'refs/heads/master')
+          ((github.repository == 'Ujhhgtg/WeKit-Dev' || github.repository == 'Attiv/WeKit') && github.ref == 'refs/heads/master')
         )
       )
     steps:
@@ -636,9 +636,12 @@ jobs:
   release-ci:
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ always() && needs.build.result == 'success' && github.repository == 'Ujhhgtg/WeKit-Dev' && github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    if: ${{ always() && needs.build.result == 'success' && ((github.repository == 'Ujhhgtg/WeKit-Dev' && github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.repository == 'Attiv/WeKit' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')))) }}
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.repository == 'Attiv/WeKit' && secrets.GITHUB_TOKEN || secrets.RELEASE_TOKEN }}
+      RELEASE_REPO: ${{ github.repository == 'Attiv/WeKit' && github.repository || 'Ujhhgtg/WeKit' }}
 
     steps:
       - name: Checkout
@@ -654,11 +657,9 @@ jobs:
           path: artifacts
 
       - name: Delete existing CI release (if exists)
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          gh release delete CI --repo Ujhhgtg/WeKit --yes || true
-          gh api -X DELETE repos/Ujhhgtg/WeKit/git/refs/tags/CI || true
+          gh release delete CI --repo "$RELEASE_REPO" --yes || true
+          gh api -X DELETE "repos/${RELEASE_REPO}/git/refs/tags/CI" || true
 
       - name: Generate update.json
         run: |
@@ -678,7 +679,6 @@ jobs:
 
       - name: Create CI release on WeKit and upload artifacts
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           COMMIT_SHA: ${{ github.sha }}
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
@@ -694,7 +694,7 @@ jobs:
           } > "$RUNNER_TEMP/ci-notes.md"
 
           gh release create CI \
-            --repo Ujhhgtg/WeKit \
+            --repo "$RELEASE_REPO" \
             --title "CI" \
             --notes-file "$RUNNER_TEMP/ci-notes.md" \
             artifacts/*
