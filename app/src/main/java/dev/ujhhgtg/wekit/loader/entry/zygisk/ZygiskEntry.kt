@@ -59,8 +59,7 @@ object ZygiskEntry {
 
             try {
                 NativeLoader.configureZygiskPayload(apkPath, dataDir)
-                NativeLoader.initDecoder(apkPath)
-                WeLogger.i(TAG, "ZygiskEntry.init: process=$processName apk=$apkPath dataDir=$dataDir")
+                Log.i(TAG, "ZygiskEntry.init: process=$processName apk=$apkPath dataDir=$dataDir")
                 check(nativeInitialize()) {
                     "LSPlant bootstrap or hook bridge registration failed"
                 }
@@ -93,6 +92,9 @@ object ZygiskEntry {
                         val appInfo = param.args.getOrNull(0) as? ApplicationInfo ?: return
                         if (appInfo.packageName != targetPackage) return
                         val factory = param.result ?: return
+                        // postAppSpecialize runs before Android binds/names the host process.
+                        // Authenticate only once LoadedApk has a real bound ApplicationInfo.
+                        NativeLoader.initDecoder(modulePath)
                         installFinalClassLoaderHook(bridge, factory, targetPackage)
                     }
                 }, priority = 10000)
