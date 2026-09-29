@@ -1,10 +1,12 @@
 @file:Suppress("AvoidDuplicateDependencies")
 
+import com.android.build.api.variant.BuildConfigField
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 plugins {
+    id("dev.ujhhgtg.lsparanoid") version "0.13.3"
     alias(libs.plugins.android.application)
     alias(libs.plugins.google.devtools.ksp)
     alias(libs.plugins.kotlin.compose)
@@ -13,19 +15,64 @@ plugins {
     alias(libs.plugins.aboutlibraries.android)
 }
 
-fun getCommitCount(): Int {
-    return providers.exec {
-        commandLine("git", "rev-list", "--count", "HEAD")
-    }.standardOutput.asText.get().trim().toInt()
+// Decide per variant, so a single assemble invocation can build plain debug and protected release.
+// Validation invocations share main outputs with their tests and must remain entirely unprotected.
+val protectionOverride = providers.gradleProperty("protect").map { value ->
+    requireNotNull(value.toBooleanStrictOrNull()) { "-Pprotect must be true or false" }
+}.orNull
+val protectionValidation = providers.gradleProperty("dexTestWorker").orNull == "true" ||
+    gradle.startParameter.taskNames.any { path ->
+        val name = path.substringAfterLast(':').lowercase()
+        "test" in name || name in setOf(
+            "check", "connectedcheck", "devicecheck", "build", "buildneeded", "builddependents",
+        )
+    }
+
+lsparanoid {
+    variantFilter = { variant ->
+        !protectionValidation && (protectionOverride ?: (variant.buildType == "release"))
+    }
+    backend = providers.gradleProperty("lspBackend").orElse("native").get()
+    automaticLoading = false
+    allowedHostCertificates = mapOf(
+        "com.tencent.mm" to setOf("0fe4ff85c215918396dadc7cd8ce6963339af33d37751a56e54c7206b63a3c7c"),
+    )
+    nativeNdkVersion = providers.gradleProperty("lspNdkVersion").orElse("29.0.14206865").get()
+    omvllPlugin = providers.gradleProperty("lspOmvllPlugin").orNull
+    omvllPythonPath = providers.gradleProperty("lspOmvllPythonPath").orNull
+    classFilter = { it.startsWith("dev.ujhhgtg.wekit.") }
+    excludedClassPrefixes = setOf(
+        "dev.ujhhgtg.wekit.application.ModuleApplication",
+        "dev.ujhhgtg.wekit.loader.startup.ModuleLoader",
+        "dev.ujhhgtg.wekit.loader.entry",
+        "dev.ujhhgtg.wekit.loader.utils.NativeLoader",
+        "dev.ujhhgtg.wekit.loader.utils.ZygiskNativePayload",
+        "dev.ujhhgtg.wekit.constants.PackageNames",
+        "dev.ujhhgtg.wekit.utils.fs.PathUtilsKt",
+        "dev.ujhhgtg.wekit.BuildConfig",
+    )
+    if (backend == "native") {
+        wrappedResourceAccess = true
+        resourceIncludes = setOf("string/*", "plurals/*", "array/*")
+        resourceExcludes = setOf(
+            "string/restart_wechat_to_apply", "string/nav_edit_enable_first",
+            "string/automation_name_required", "string/res_inject_success",
+        )
+    }
 }
 
-fun getGitHash(): String {
-    // fixed width: bare --short widens as history grows and varies across git versions, which would
-    // make versionName disagree with the hash xtask bakes into module.prop and the Zygisk zip name
-    return providers.exec {
-        commandLine("git", "rev-parse", "--short=8", "HEAD")
-    }.standardOutput.asText.get().trim()
-}
+// Keep Git values lazy: reading them during configuration invalidates the configuration cache
+// on every commit. Wire these providers into variant/task inputs instead.
+val commitCount = providers.exec {
+    workingDir(rootProject.layout.projectDirectory)
+    commandLine("git", "rev-list", "--count", "HEAD")
+}.standardOutput.asText.map { it.trim().toInt() }
+
+// Keep the same short-hash width as xtask's module metadata.
+val gitHash = providers.exec {
+    workingDir(rootProject.layout.projectDirectory)
+    commandLine("git", "rev-parse", "--short=8", "HEAD")
+}.standardOutput.asText.map { it.trim() }
 
 android {
     namespace = libs.versions.namespace.get()
@@ -36,28 +83,18 @@ android {
     }
     ndkVersion = libs.versions.ndk.get()
 
-    val commitCount = getCommitCount()
-    val gitHash = getGitHash()
-
     defaultConfig {
         applicationId = libs.versions.namespace.get()
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = commitCount
-        versionName = "git+$gitHash"
 
         ndk {
             // noinspection ChromeOsAbiSupport
             abiFilters += "arm64-v8a"
         }
 
-        buildConfigField("String", "COMMIT_HASH", "\"${gitHash}\"")
         buildConfigField("String", "TAG", "\"WeKit\"")
         buildConfigField("long", "BUILD_TIMESTAMP", "${System.currentTimeMillis()}L")
-        buildConfigField("long", "PYTHON_SYNC_HOOK_BUDGET_MS", "${libs.versions.pythonRuntimeSyncHookBudgetMs.get()}L")
-        buildConfigField("long", "PYTHON_TASK_DRAIN_TIMEOUT_MS", "${libs.versions.pythonRuntimeTaskDrainTimeoutMs.get()}L")
-        buildConfigField("long", "PYTHON_MAX_MANIFEST_BYTES", "${libs.versions.pythonRuntimeMaxManifestBytes.get()}L")
-        buildConfigField("long", "PYTHON_MAX_PLUGIN_FILE_BYTES", "${libs.versions.pythonRuntimeMaxPluginFileBytes.get()}L")
     }
 
     splits {
@@ -148,6 +185,7 @@ android {
             "**.bin",
             "kotlin-tooling-metadata.json",
             "META-INF/INDEX.LIST",
+            "META-INF/LICENSE.md",
             // Monet reads host resource tables with default framework loading disabled.
             "frameworks/android/**",
             // Monet signs with RSA; Picnic's post-quantum lookup tables are unused.
@@ -189,9 +227,18 @@ tasks.withType<KotlinCompile> {
 val adbProvider = androidComponents.sdkComponents.adb
 androidComponents {
     onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(commitCount)
+            output.versionName.set(gitHash.map { "git+$it" })
+        }
+        variant.buildConfigFields!!.put("COMMIT_HASH", gitHash.map {
+            BuildConfigField("String", "\"$it\"", null)
+        })
+
         val generateZygiskResources = tasks.register<GenerateZygiskResourcesTask>(
             "generate${variant.name.replaceFirstChar { it.uppercase() }}ZygiskResources"
         ) {
+            description = "Generate Zygisk module Resources"
             templateDir.set(rootProject.layout.projectDirectory.dir("wekit-zygisk/template"))
             versionCode.set(variant.outputs.single().versionCode)
             versionName.set(variant.outputs.single().versionName)
@@ -250,7 +297,7 @@ val generateNewFeatures = tasks.register<GenerateNewFeaturesTask>("generateNewFe
     outputDir.set(layout.buildDirectory.dir("generated/source/newfeatures"))
     namespace.set(libs.versions.namespace.get())
     windowDays.set(30)
-    gitHead.set(getGitHash())
+    gitHead.set(gitHash)
 }
 
 val scriptDeps = configurations.create("scriptDeps") {
@@ -268,6 +315,7 @@ val arsclibSource = configurations.create("arsclibSource") {
 // program classes, even AttributeSet::class in host constructor queries gets
 // rewritten to the bundled (obfuscated) copy and no longer matches Android.
 val prepareAndroidArsclib = tasks.register<Jar>("prepareAndroidArsclib") {
+    description = "Prepare Android ARSCLib"
     from(provider { arsclibSource.map { zipTree(it) } })
     exclude("android/**", "org/xmlpull/v1/**")
     archiveFileName.set("arsclib-android.jar")
@@ -336,7 +384,6 @@ dependencies {
     implementation(libs.google.protobuf.javalite)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.serialization.protobuf)
-    implementation(libs.mmkv)
 
     implementation(project(":libs:common:bsh"))
     add(arsclibSource.name, libs.arsclib)
@@ -446,3 +493,6 @@ tasks.withType<KotlinJvmCompile>().configureEach {
         freeCompilerArgs.add("-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi")
     }
 }
+
+// The localization adapter remains present in JVM development variants.
+dependencies { implementation("dev.ujhhgtg.lsparanoid:runtime:0.13.3") }

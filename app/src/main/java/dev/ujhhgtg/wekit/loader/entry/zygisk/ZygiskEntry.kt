@@ -4,6 +4,7 @@ package dev.ujhhgtg.wekit.loader.entry.zygisk
 
 import android.annotation.SuppressLint
 import android.content.pm.ApplicationInfo
+import android.util.Log
 import androidx.annotation.Keep
 import dev.ujhhgtg.reflekt.utils.makeAccessible
 import dev.ujhhgtg.wekit.BuildConfig
@@ -23,11 +24,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * The native side has only:
  *   1. Copied the active module's APK into
  *      this app's data directory during postAppSpecialize.
- *   2. Read DEX directly from that APK through InMemoryDexClassLoader and called
- *      this entry point.
+ *   2. Read DEX directly from that APK through InMemoryDexClassLoader.
+ *   3. Initialized LSPlant and trusted the loader before calling this entry point.
  *
- * This Java entry then initializes its native hook runtime,
- * trusts its own InMemoryDexClassLoader, and only then installs lifecycle hooks.
+ * This Java entry registers the hook bridge's native methods and installs lifecycle hooks.
  */
 @Keep
 object ZygiskEntry {
@@ -51,18 +51,18 @@ object ZygiskEntry {
     ) {
         val targetPackage = processName.substringBefore(':')
         if (!PackageNames.isWeChat(targetPackage)) {
-            WeLogger.w(TAG, "ignoring unsupported Zygisk target: $targetPackage")
+            Log.w(TAG, "ignoring unsupported Zygisk target: $targetPackage")
             return
         }
         synchronized(entryLock) {
             if (hookBridge != null) return
 
             try {
-                WeLogger.i(TAG, "ZygiskEntry.init: process=$processName apk=$apkPath dataDir=$dataDir")
-                check(nativeInitialize()) {
-                    "failed to initialize ART hook runtime and trust ZygiskEntry loader"
-                }
                 NativeLoader.configureZygiskPayload(apkPath, dataDir)
+                Log.i(TAG, "ZygiskEntry.init: process=$processName apk=$apkPath dataDir=$dataDir")
+                check(nativeInitialize()) {
+                    "LSPlant bootstrap or hook bridge registration failed"
+                }
                 val service = ZygiskLoaderService(
                     modulePath = apkPath,
                     versionName = BuildConfig.VERSION_NAME,
@@ -92,6 +92,9 @@ object ZygiskEntry {
                         val appInfo = param.args.getOrNull(0) as? ApplicationInfo ?: return
                         if (appInfo.packageName != targetPackage) return
                         val factory = param.result ?: return
+                        // postAppSpecialize runs before Android binds/names the host process.
+                        // Authenticate only once LoadedApk has a real bound ApplicationInfo.
+                        NativeLoader.initDecoder(modulePath)
                         installFinalClassLoaderHook(bridge, factory, targetPackage)
                     }
                 }, priority = 10000)
@@ -104,7 +107,8 @@ object ZygiskEntry {
                 modulePath = ""
                 moduleStarted.set(false)
                 finalClassLoaderHookInstalled.set(false)
-                WeLogger.e(TAG, "ZygiskEntry.init failed", t)
+                // Loading the decoder can fail before WeLogger is safe to initialize.
+                Log.e(TAG, "ZygiskEntry.init failed", t)
             }
         }
     }
