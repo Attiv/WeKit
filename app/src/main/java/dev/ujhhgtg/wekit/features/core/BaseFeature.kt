@@ -55,6 +55,10 @@ abstract class BaseFeature {
 
     fun enable() {
         if (TargetProcesses.currentType !in targetProcesses || isActive) return
+        if (!BehaviorControl.canEnable(this)) {
+            WeLogger.i(TAG, "behavior feature blocked by global gate: $technicalPath")
+            return
+        }
 
         runCatching {
             isActive = true

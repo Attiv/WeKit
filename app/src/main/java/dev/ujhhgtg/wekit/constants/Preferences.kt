@@ -9,6 +9,7 @@ object Preferences {
     const val SHOW_STARTUP_TOAST = "toast_startup"
     const val RESET_DEX_ON_HOT_UPDATE = "reset_dex_on_hot_upd"
     const val MATCH_GENERIC_WXID_EXP = "match_generic_wxid"
+    const val BEHAVIOR_FEATURES_ENABLED = "behavior_features_enabled"
     const val UI_LANGUAGE = "ui_language"
 
     // Settings UI theming
@@ -35,6 +36,7 @@ object Preferences {
     var noDexResolve by prefOption(NO_DEX_RESOLVE, false)
     var showStartupToast by prefOption(SHOW_STARTUP_TOAST, false)
     var resetDexCacheOnHotUpdate by prefOption(RESET_DEX_ON_HOT_UPDATE, false)
+    var behaviorFeaturesEnabled by prefOption(BEHAVIOR_FEATURES_ENABLED, false)
 
     // ALWAYS check whether sender is group chat!!!
     var matchGenericWxIdExp by prefOption(MATCH_GENERIC_WXID_EXP, true)

@@ -383,8 +383,16 @@
     <string name="settings_color_spec_unsupported">The current palette style only supports Material 3 (2021)</string>
     <string name="settings_apply_to_wechat_title">Also apply to WeChat</string>
     <string name="settings_apply_to_wechat_summary">Apply the custom color scheme to WeChat itself</string>
+    <string name="settings_section_safety">Safety</string>
+    <string name="settings_behavior_features_title">Behavior features</string>
+    <string name="settings_behavior_features_summary">Allow automation, message actions, host-data changes, scripting, and remote-control features. Disabled by default; restart WeChat after changing.</string>
+    <string name="settings_behavior_enable_title">Enable behavior features?</string>
+    <string name="settings_behavior_enable_message">These capabilities can change account-visible behavior or host data and may increase account risk. Enable only after reviewing the affected features.</string>
+    <string name="settings_behavior_enable">Enable</string>
+    <string name="settings_risk_notice_title">Account-risk notice</string>
+    <string name="settings_risk_notice_summary">No module-side setting can guarantee that the official client will not report a modified environment. Use the official client for the lowest risk.</string>
     <string name="settings_safe_mode_title">Safe mode</string>
-    <string name="settings_safe_mode_summary">Load module capabilities conservatively in unstable environments</string>
+    <string name="settings_safe_mode_summary">Load only essential API capabilities and skip all behavior features after restarting WeChat</string>
     <string name="action_reset">Reset</string>
     <string name="action_clear">Clear</string>
     <string name="update_checking">Checking for updates…</string>

@@ -41,10 +41,23 @@ object FeaturesLoader {
         }
 
         val safeMode = SafeMode.isEnabled
-        val featuresToStart = if (safeMode) {
-            allFeatures.filterIsInstance<ApiFeature>()
-        } else {
+        val behaviorFeaturesEnabled = BehaviorControl.isEnabled
+        val behaviorFilteredFeatures = if (behaviorFeaturesEnabled) {
             allFeatures
+        } else {
+            allFeatures.filterNot(BehaviorControl::isBehaviorFeature)
+        }
+        val featuresToStart = if (safeMode) {
+            behaviorFilteredFeatures.filterIsInstance<ApiFeature>()
+        } else {
+            behaviorFilteredFeatures
+        }
+        if (!behaviorFeaturesEnabled) {
+            WeLogger.i(
+                TAG,
+                "behavior feature gate active: skipping " +
+                    "${allFeatures.size - behaviorFilteredFeatures.size} feature(s)",
+            )
         }
         if (safeMode) {
             WeLogger.i(

@@ -106,6 +106,7 @@ import dev.ujhhgtg.wekit.BuildConfig
 import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.features.api.core.WeApi
+import dev.ujhhgtg.wekit.features.core.BehaviorControl
 import dev.ujhhgtg.wekit.features.items.debug.ResetDexCache
 import dev.ujhhgtg.wekit.features.items.system.SafeMode
 import dev.ujhhgtg.wekit.i18n.LanguageSelection
@@ -182,10 +183,24 @@ fun SettingsPager(onOpenLicense: () -> Unit) {
             ThemeSection()
         }
 
+        // 安全
+        item {
+            SegmentedColumn(title = stringResource(R.string.settings_section_safety)) {
+                item { BehaviorControlSwitch() }
+                item { SecuritySwitch(context) }
+                item {
+                    BaseWidget(
+                        title = stringResource(R.string.settings_risk_notice_title),
+                        description = stringResource(R.string.settings_risk_notice_summary),
+                        icon = MaterialSymbols.Outlined.Block,
+                    )
+                }
+            }
+        }
+
         // 调试
         item {
             SegmentedColumn(title = stringResource(R.string.settings_section_debug)) {
-                item { SecuritySwitch(context) }
                 item {
                     PrefSwitch(
                         key = Preferences.VERBOSE_LOG,
@@ -826,6 +841,40 @@ private fun PrefArrow(
             trailingContent = { Icon(imageVector = MaterialSymbols.Outlined.Chevron_right, contentDescription = null) },
         )
     }
+}
+
+@Composable
+private fun BehaviorControlSwitch() {
+    var checked by remember { mutableStateOf(BehaviorControl.isEnabled) }
+    var showConfirm by remember { mutableStateOf(false) }
+
+    SwitchWidget(
+        title = stringResource(R.string.settings_behavior_features_title),
+        description = stringResource(R.string.settings_behavior_features_summary),
+        icon = MaterialSymbols.Outlined.Rule_settings,
+        checked = checked,
+        onCheckedChange = { requested ->
+            if (requested) {
+                showConfirm = true
+            } else {
+                checked = false
+                BehaviorControl.setEnabled(false)
+            }
+        },
+    )
+
+    ConfirmDialog(
+        show = showConfirm,
+        title = stringResource(R.string.settings_behavior_enable_title),
+        message = stringResource(R.string.settings_behavior_enable_message),
+        confirmText = stringResource(R.string.settings_behavior_enable),
+        onDismiss = { showConfirm = false },
+        onConfirm = {
+            showConfirm = false
+            checked = true
+            BehaviorControl.setEnabled(true)
+        },
+    )
 }
 
 @Composable

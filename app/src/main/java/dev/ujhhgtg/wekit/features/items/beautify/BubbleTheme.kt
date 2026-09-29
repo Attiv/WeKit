@@ -2,7 +2,7 @@ package dev.ujhhgtg.wekit.features.items.beautify
 
 import android.graphics.drawable.GradientDrawable
 import androidx.core.graphics.toColorInt
-import dev.ujhhgtg.wekit.preferences.WePrefs
+import dev.ujhhgtg.wekit.data.KvStore
 
 /**
  * Per-side colors of a built-in bubble theme. Values are color strings in the same format the
@@ -116,7 +116,7 @@ enum class BubbleTheme(
         const val PREF_KEY = "custom_bubbles_theme"
 
         val current: BubbleTheme
-            get() = fromId(WePrefs.getStringOrDef(PREF_KEY, NONE.id))
+            get() = fromId(KvStore.getStringOrDef(PREF_KEY, NONE.id))
 
         fun fromId(id: String?): BubbleTheme = entries.firstOrNull { it.id == id } ?: NONE
     }

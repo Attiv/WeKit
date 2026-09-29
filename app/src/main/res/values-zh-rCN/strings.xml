@@ -352,8 +352,16 @@
     <string name="settings_color_spec_unsupported">当前调色板样式仅支持 Material 3 (2021)</string>
     <string name="settings_apply_to_wechat_title">同时对微信生效</string>
     <string name="settings_apply_to_wechat_summary">将自定义配色应用到微信本身</string>
+    <string name="settings_section_safety">安全</string>
+    <string name="settings_behavior_features_title">行为类功能</string>
+    <string name="settings_behavior_features_summary">允许自动操作、消息操作、宿主数据修改、脚本及远程控制功能。默认关闭；修改后请重启微信。</string>
+    <string name="settings_behavior_enable_title">启用行为类功能？</string>
+    <string name="settings_behavior_enable_message">这些能力会改变账号可见行为或宿主数据，可能增加账号风险。请在确认相关功能用途后再启用。</string>
+    <string name="settings_behavior_enable">启用</string>
+    <string name="settings_risk_notice_title">账号风险提示</string>
+    <string name="settings_risk_notice_summary">模块内的任何设置都无法保证官方客户端不提示环境异常。最低风险方案仍是使用官方原版客户端。</string>
     <string name="settings_safe_mode_title">安全模式</string>
-    <string name="settings_safe_mode_summary">在不稳定环境中保守加载模块能力</string>
+    <string name="settings_safe_mode_summary">重启微信后仅加载必要 API 能力，并跳过全部行为类功能</string>
     <string name="action_reset">重置</string>
     <string name="action_clear">清除</string>
     <string name="update_checking">正在检查更新…</string>
